@@ -152,6 +152,8 @@ CREATE TABLE IF NOT EXISTS installed_applications (
     detection_sources_json TEXT DEFAULT '[]',
     is_installed INTEGER DEFAULT 1,
     is_running INTEGER DEFAULT 0,
+    is_connected INTEGER DEFAULT 0,
+    category_label TEXT DEFAULT 'Aplikasi Komputer Umum',
     available_adapters_json TEXT DEFAULT '[]',
     last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
     metadata_json TEXT DEFAULT '{}'
@@ -288,6 +290,14 @@ class DatabaseManager:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
             await db.executescript(SCHEMA_SQL)
+            try:
+                await db.execute("ALTER TABLE installed_applications ADD COLUMN is_connected INTEGER DEFAULT 0")
+            except Exception:
+                pass
+            try:
+                await db.execute("ALTER TABLE installed_applications ADD COLUMN category_label TEXT DEFAULT 'Aplikasi Komputer Umum'")
+            except Exception:
+                pass
             await db.commit()
 
     async def list_teams_with_agents(self) -> list[dict[str, Any]]:
@@ -495,6 +505,7 @@ class DatabaseManager:
         """Store or update a normalized application discovery record."""
         app_id = payload.get("id") or f"app_{uuid.uuid4().hex[:10]}"
         now = _now_iso()
+        category = payload.get("category_label") or "Aplikasi Komputer Umum"
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute(
@@ -502,10 +513,10 @@ class DatabaseManager:
                 INSERT INTO installed_applications (
                     id, platform, platform_app_id, bundle_id, aumid, display_name,
                     publisher, version, install_location, install_scope, signature_status,
-                    detection_sources_json, is_installed, is_running, available_adapters_json,
-                    last_seen_at, metadata_json
+                    detection_sources_json, is_installed, is_running, is_connected, category_label,
+                    available_adapters_json, last_seen_at, metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     display_name = excluded.display_name,
                     publisher = excluded.publisher,
@@ -513,6 +524,7 @@ class DatabaseManager:
                     install_location = excluded.install_location,
                     is_installed = excluded.is_installed,
                     is_running = excluded.is_running,
+                    category_label = excluded.category_label,
                     available_adapters_json = excluded.available_adapters_json,
                     last_seen_at = excluded.last_seen_at,
                     metadata_json = excluded.metadata_json
@@ -532,6 +544,8 @@ class DatabaseManager:
                     json.dumps(payload.get("detection_sources", [])),
                     int(payload.get("is_installed", True)),
                     int(payload.get("is_running", False)),
+                    int(payload.get("is_connected", False)),
+                    category,
                     json.dumps(payload.get("available_adapters", [])),
                     now,
                     json.dumps(payload.get("metadata", {})),
@@ -546,6 +560,8 @@ class DatabaseManager:
             item["metadata"] = json.loads(item.pop("metadata_json", "{}"))
             item["is_installed"] = bool(item["is_installed"])
             item["is_running"] = bool(item["is_running"])
+            item["is_connected"] = bool(item.get("is_connected", 0))
+            item["category_label"] = item.get("category_label") or "Aplikasi Komputer Umum"
             return item
 
     async def list_installed_apps(self, platform: str | None = None) -> list[dict[str, Any]]:
@@ -567,6 +583,8 @@ class DatabaseManager:
                 d["metadata"] = json.loads(d.pop("metadata_json", "{}"))
                 d["is_installed"] = bool(d["is_installed"])
                 d["is_running"] = bool(d["is_running"])
+                d["is_connected"] = bool(d.get("is_connected", 0))
+                d["category_label"] = d.get("category_label") or "Aplikasi Komputer Umum"
                 items.append(d)
             return items
 
@@ -583,6 +601,69 @@ class DatabaseManager:
             d["metadata"] = json.loads(d.pop("metadata_json", "{}"))
             d["is_installed"] = bool(d["is_installed"])
             d["is_running"] = bool(d["is_running"])
+            d["is_connected"] = bool(d.get("is_connected", 0))
+            d["category_label"] = d.get("category_label") or "Aplikasi Komputer Umum"
+            return d
+
+    async def toggle_app_connection(self, app_id: str, is_connected: bool) -> dict[str, Any] | None:
+        """Connect or disconnect an application's authorization in AKSA, working offline or online."""
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM installed_applications WHERE id = ?", (app_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+
+            await db.execute(
+                "UPDATE installed_applications SET is_connected = ? WHERE id = ?",
+                (int(is_connected), app_id),
+            )
+
+            cap_id = f"app.access.{app_id}"
+            if is_connected:
+                grant_id = f"grant_{uuid.uuid4().hex[:12]}"
+                await db.execute(
+                    """
+                    INSERT INTO permission_grants (id, principal_type, principal_id, capability_id, resource_scope, grant_source, granted_at, policy_version)
+                    VALUES (?, 'user', 'default_user', ?, 'application', 'desktop_ui', ?, 1)
+                    """,
+                    (grant_id, cap_id, now),
+                )
+            else:
+                await db.execute(
+                    "UPDATE permission_grants SET revoked_at = ? WHERE capability_id = ? AND revoked_at IS NULL",
+                    (now, cap_id),
+                )
+
+            # Audit event
+            aud_id = f"aud_{uuid.uuid4().hex[:12]}"
+            await db.execute(
+                """
+                INSERT INTO permission_audit_events (id, principal_type, principal_id, capability_id, resource_scope, decision, reason_code, created_at)
+                VALUES (?, 'user', 'default_user', ?, 'application', ?, ?, ?)
+                """,
+                (
+                    aud_id,
+                    cap_id,
+                    "allow" if is_connected else "deny",
+                    "USER_APP_CONNECT" if is_connected else "USER_APP_DISCONNECT",
+                    now,
+                ),
+            )
+
+            await db.commit()
+
+            cursor = await db.execute("SELECT * FROM installed_applications WHERE id = ?", (app_id,))
+            r = await cursor.fetchone()
+            d = _row_to_dict(r)
+            d["detection_sources"] = json.loads(d.pop("detection_sources_json", "[]"))
+            d["available_adapters"] = json.loads(d.pop("available_adapters_json", "[]"))
+            d["metadata"] = json.loads(d.pop("metadata_json", "{}"))
+            d["is_installed"] = bool(d["is_installed"])
+            d["is_running"] = bool(d["is_running"])
+            d["is_connected"] = bool(d.get("is_connected", 0))
+            d["category_label"] = d.get("category_label") or "Aplikasi Komputer Umum"
             return d
 
     # --- OS Permission States & Grants CRUD ---

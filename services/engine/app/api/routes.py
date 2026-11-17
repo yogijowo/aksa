@@ -582,6 +582,10 @@ class LaunchAppRequest(BaseModel):
     document_path: str | None = None
 
 
+class ToggleAppConnectionRequest(BaseModel):
+    is_connected: bool
+
+
 class RequestCapabilityGrantRequest(BaseModel):
     capability_id: str
     resource_scope: str = "workspace"
@@ -626,6 +630,21 @@ async def launch_desktop_application(app_id: str, req: LaunchAppRequest) -> dict
     """Safely launch an application or open a file with it."""
     result = await application_discovery_manager.launch_application(app_id, req.document_path)
     return result
+
+
+@api_router.post("/system/apps/{app_id}/toggle-connection")
+async def toggle_desktop_application_connection(app_id: str, req: ToggleAppConnectionRequest) -> dict[str, Any]:
+    """Authorize or revoke application access in AKSA, independent of process running status."""
+    updated = await db_manager.toggle_app_connection(app_id, req.is_connected)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Aplikasi tidak ditemukan.")
+    action = "dihubungkan dan diizinkan" if req.is_connected else "diputuskan aksesnya"
+    return {
+        "success": True,
+        "app": updated,
+        "is_connected": updated["is_connected"],
+        "message": f"Aplikasi '{updated['display_name']}' berhasil {action}.",
+    }
 
 
 @api_router.get("/system/permissions")

@@ -133,6 +133,8 @@ export interface DesktopApp {
   install_scope: string;
   is_installed: boolean;
   is_running: boolean;
+  is_connected?: boolean;
+  category_label?: string;
   available_adapters: string[];
   detection_sources: string[];
 }

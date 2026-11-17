@@ -38,6 +38,8 @@ class ApplicationRecord(BaseModel):
     detection_sources: list[str] = Field(default_factory=list)
     is_installed: bool = True
     is_running: bool = False
+    is_connected: bool = False
+    category_label: str = "Aplikasi Komputer Umum"
     available_adapters: list[str] = Field(default_factory=list)
     last_seen_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -48,16 +50,38 @@ def _sanitize_app_id(name: str) -> str:
     return f"app_{cleaned[:32]}"
 
 
+def classify_app_category(display_name: str, adapters: list[str]) -> str:
+    """Categorize desktop application into user-friendly Indonesian domain categories."""
+    name_lower = display_name.lower()
+    if any(k in name_lower for k in ("excel", "word", "powerpoint", "powerpnt", "office", "libreoffice", "acrobat", "pdf")):
+        return "Otomasi Dokumen Office"
+    if any(k in name_lower for k in ("chrome", "firefox", "edge", "msedge", "brave", "opera", "safari", "browser")):
+        return "Navigasi & Analisis Web"
+    if any(k in name_lower for k in ("code", "visual studio", "sublime", "notepad", "cursor", "pycharm", "intellij", "git")):
+        return "Penyunting Kode & Teks"
+    if any(k in name_lower for k in ("telegram", "slack", "discord", "teams", "whatsapp", "zoom", "skype", "notion", "obsidian")):
+        return "Komunikasi & Produktivitas"
+    if any(k in name_lower for k in ("terminal", "powershell", "cmd", "explorer", "calculator", "kalkulator", "settings", "task manager")):
+        return "Alat Sistem & Utilitas"
+    if "office" in adapters:
+        return "Otomasi Dokumen Office"
+    if "browser" in adapters:
+        return "Navigasi & Analisis Web"
+    if "editor" in adapters:
+        return "Penyunting Kode & Teks"
+    return "Aplikasi Komputer Umum"
+
+
 def _map_adapters(display_name: str, publisher: str | None) -> list[str]:
     name_lower = display_name.lower()
     adapters = ["launcher"]
-    if any(k in name_lower for k in ("excel", "word", "powerpoint", "office", "libreoffice")):
+    if any(k in name_lower for k in ("excel", "word", "powerpoint", "office", "libreoffice", "acrobat")):
         adapters.append("office")
         adapters.append("uia")
     elif any(k in name_lower for k in ("chrome", "firefox", "edge", "brave", "browser")):
         adapters.append("browser")
         adapters.append("uia")
-    elif any(k in name_lower for k in ("visual studio code", "vscode", "sublime", "notepad")):
+    elif any(k in name_lower for k in ("visual studio code", "vscode", "sublime", "notepad", "cursor")):
         adapters.append("editor")
     return list(dict.fromkeys(adapters))
 
@@ -138,8 +162,11 @@ class ApplicationDiscoveryManager:
                                     continue
 
                                 disp_name = str(disp_name).strip()
-                                # Ignore updates, language packs, or hotfixes
-                                if any(disp_name.startswith(p) for p in ("KB", "Security Update", "Update for")):
+                                lower_disp = disp_name.lower()
+                                # Ignore updates, language packs, redistributables, and driver packages
+                                if any(disp_name.startswith(p) for p in ("KB", "Security Update", "Update for")) or any(
+                                    p in lower_disp for p in ("redistributable", "windows driver package", "setup c++")
+                                ):
                                     continue
 
                                 version = None
@@ -165,6 +192,7 @@ class ApplicationDiscoveryManager:
 
                                 app_id = _sanitize_app_id(disp_name)
                                 adapters = _map_adapters(disp_name, publisher)
+                                category_label = classify_app_category(disp_name, adapters)
 
                                 # Check if running
                                 is_running = False
@@ -187,6 +215,7 @@ class ApplicationDiscoveryManager:
                                         detection_sources=["registry"],
                                         is_installed=True,
                                         is_running=is_running,
+                                        category_label=category_label,
                                         available_adapters=adapters,
                                     )
                         except Exception:
@@ -230,6 +259,8 @@ class ApplicationDiscoveryManager:
 
                     app_id = _sanitize_app_id(display_name)
                     is_running = display_name.lower() in running_procs or item.stem.lower() in running_procs
+                    adapters = _map_adapters(str(display_name), None)
+                    category_label = classify_app_category(str(display_name), adapters)
 
                     discovered[app_id] = ApplicationRecord(
                         id=app_id,
@@ -244,7 +275,8 @@ class ApplicationDiscoveryManager:
                         detection_sources=["bundle"],
                         is_installed=True,
                         is_running=is_running,
-                        available_adapters=_map_adapters(str(display_name), None),
+                        category_label=category_label,
+                        available_adapters=adapters,
                     )
                 except Exception:
                     continue
@@ -271,6 +303,7 @@ class ApplicationDiscoveryManager:
                     version="16.0",
                     is_installed=True,
                     is_running=False,
+                    category_label="Otomasi Dokumen Office",
                     available_adapters=["office", "uia", "launcher"],
                     detection_sources=["system_catalog"],
                 ),
@@ -283,6 +316,7 @@ class ApplicationDiscoveryManager:
                     version="131.0",
                     is_installed=True,
                     is_running=True,
+                    category_label="Navigasi & Analisis Web",
                     available_adapters=["browser", "uia", "launcher"],
                     detection_sources=["system_catalog"],
                 ),

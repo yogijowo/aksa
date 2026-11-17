@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 import {
   ReactFlow,
   Background,
@@ -21,41 +21,71 @@ import {
   ListTree,
   Trash2,
   Edit3,
+  ShieldAlert,
+  Laptop,
+  FileSpreadsheet,
+  Globe,
+  Code2,
+  MessageSquare,
+  Wrench,
 } from "lucide-react";
 import { useAksaStore } from "@/stores/useAksaStore";
 import { cn, getProviderBadgeStyle, TOOL_CATEGORY_LABELS } from "@/lib/utils";
 import { ProviderIcon, ToolCategoryIcon } from "@/components/ui/DynamicIcon";
-import type { AgentNodeConfig, ModelProvider } from "@/types/aksa";
+import type { AgentNodeConfig, ModelProvider, DesktopApp, SkillItem } from "@/types/aksa";
+import { fetchDesktopAppsRemote, fetchSkillsRemote } from "@/services/engineClient";
 
 const BASE_MODEL_PRESETS: { provider: ModelProvider; model_id: string; label: string }[] = [
   // Google Gemini
-  { provider: "gemini", model_id: "gemini-2.5-pro", label: "[Cloud] Google Gemini • Gemini 2.5 Pro (Rekomendasi Manajer)" },
+  { provider: "gemini", model_id: "gemini-2.5-pro", label: "[Cloud] Google Gemini • Gemini 2.5 Pro (Flagship Penalaran & Manajer)" },
   { provider: "gemini", model_id: "gemini-2.5-flash", label: "[Cloud] Google Gemini • Gemini 2.5 Flash (Super Cepat & Responsif)" },
-  { provider: "gemini", model_id: "gemini-2.5-flash-lite", label: "[Cloud] Google Gemini • Gemini 2.5 Flash Lite (Hemat Kuota)" },
-  { provider: "gemini", model_id: "gemini-flash-latest", label: "[Cloud] Google Gemini • Gemini Flash Latest (Versi Rilis Terbaru)" },
+  { provider: "gemini", model_id: "gemini-2.5-flash-lite", label: "[Cloud] Google Gemini • Gemini 2.5 Flash Lite (Paling Hemat Kuota)" },
+  { provider: "gemini", model_id: "gemini-2.0-flash", label: "[Cloud] Google Gemini • Gemini 2.0 Flash (Multimodal Generasi Baru)" },
+  { provider: "gemini", model_id: "gemini-1.5-pro", label: "[Cloud] Google Gemini • Gemini 1.5 Pro (Konteks Raksasa 2M)" },
 
   // Anthropic Claude
-  { provider: "anthropic", model_id: "claude-3-7-sonnet-latest", label: "[Cloud] Anthropic • Claude 3.7 Sonnet (Penalaran Hibrida)" },
-  { provider: "anthropic", model_id: "claude-3-5-sonnet-latest", label: "[Cloud] Anthropic • Claude 3.5 Sonnet (Standar Penulisan)" },
-  { provider: "anthropic", model_id: "claude-3-5-haiku-latest", label: "[Cloud] Anthropic • Claude 3.5 Haiku (Ringan & Cepat)" },
+  { provider: "anthropic", model_id: "claude-3-7-sonnet-latest", label: "[Cloud] Anthropic • Claude 3.7 Sonnet (Penalaran Hibrida Flagship)" },
+  { provider: "anthropic", model_id: "claude-3-5-sonnet-latest", label: "[Cloud] Anthropic • Claude 3.5 Sonnet (Standar Kode Industri)" },
+  { provider: "anthropic", model_id: "claude-3-5-haiku-latest", label: "[Cloud] Anthropic • Claude 3.5 Haiku (Ringan, Murah, & Gesit)" },
+  { provider: "anthropic", model_id: "claude-3-opus-latest", label: "[Cloud] Anthropic • Claude 3 Opus (Telaah Kualitatif Mendalam)" },
+
+  // OpenAI
+  { provider: "openai", model_id: "gpt-4.5-preview", label: "[Cloud] OpenAI • GPT-4.5 Preview (Frontier Terbesar)" },
+  { provider: "openai", model_id: "o3-mini", label: "[Cloud] OpenAI • o3-mini (Penalaran STEM, Logika & Kode)" },
+  { provider: "openai", model_id: "o1", label: "[Cloud] OpenAI • o1 (Penalaran Strategis Penuh)" },
+  { provider: "openai", model_id: "gpt-4o", label: "[Cloud] OpenAI • GPT-4o (Standar Industri Multimodal)" },
+  { provider: "openai", model_id: "gpt-4o-mini", label: "[Cloud] OpenAI • GPT-4o Mini (Hemat Biaya & Gesit)" },
 
   // DeepSeek
   { provider: "deepseek", model_id: "deepseek-chat", label: "[Cloud] DeepSeek • DeepSeek V3 (Sangat Hemat / Formula Excel)" },
   { provider: "deepseek", model_id: "deepseek-reasoner", label: "[Cloud] DeepSeek • DeepSeek R1 (Penalaran Chain-of-Thought)" },
 
-  // OpenAI
-  { provider: "openai", model_id: "gpt-4o", label: "[Cloud] OpenAI • GPT-4o (Standar Industri Multimodal)" },
-  { provider: "openai", model_id: "gpt-4o-mini", label: "[Cloud] OpenAI • GPT-4o Mini (Hemat & Gesit)" },
-  { provider: "openai", model_id: "o3-mini", label: "[Cloud] OpenAI • o3-mini (Penalaran Sains & Logika)" },
-  { provider: "openai", model_id: "o1", label: "[Cloud] OpenAI • o1 (Penalaran Mendalam)" },
+  // Groq
+  { provider: "groq", model_id: "llama-3.3-70b-versatile", label: "[Cloud] Groq • Llama 3.3 70B (Inferensi LPU Kilat 300+ tps)" },
+  { provider: "groq", model_id: "deepseek-r1-distill-llama-70b", label: "[Cloud] Groq • DeepSeek R1 Distill 70B (Penalaran Kilat)" },
+  { provider: "groq", model_id: "llama-3.1-8b-instant", label: "[Cloud] Groq • Llama 3.1 8B Instant (Ultra-Low Latency)" },
+  { provider: "groq", model_id: "qwen-2.5-32b", label: "[Cloud] Groq • Qwen 2.5 32B (Multilingual & Kode)" },
 
-  // Groq & OpenRouter
-  { provider: "groq", model_id: "llama-3.3-70b-versatile", label: "[Cloud] Groq • Llama 3.3 70B (Inferensi LPU Kilat)" },
-  { provider: "groq", model_id: "deepseek-r1-distill-llama-70b", label: "[Cloud] Groq • DeepSeek R1 Distill (Penalaran Kilat)" },
-  { provider: "openrouter", model_id: "openrouter/auto", label: "[Cloud] OpenRouter • Router Otomatis Multi-Provider" },
+  // OpenRouter
+  { provider: "openrouter", model_id: "anthropic/claude-3.7-sonnet", label: "[Cloud] OpenRouter • Claude 3.7 Sonnet" },
+  { provider: "openrouter", model_id: "google/gemini-2.5-pro", label: "[Cloud] OpenRouter • Gemini 2.5 Pro" },
+  { provider: "openrouter", model_id: "deepseek/deepseek-r1", label: "[Cloud] OpenRouter • DeepSeek R1" },
+  { provider: "openrouter", model_id: "openai/gpt-4.5-preview", label: "[Cloud] OpenRouter • GPT-4.5 Preview" },
+  { provider: "openrouter", model_id: "openrouter/auto", label: "[Cloud] OpenRouter • Auto Router (Rute Otomatis)" },
 
-  // Local
-  { provider: "lmstudio", model_id: "gemma-3-12b-it", label: "[Lokal] LM Studio • Gemma 3 12B" },
+  // Ollama (Lokal Gratis)
+  { provider: "ollama", model_id: "qwen2.5:7b", label: "[Lokal] Ollama • Qwen 2.5 7B (Rekomendasi Indonesia & Kode)" },
+  { provider: "ollama", model_id: "qwen2.5-coder:7b", label: "[Lokal] Ollama • Qwen 2.5 Coder 7B (Spesialis Kode)" },
+  { provider: "ollama", model_id: "llama3.3:70b", label: "[Lokal] Ollama • Llama 3.3 70B (Flagship Lokal)" },
+  { provider: "ollama", model_id: "llama3.2:3b", label: "[Lokal] Ollama • Llama 3.2 3B (Ringan untuk Laptop)" },
+  { provider: "ollama", model_id: "deepseek-r1:8b", label: "[Lokal] Ollama • DeepSeek R1 Distill 8B (Penalaran Offline)" },
+  { provider: "ollama", model_id: "phi4:14b", label: "[Lokal] Ollama • Microsoft Phi-4 14B" },
+  { provider: "ollama", model_id: "mistral:7b", label: "[Lokal] Ollama • Mistral 7B" },
+
+  // LM Studio
+  { provider: "lmstudio", model_id: "qwen2.5-7b-instruct", label: "[Lokal] LM Studio • Qwen 2.5 7B Instruct" },
+  { provider: "lmstudio", model_id: "deepseek-r1-distill-qwen-7b", label: "[Lokal] LM Studio • DeepSeek R1 Distill 7B" },
+  { provider: "lmstudio", model_id: "llama-3.3-70b-instruct", label: "[Lokal] LM Studio • Llama 3.3 70B Instruct" },
 ];
 
 type AgentFlowNodeData = {
@@ -189,6 +219,26 @@ export const AgentHierarchyView: React.FC = () => {
   const [isCustomMode, setIsCustomMode] = useState(false);
   const [customModelId, setCustomModelId] = useState("");
   const [customProvider, setCustomProvider] = useState<ModelProvider>("gemini");
+  const [connectedApps, setConnectedApps] = useState<DesktopApp[]>([]);
+  const [installedSkills, setInstalledSkills] = useState<SkillItem[]>([]);
+  const [toolsTab, setToolsTab] = useState<"apps" | "skills" | "core">("apps");
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const apps = await fetchDesktopAppsRemote();
+        if (apps) {
+          setConnectedApps(apps.filter((a) => a.is_connected));
+        }
+      } catch {}
+      try {
+        const skillsData = await fetchSkillsRemote();
+        if (skillsData?.installed_skills) {
+          setInstalledSkills(skillsData.installed_skills);
+        }
+      } catch {}
+    })();
+  }, []);
 
   const activeTeam = teams.find((t) => t.id === activeTeamId) ?? teams[0];
   const agents = activeTeam?.agents ?? [];
@@ -258,6 +308,59 @@ export const AgentHierarchyView: React.FC = () => {
       ? selectedAgent.tool_categories.filter((c) => c !== categoryKey)
       : [...selectedAgent.tool_categories, categoryKey];
     void updateAgentConfig(selectedAgent.id, { tool_categories: updated });
+  };
+
+  const isAppAllowed = (appId: string) => {
+    if (!selectedAgent) return false;
+    return (
+      selectedAgent.tool_categories.includes(`app:${appId}`) ||
+      selectedAgent.tool_categories.includes(appId)
+    );
+  };
+
+  const toggleAppPermission = (appId: string) => {
+    if (!selectedAgent) return;
+    const key = `app:${appId}`;
+    const allowed = isAppAllowed(appId);
+    const updated = allowed
+      ? selectedAgent.tool_categories.filter((c) => c !== key && c !== appId)
+      : [...selectedAgent.tool_categories, key];
+    void updateAgentConfig(selectedAgent.id, { tool_categories: updated });
+  };
+
+  const isSkillAssigned = (skillId: string) => {
+    if (!selectedAgent) return false;
+    return (
+      selectedAgent.tool_categories.includes(`skill:${skillId}`) ||
+      selectedAgent.tool_categories.includes(skillId)
+    );
+  };
+
+  const toggleSkillAssignment = (skillId: string) => {
+    if (!selectedAgent) return;
+    const key = `skill:${skillId}`;
+    const assigned = isSkillAssigned(skillId);
+    const updated = assigned
+      ? selectedAgent.tool_categories.filter((c) => c !== key && c !== skillId)
+      : [...selectedAgent.tool_categories, key];
+    void updateAgentConfig(selectedAgent.id, { tool_categories: updated });
+  };
+
+  const getAppCategoryIcon = (category?: string) => {
+    switch (category) {
+      case "Otomasi Dokumen Office":
+        return <FileSpreadsheet className="w-3.5 h-3.5 text-[#D97757]" />;
+      case "Navigasi & Analisis Web":
+        return <Globe className="w-3.5 h-3.5 text-[#38BDF8]" />;
+      case "Penyunting Kode & Teks":
+        return <Code2 className="w-3.5 h-3.5 text-[#A78BFA]" />;
+      case "Komunikasi & Produktivitas":
+        return <MessageSquare className="w-3.5 h-3.5 text-[#34D399]" />;
+      case "Alat Sistem & Utilitas":
+        return <Wrench className="w-3.5 h-3.5 text-[#FBBF24]" />;
+      default:
+        return <Laptop className="w-3.5 h-3.5 text-[#9C9A92]" />;
+    }
   };
 
   const handleApplyCustomModel = () => {
@@ -644,33 +747,164 @@ export const AgentHierarchyView: React.FC = () => {
 
           {/* Lazy Tool Categories Assignment */}
           <div className="space-y-2">
-            <label className="block text-[11px] font-medium text-zinc-300">
-              Keahlian &amp; Akses Alat (Lazy Tool Loading)
-            </label>
-            <div className="space-y-1.5">
-              {Object.entries(TOOL_CATEGORY_LABELS).map(([key, label]) => {
-                const checked = selectedAgent.tool_categories.includes(key);
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => toggleToolCategory(key)}
-                    className={cn(
-                      "w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs border transition-colors",
-                      checked
-                        ? "bg-white/[0.06] border-[#D97757]/40 text-zinc-200"
-                        : "bg-[#262624] border-white/[0.06] text-zinc-400 hover:text-zinc-200"
-                    )}
-                  >
-                    <span className="inline-flex items-center gap-2">
-                      <ToolCategoryIcon category={key} size={13} />
-                      <span>{label}</span>
-                    </span>
-                    {checked && <Check size={14} className="text-[#D97757]" />}
-                  </button>
-                );
-              })}
+            <div className="flex items-center justify-between">
+              <label className="block text-[11px] font-medium text-zinc-300">
+                Keahlian &amp; Akses Alat (Lazy Tool Loading)
+              </label>
+              <span className="text-[10px] text-zinc-500 font-mono">
+                {selectedAgent.tool_categories.length} izin aktif
+              </span>
             </div>
+
+            {/* Sub-tabs for Apps, Skills, and Core Tools */}
+            <div className="flex items-center gap-1 p-1 rounded-lg bg-[#262624] border border-white/[0.06]">
+              <button
+                type="button"
+                onClick={() => setToolsTab("apps")}
+                className={cn(
+                  "flex-1 py-1 px-1.5 rounded-md text-[10px] font-medium transition-colors text-center truncate",
+                  toolsTab === "apps"
+                    ? "bg-[#D97757] text-white shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200"
+                )}
+              >
+                Aplikasi ({connectedApps.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolsTab("skills")}
+                className={cn(
+                  "flex-1 py-1 px-1.5 rounded-md text-[10px] font-medium transition-colors text-center truncate",
+                  toolsTab === "skills"
+                    ? "bg-[#D97757] text-white shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200"
+                )}
+              >
+                Keahlian ({installedSkills.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => setToolsTab("core")}
+                className={cn(
+                  "flex-1 py-1 px-1.5 rounded-md text-[10px] font-medium transition-colors text-center truncate",
+                  toolsTab === "core"
+                    ? "bg-[#D97757] text-white shadow-sm"
+                    : "text-zinc-400 hover:text-zinc-200"
+                )}
+              >
+                Alat Inti ({Object.keys(TOOL_CATEGORY_LABELS).length})
+              </button>
+            </div>
+
+            {/* Tab Content 1: Connected Applications */}
+            {toolsTab === "apps" && (
+              <div className="space-y-1.5 pt-1">
+                {connectedApps.length > 0 ? (
+                  connectedApps.map((app) => {
+                    const checked = isAppAllowed(app.id);
+                    return (
+                      <button
+                        key={app.id}
+                        type="button"
+                        onClick={() => toggleAppPermission(app.id)}
+                        className={cn(
+                          "w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs border transition-colors text-left",
+                          checked
+                            ? "bg-white/[0.06] border-[#D97757]/40 text-zinc-200"
+                            : "bg-[#262624] border-white/[0.06] text-zinc-400 hover:text-zinc-200"
+                        )}
+                      >
+                        <div className="inline-flex items-center gap-2 min-w-0">
+                          {getAppCategoryIcon(app.category_label)}
+                          <div className="min-w-0">
+                            <span className="block font-medium truncate text-white">{app.display_name}</span>
+                            <span className="block text-[10px] text-zinc-500 truncate">{app.category_label || "Aplikasi PC"}</span>
+                          </div>
+                        </div>
+                        {checked && <Check size={14} className="text-[#D97757] shrink-0 ml-2" />}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="p-3 rounded-xl bg-[#262624] border border-white/[0.06] text-center space-y-1.5">
+                    <ShieldAlert className="w-4 h-4 text-amber-500 mx-auto" />
+                    <p className="text-[11px] font-medium text-zinc-300">Belum Ada Aplikasi yang Diizinkan</p>
+                    <p className="text-[10px] text-zinc-500 leading-relaxed">
+                      Hubungkan software PC Anda (Excel, Chrome, VS Code) di menu <strong>Aplikasi PC</strong> agar agen ini dapat mengaksesnya.
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab Content 2: Installed Agent Skills */}
+            {toolsTab === "skills" && (
+              <div className="space-y-1.5 pt-1">
+                {installedSkills.length > 0 ? (
+                  installedSkills.map((skill) => {
+                    const checked = isSkillAssigned(skill.skill_id);
+                    return (
+                      <button
+                        key={skill.id}
+                        type="button"
+                        onClick={() => toggleSkillAssignment(skill.skill_id)}
+                        className={cn(
+                          "w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs border transition-colors text-left",
+                          checked
+                            ? "bg-white/[0.06] border-[#D97757]/40 text-zinc-200"
+                            : "bg-[#262624] border-white/[0.06] text-zinc-400 hover:text-zinc-200"
+                        )}
+                      >
+                        <div className="inline-flex items-center gap-2 min-w-0">
+                          <Sparkles size={13} className="text-[#D97757] shrink-0" />
+                          <div className="min-w-0">
+                            <span className="block font-medium truncate text-white">{skill.display_name}</span>
+                            <span className="block text-[10px] text-zinc-500 truncate">v{skill.installed_version} • {skill.publisher}</span>
+                          </div>
+                        </div>
+                        {checked && <Check size={14} className="text-[#D97757] shrink-0 ml-2" />}
+                      </button>
+                    );
+                  })
+                ) : (
+                  <div className="p-3 rounded-xl bg-[#262624] border border-white/[0.06] text-center space-y-1.5">
+                    <Sparkles className="w-4 h-4 text-[#D97757] mx-auto" />
+                    <p className="text-[11px] font-medium text-zinc-300">Belum Ada Keahlian Terpasang</p>
+                    <p className="text-[10px] text-zinc-500 leading-relaxed">
+                      Kunjungi menu <strong>Keahlian</strong> untuk memasang paket keahlian populer (Pemodelan Finansial, Naskah Dinas, Ekstraktor PDF, dll).
+                    </p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Tab Content 3: Core System Tools */}
+            {toolsTab === "core" && (
+              <div className="space-y-1.5 pt-1">
+                {Object.entries(TOOL_CATEGORY_LABELS).map(([key, label]) => {
+                  const checked = selectedAgent.tool_categories.includes(key);
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => toggleToolCategory(key)}
+                      className={cn(
+                        "w-full flex items-center justify-between rounded-xl px-3 py-2 text-xs border transition-colors text-left",
+                        checked
+                          ? "bg-white/[0.06] border-[#D97757]/40 text-zinc-200"
+                          : "bg-[#262624] border-white/[0.06] text-zinc-400 hover:text-zinc-200"
+                      )}
+                    >
+                      <span className="inline-flex items-center gap-2">
+                        <ToolCategoryIcon category={key} size={13} />
+                        <span>{label}</span>
+                      </span>
+                      {checked && <Check size={14} className="text-[#D97757]" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
 
           {/* Delete Agent Section */}

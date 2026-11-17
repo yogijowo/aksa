@@ -499,6 +499,23 @@ export async function launchDesktopAppRemote(appId: string, documentPath?: strin
   }
 }
 
+export async function toggleDesktopAppConnectionRemote(
+  appId: string,
+  isConnected: boolean
+): Promise<{ success: boolean; app?: any; is_connected?: boolean; message?: string } | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/apps/${encodeURIComponent(appId)}/toggle-connection`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_connected: isConnected }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 // --- OS Permissions & Security Broker API ---
 export async function fetchSystemPermissionsRemote(workspaceFolder?: string): Promise<any[] | null> {
   try {

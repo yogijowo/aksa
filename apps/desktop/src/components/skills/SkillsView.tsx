@@ -7,6 +7,7 @@ import {
   Trash2,
   Power,
   FileCode2,
+  Search,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -22,6 +23,8 @@ export const SkillsView: React.FC = () => {
   const [curatedList, setCuratedList] = useState<CuratedSkill[]>([]);
   const [installedList, setInstalledList] = useState<SkillItem[]>([]);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [selectedTag, setSelectedTag] = useState<string>("all");
 
   const loadData = async () => {
     try {
@@ -32,8 +35,6 @@ export const SkillsView: React.FC = () => {
       }
     } catch {
       toast.error("Gagal memuat katalog keahlian agen.");
-    } finally {
-      // Done loading
     }
   };
 
@@ -94,6 +95,63 @@ export const SkillsView: React.FC = () => {
     }
   };
 
+  const filteredCurated = curatedList.filter((s) => {
+    const q = search.toLowerCase();
+    const matchesSearch =
+      s.display_name.toLowerCase().includes(q) ||
+      s.description.toLowerCase().includes(q) ||
+      s.publisher.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q);
+
+    if (!matchesSearch) return false;
+
+    if (selectedTag === "office") {
+      return (
+        s.id.includes("excel") ||
+        s.id.includes("word") ||
+        s.id.includes("naskah") ||
+        s.id.includes("pdf") ||
+        s.id.includes("pitch")
+      );
+    }
+    if (selectedTag === "code") {
+      return (
+        s.id.includes("git") ||
+        s.id.includes("sql") ||
+        s.id.includes("python") ||
+        s.id.includes("security")
+      );
+    }
+    if (selectedTag === "finance") {
+      return (
+        s.id.includes("financial") ||
+        s.id.includes("tax") ||
+        s.id.includes("pajak") ||
+        s.id.includes("reconciliation")
+      );
+    }
+    if (selectedTag === "research") {
+      return (
+        s.id.includes("research") ||
+        s.id.includes("academic") ||
+        s.id.includes("meeting")
+      );
+    }
+
+    return true;
+  });
+
+  const filteredInstalled = installedList.filter((s) => {
+    const q = search.toLowerCase();
+    return (
+      s.display_name.toLowerCase().includes(q) ||
+      s.skill_id.toLowerCase().includes(q) ||
+      s.publisher.toLowerCase().includes(q)
+    );
+  });
+
+  const activeInstalledCount = installedList.filter((s) => s.enabled).length;
+
   return (
     <div className="flex-1 overflow-y-auto px-8 py-8 bg-[#191918] text-[#ECECEB]">
       <div className="max-w-6xl mx-auto space-y-6">
@@ -106,7 +164,7 @@ export const SkillsView: React.FC = () => {
             </div>
             <h1 className="text-2xl font-bold tracking-tight text-white">Manajer Keahlian Eksternal</h1>
             <p className="text-sm text-[#9C9A92]">
-              Pasang keahlian terkurasi untuk memperluas kapabilitas agen dengan isolasi sandbox ketat.
+              Koleksi keahlian agen populer dari komunitas open source. Pasang dalam 1 klik dan delegasikan tugas khusus kepada sub-agen di Tim Agen.
             </p>
           </div>
         </div>
@@ -120,39 +178,119 @@ export const SkillsView: React.FC = () => {
             <span className="font-semibold text-white">Prinsip Keamanan Keahlian AKSA:</span>
             <p className="text-[#9C9A92] leading-relaxed">
               Setiap paket keahlian yang dipasang otomatis berada dalam kondisi <strong className="text-white">NONAKTIF secara default</strong>. 
-              Skrip keahlian tidak pernah dieksekusi saat proses instalasi, tidak memiliki akses ke API key atau token rahasia, dan hanya diizinkan membaca folder kerja yang telah disetujui.
+              Skrip keahlian tidak pernah dieksekusi saat proses instalasi, tidak memiliki akses ke API key atau token rahasia, dan hanya diizinkan membaca folder kerja yang telah disetujui pengguna.
             </p>
           </div>
         </div>
 
-        {/* Tab Toggle */}
-        <div className="flex items-center gap-2 p-1 rounded-xl bg-[#21211F] border border-[#FFFFFF]/10 w-fit">
-          <button
-            onClick={() => setActiveTab("catalog")}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === "catalog"
-                ? "bg-[#D97757] text-white shadow-sm"
-                : "text-[#9C9A92] hover:text-[#ECECEB]"
-            }`}
-          >
-            Katalog Terkurasi ({curatedList.length})
-          </button>
-          <button
-            onClick={() => setActiveTab("installed")}
-            className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              activeTab === "installed"
-                ? "bg-[#D97757] text-white shadow-sm"
-                : "text-[#9C9A92] hover:text-[#ECECEB]"
-            }`}
-          >
-            Keahlian Terpasang ({installedList.length})
-          </button>
+        {/* Search and Navigation Bar */}
+        <div className="space-y-3">
+          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+            {/* Search Input */}
+            <div className="relative flex-1">
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71716E]" />
+              <input
+                type="text"
+                placeholder="Cari keahlian (misal: Excel, Kontrak Hukum, Naskah Dinas, Python, SQL)..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-[#21211F] border border-[#FFFFFF]/10 rounded-lg pl-10 pr-4 py-2.5 text-xs text-[#ECECEB] placeholder-[#71716E] focus:outline-none focus:border-[#D97757]/60"
+              />
+            </div>
+
+            {/* Tab Toggle */}
+            <div className="flex items-center gap-1.5 p-1 rounded-lg bg-[#21211F] border border-[#FFFFFF]/10 shrink-0">
+              <button
+                onClick={() => setActiveTab("catalog")}
+                className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all ${
+                  activeTab === "catalog"
+                    ? "bg-[#D97757] text-white shadow-sm"
+                    : "text-[#9C9A92] hover:text-[#ECECEB]"
+                }`}
+              >
+                Katalog Repositori ({curatedList.length})
+              </button>
+              <button
+                onClick={() => setActiveTab("installed")}
+                className={`px-3.5 py-1.5 rounded-md text-xs font-semibold transition-all flex items-center gap-1.5 ${
+                  activeTab === "installed"
+                    ? "bg-[#10B981] text-white shadow-sm"
+                    : "text-[#9C9A92] hover:text-[#ECECEB]"
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Terpasang ({installedList.length})</span>
+                {activeInstalledCount > 0 && (
+                  <span className="px-1.5 py-0.2 rounded-full text-[9px] bg-white/20 font-mono">
+                    {activeInstalledCount} aktif
+                  </span>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Catalog Domain Filter Pills */}
+          {activeTab === "catalog" && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+              <span className="text-[#71716E] text-[11px] whitespace-nowrap">Kategori:</span>
+              <button
+                onClick={() => setSelectedTag("all")}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+                  selectedTag === "all"
+                    ? "bg-white/[0.12] text-white border border-white/[0.2]"
+                    : "bg-[#21211F] text-[#9C9A92] hover:text-white border border-transparent"
+                }`}
+              >
+                Semua Keahlian ({curatedList.length})
+              </button>
+              <button
+                onClick={() => setSelectedTag("office")}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+                  selectedTag === "office"
+                    ? "bg-white/[0.12] text-white border border-white/[0.2]"
+                    : "bg-[#21211F] text-[#9C9A92] hover:text-white border border-transparent"
+                }`}
+              >
+                Dokumen &amp; Office
+              </button>
+              <button
+                onClick={() => setSelectedTag("finance")}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+                  selectedTag === "finance"
+                    ? "bg-white/[0.12] text-white border border-white/[0.2]"
+                    : "bg-[#21211F] text-[#9C9A92] hover:text-white border border-transparent"
+                }`}
+              >
+                Finansial &amp; Pajak
+              </button>
+              <button
+                onClick={() => setSelectedTag("code")}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+                  selectedTag === "code"
+                    ? "bg-white/[0.12] text-white border border-white/[0.2]"
+                    : "bg-[#21211F] text-[#9C9A92] hover:text-white border border-transparent"
+                }`}
+              >
+                Rekayasa Kode &amp; SQL
+              </button>
+              <button
+                onClick={() => setSelectedTag("research")}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+                  selectedTag === "research"
+                    ? "bg-white/[0.12] text-white border border-white/[0.2]"
+                    : "bg-[#21211F] text-[#9C9A92] hover:text-white border border-transparent"
+                }`}
+              >
+                Riset &amp; Akademik
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Tab 1: Curated Catalog */}
         {activeTab === "catalog" && (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {curatedList.map((skill) => {
+            {filteredCurated.map((skill) => {
               const isInstalled = installedList.some((i) => i.skill_id === skill.id);
               return (
                 <div
@@ -162,7 +300,7 @@ export const SkillsView: React.FC = () => {
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-3">
                       <div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <span className="font-bold text-sm text-white">{skill.display_name}</span>
                           <span className="px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#10B981]/15 text-[#10B981] border border-[#10B981]/30">
                             Kurasi AKSA
@@ -223,13 +361,19 @@ export const SkillsView: React.FC = () => {
                 </div>
               );
             })}
+
+            {filteredCurated.length === 0 && (
+              <div className="col-span-full py-12 text-center text-[#71716E] text-xs border border-dashed border-[#FFFFFF]/10 rounded-xl">
+                Tidak ada keahlian yang cocok dengan kata kunci "{search}".
+              </div>
+            )}
           </div>
         )}
 
         {/* Tab 2: Installed Skills */}
         {activeTab === "installed" && (
           <div className="space-y-3">
-            {installedList.map((skill) => (
+            {filteredInstalled.map((skill) => (
               <div
                 key={skill.id}
                 className="p-4 rounded-xl bg-[#21211F] border border-[#FFFFFF]/10 flex items-center justify-between gap-4"
@@ -279,9 +423,9 @@ export const SkillsView: React.FC = () => {
               </div>
             ))}
 
-            {installedList.length === 0 && (
+            {filteredInstalled.length === 0 && (
               <div className="py-12 text-center text-[#71716E] text-xs border border-dashed border-[#FFFFFF]/10 rounded-xl">
-                Belum ada keahlian yang dipasang. Silakan pilih keahlian di tab <strong>Katalog Terkurasi</strong>.
+                Belum ada keahlian yang dipasang. Silakan pilih dan pasang keahlian dari tab <strong>Katalog Repositori</strong>.
               </div>
             )}
           </div>
