@@ -5,8 +5,8 @@
 </a>
 
 # ⚡ AKSA
-### Autonomous Hierarchical AI Agent Desktop Platform
-*(Asisten Kerja &amp; Sistem Automasi — Local-First PC Automation &amp; Multi-Agent Assistant)*
+### AI Desktop Operating Assistant & Autonomous Multi-Agent Platform
+*(Asisten Kerja &amp; Sistem Automasi — Local-First App Intelligence, OS Permissions &amp; Agent Skills)*
 
 <p align="center">
   <a href="./README.md"><img src="https://img.shields.io/badge/📄_Baca_dalam-Bahasa_Indonesia-F43F5E?style=for-the-badge" alt="Indonesian Documentation"></a>
@@ -18,11 +18,11 @@
 </p>
 
 <p align="center">
-  <b>Your private, local executive assistant running directly on your PC.</b><br>
-  Operates inside local workspaces, automates desktop applications and system workflows, crafts analytical documents and spreadsheets, indexes hundreds of files instantly, and responds to remote commands via Telegram on your smartphone.
+  <b>Your private AI Desktop Operating Assistant running directly on your PC.</b><br>
+  Far more than a folder-reading chatbot — AKSA discovers installed desktop applications, transparently brokers native OS permissions, extends capabilities through portable Agent Skills, automates complex workflows, and takes commands remotely via Telegram on your smartphone.
 </p>
 
-[Key Features](#-key-features) • [How It Works](#-how-aksa-works-on-your-pc) • [System Architecture](#️-system-architecture) • [Quickstart Guide](#-quickstart-guide) • [Security & Privacy](#-local-first-security--privacy) • [Engineering Docs](#-engineering-docs--architectural-specs)
+[Key Features](#-key-features) • [Desktop Intelligence Architecture](#-aksa-desktop-intelligence-architecture) • [System Architecture](#️-system-architecture) • [Quickstart Guide](#-quickstart-guide) • [Security & Privacy](#-local-first-security-privacy--model-transparency) • [Engineering Docs](#-engineering-docs--architectural-specs)
 
 </div>
 
@@ -78,42 +78,55 @@ Most AI tools today are web chatbots isolated from your local desktop applicatio
 
 ---
 
-## 🚀 How AKSA Works on Your PC
+## 🚀 AKSA Desktop Intelligence Architecture
+
+AKSA implements a modular, layered desktop architecture separating user intent comprehension, application discovery, OS permission brokering, external skills extensibility, and sandboxed native execution:
 
 ```text
-                                  +---------------------------------------+
-                                  |         USER / OPERATOR               |
-                                  |   (Desktop UI / Telegram Smartphone)  |
-                                  +-------------------+-------------------+
-                                                      |
-                                                      v
-                                  +---------------------------------------+
-                                  |        EXECUTIVE MANAGER (AI)         |
-                                  |     (Supervisor Graph Orchestrator)   |
-                                  +-------------------+-------------------+
-                                                      |
-                  +-----------------------------------+-----------------------------------+
-                  |                                   |                                   |
-                  v                                   v                                   v
-      +-----------------------+           +-----------------------+           +-----------------------+
-      |   Office & Document   |           |    Local Hybrid RAG   |           |      PC & Screen      |
-      |      Specialist       |           |   Document Researcher |           |     Operator Agent    |
-      +-----------+-----------+           +-----------+-----------+           +-----------+-----------+
-                  |                                   |                                   |
-                  v                                   v                                   v
-      +-----------------------+           +-----------------------+           +-----------------------+
-      |        TIER 1         |           |      HYBRID RAG       |           |     TIER 2 & TIER 3   |
-      | Excel, Word, PPT, PDF |           | LanceDB + SQLite FTS5 |           | Win32 COM, uv, Visual |
-      +-----------------------+           +-----------------------+           +-----------------------+
-                  |                                   |                                   |
-                  +-----------------------------------+-----------------------------------+
-                                                      |
-                                                      v
-                                  +---------------------------------------+
-                                  |         WORKSPACE SANDBOX             |
-                                  |    (User-Authorized PC Folder)        |
-                                  +---------------------------------------+
+                  +-------------------------------------------------------------+
+                  |                     USER / OPERATOR                         |
+                  |           (Desktop UI / Telegram Smartphone)                |
+                  +------------------------------+------------------------------+
+                                                 |
+                                                 v
+                  +-------------------------------------------------------------+
+                  |                   AKSA AI ORCHESTRATOR                      |
+                  |      (Comprehends Intent, Selects Apps, Skills & Tools)     |
+                  +------------------------------+------------------------------+
+                                                 |
+                                                 v
+         +-----------------------+---------------+---------------+-----------------------+
+         |                       |                               |                       |
+         v                       v                               v                       v
++-----------------+     +-----------------+             +-----------------+     +-----------------+
+| APP INTELLIGENCE|     | OS PERMISSION   |             | EXTERNAL SKILL  |     | INTEGRATION     |
+| (Discovers      |     | BROKER          |             | MANAGER         |     | MANAGER         |
+| Installed &     |     | (Native Windows |             | (Standard       |     | (MCP Client &   |
+| Running Apps)   |     | & macOS Auth)   |             | SKILL.md Sandbox|     | Native Adapters)|
++--------+--------+     +--------+--------+             +--------+--------+     +--------+--------+
+         |                       |                               |                       |
+         +-----------------------+---------------+---------------+-----------------------+
+                                                 |
+                                                 v
+                  +-------------------------------------------------------------+
+                  |                  NATIVE OS EXECUTION LAYER                  |
+                  |     Windows / macOS · Least Privilege · Audit · E-Stop      |
+                  +------------------------------+------------------------------+
+                                                 |
+                                                 v
+                  +-------------------------------------------------------------+
+                  |                    WORKSPACE SANDBOX PC                     |
+                  |      User-Authorized Workspace Folders (Path Jail & Backup) |
+                  +-------------------------------------------------------------+
 ```
+
+### Layer Responsibilities & Security Separation:
+1. **AKSA AI Orchestrator:** Interprets user instructions, formulates phased execution plans, delegates to domain specialist sub-agents, and dynamically resolves necessary tools.
+2. **App Intelligence:** Scans Windows registry (HKLM/HKCU) and macOS `.app` bundles to discover installed software and available automation adapters without administrator elevation.
+3. **OS Permission Broker:** Independently tracks native operating system permissions (Accessibility, Screen Recording, File ACLs) versus AKSA internal user consent grants.
+4. **External Skill Manager:** Installs portable `SKILL.md` instruction packages with archive quarantine validation, static security scanning, and disabled-by-default initialization.
+5. **Integration Manager:** Manages standard Model Context Protocol (MCP) server lifecycles and native desktop application bridges (Office COM, AppleScript).
+6. **Native OS Execution Layer:** Executes authorized operations strictly confined to `allowed_paths`, logs tamper-proof audit trails, and provides a hardware emergency stop (`Ctrl+Shift+Q`).
 
 ---
 

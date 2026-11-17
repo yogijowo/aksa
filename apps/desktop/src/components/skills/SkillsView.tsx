@@ -95,7 +95,7 @@ export const SkillsView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-8 bg-[#191918] text-[#ECECEB]">
+    <div className="flex-1 overflow-y-auto px-8 py-8 bg-[#0C0C0E] text-[#ECECEB]">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -112,7 +112,7 @@ export const SkillsView: React.FC = () => {
         </div>
 
         {/* Security Manifesto Callout */}
-        <div className="p-4 rounded-xl bg-[#21211F] border border-[#10B981]/30 flex items-start gap-3">
+        <div className="p-4 rounded-xl bg-[#161618] border border-[#10B981]/30 flex items-start gap-3">
           <div className="w-8 h-8 rounded-lg bg-[#10B981]/15 flex items-center justify-center text-[#10B981] shrink-0 mt-0.5">
             <ShieldCheck className="w-4 h-4" />
           </div>
@@ -126,7 +126,7 @@ export const SkillsView: React.FC = () => {
         </div>
 
         {/* Tab Toggle */}
-        <div className="flex items-center gap-2 p-1 rounded-xl bg-[#21211F] border border-[#FFFFFF]/10 w-fit">
+        <div className="flex items-center gap-2 p-1 rounded-xl bg-[#161618] border border-[#FFFFFF]/10 w-fit">
           <button
             onClick={() => setActiveTab("catalog")}
             className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
@@ -157,7 +157,7 @@ export const SkillsView: React.FC = () => {
               return (
                 <div
                   key={skill.id}
-                  className="p-5 rounded-xl bg-[#21211F] border border-[#FFFFFF]/10 hover:border-[#FFFFFF]/20 transition-all flex flex-col justify-between space-y-4"
+                  className="p-5 rounded-xl bg-[#161618] border border-[#FFFFFF]/10 hover:border-[#FFFFFF]/20 transition-all flex flex-col justify-between space-y-4"
                 >
                   <div className="space-y-2">
                     <div className="flex items-start justify-between gap-3">
@@ -175,7 +175,7 @@ export const SkillsView: React.FC = () => {
                     </div>
 
                     <p className="text-xs text-[#ECECEB]/85 leading-relaxed">{skill.description}</p>
-                    <p className="text-[11px] text-[#71716E] italic bg-[#1A1A18] p-2.5 rounded-lg border border-[#FFFFFF]/05">
+                    <p className="text-[11px] text-[#71716E] italic bg-[#121214] p-2.5 rounded-lg border border-[#FFFFFF]/05">
                       "{skill.instructions_preview}"
                     </p>
                   </div>
@@ -187,7 +187,7 @@ export const SkillsView: React.FC = () => {
                       {skill.capabilities.map((cap) => (
                         <span
                           key={cap}
-                          className="px-2 py-0.5 rounded text-[10px] font-medium bg-[#2A2A28] text-[#D97757] border border-[#D97757]/30"
+                          className="px-2 py-0.5 rounded text-[10px] font-medium bg-[#242428] text-[#D97757] border border-[#D97757]/30"
                         >
                           {cap.replace("filesystem.workspace.", "Folder Kerja: ")}
                         </span>
@@ -232,7 +232,7 @@ export const SkillsView: React.FC = () => {
             {installedList.map((skill) => (
               <div
                 key={skill.id}
-                className="p-4 rounded-xl bg-[#21211F] border border-[#FFFFFF]/10 flex items-center justify-between gap-4"
+                className="p-4 rounded-xl bg-[#161618] border border-[#FFFFFF]/10 flex items-center justify-between gap-4"
               >
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -241,14 +241,14 @@ export const SkillsView: React.FC = () => {
                       className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
                         skill.enabled
                           ? "bg-[#10B981]/15 text-[#10B981] border border-[#10B981]/30"
-                          : "bg-[#2A2A28] text-[#71716E]"
+                          : "bg-[#242428] text-[#71716E]"
                       }`}
                     >
                       {skill.enabled ? "AKTIF" : "NONAKTIF"}
                     </span>
                   </div>
                   <div className="text-xs text-[#9C9A92]">
-                    ID: <code className="text-[#ECECEB] bg-[#1A1A18] px-1 rounded">{skill.skill_id}</code> • v
+                    ID: <code className="text-[#ECECEB] bg-[#121214] px-1 rounded">{skill.skill_id}</code> • v
                     {skill.installed_version} • Penerbit: {skill.publisher}
                   </div>
                 </div>
@@ -259,7 +259,7 @@ export const SkillsView: React.FC = () => {
                     disabled={processingId === skill.skill_id}
                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all ${
                       skill.enabled
-                        ? "bg-[#2A2A28] hover:bg-[#343431] text-[#9C9A92] border border-[#FFFFFF]/10"
+                        ? "bg-[#242428] hover:bg-[#343431] text-[#9C9A92] border border-[#FFFFFF]/10"
                         : "bg-[#10B981] hover:bg-[#059669] text-white"
                     }`}
                   >
@@ -270,7 +270,7 @@ export const SkillsView: React.FC = () => {
                   <button
                     onClick={() => handleDelete(skill)}
                     disabled={processingId === skill.skill_id}
-                    className="p-2 rounded-lg bg-[#2A2A28] hover:bg-[#EF4444]/20 hover:text-[#EF4444] text-[#71716E] border border-[#FFFFFF]/10 transition-all"
+                    className="p-2 rounded-lg bg-[#242428] hover:bg-[#EF4444]/20 hover:text-[#EF4444] text-[#71716E] border border-[#FFFFFF]/10 transition-all"
                     title="Copot keahlian"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

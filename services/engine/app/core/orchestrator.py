@@ -62,7 +62,8 @@ def _create_word_duplicate_from_pdf(source_pdf: Path, target_docx: Path) -> str:
                                             run.bold = True
                         doc.add_paragraph()
 
-                page_text = page.get_text("text").strip()
+                raw_page_text = page.get_text("text")
+                page_text = str(raw_page_text).strip() if isinstance(raw_page_text, str) else ""
                 if page_text:
                     for line in page_text.splitlines():
                         line_str = line.strip()
@@ -70,18 +71,19 @@ def _create_word_duplicate_from_pdf(source_pdf: Path, target_docx: Path) -> str:
                             doc.add_paragraph(line_str)
             else:
                 blocks = page.get_text("blocks")
-                for b in sorted(blocks, key=lambda x: (x[1], x[0])):
-                    if b[6] == 0:
-                        text = b[4].strip()
-                        if text:
-                            p = doc.add_paragraph()
-                            p.paragraph_format.space_after = Pt(4)
-                            lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-                            if len(lines) == 1 and len(lines[0]) < 60 and (lines[0].isupper() or lines[0].endswith(":")):
-                                run = p.add_run(lines[0])
-                                run.bold = True
-                            else:
-                                p.add_run("\n".join(lines))
+                if isinstance(blocks, list):
+                    for b in sorted(blocks, key=lambda x: (x[1], x[0])):
+                        if len(b) > 6 and b[6] == 0:
+                            text = str(b[4]).strip() if len(b) > 4 else ""
+                            if text:
+                                p = doc.add_paragraph()
+                                p.paragraph_format.space_after = Pt(4)
+                                lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+                                if len(lines) == 1 and len(lines[0]) < 60 and (lines[0].isupper() or lines[0].endswith(":")):
+                                    run = p.add_run(lines[0])
+                                    run.bold = True
+                                else:
+                                    p.add_run("\n".join(lines))
         pdf_doc.close()
     except Exception as exc:
         p = doc.add_paragraph(f"Dokumen disalin dari berkas: {source_pdf.name}")

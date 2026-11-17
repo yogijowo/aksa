@@ -5,8 +5,8 @@
 </a>
 
 # ⚡ AKSA
-### Asisten Kerja &amp; Sistem Automasi — Platform Agen AI Desktop Indonesia
-*(Local-First Autonomous Multi-Agent, PC App Automation &amp; Remote Command Center)*
+### Asisten Kerja &amp; Sistem Automasi — AI Desktop Operating Assistant Indonesia
+*(Local-First AI Desktop Operating Assistant, App Intelligence, OS Permissions &amp; Remote Command Center)*
 
 <p align="center">
   <a href="./README.en.md"><img src="https://img.shields.io/badge/🌐_Read_in-English-6366F1?style=for-the-badge" alt="English Documentation"></a>
@@ -18,11 +18,11 @@
 </p>
 
 <p align="center">
-  <b>Asisten eksekutif pribadi yang beroperasi langsung di PC Anda.</b><br>
-  Bekerja di dalam folder lokal, mengontrol dan mengautomasi berbagai aplikasi di perangkat, mengolah dokumen layaknya staf ahli, membaca arsip ratusan berkas secara instan, dan siap diperintah dari jarak jauh lewat Telegram smartphone Anda.
+  <b>Asisten kecerdasan desktop (AI Desktop Operating Assistant) yang beroperasi langsung di PC Anda.</b><br>
+  Bukan sekadar AI agent pembaca folder — AKSA mendeteksi aplikasi perangkat yang terpasang, mengelola izin native sistem operasi secara transparan, memperluas kapabilitas melalui keahlian portabel (Agent Skills), mengolah dokumen perkantoran, dan dapat dikendalikan dari jarak jauh lewat Telegram smartphone Anda.
 </p>
 
-[Fitur Utama](#-fitur-utama) • [Cara Kerja di PC](#-bagaimana-aksa-bekerja-di-pc-anda) • [Arsitektur Sistem](#️-arsitektur-sistem) • [Panduan Cepat](#-panduan-memulai-cepat-quickstart) • [Keamanan & Privasi](#-keamanan--privasi-lokal) • [Dokumentasi Lengkap](#-dokumentasi-teknis--spesifikasi-arsitektur)
+[Fitur Utama](#-fitur-utama) • [Arsitektur Desktop Intelligence](#-arsitektur-kecerdasan-desktop-aksa) • [Arsitektur Sistem](#️-arsitektur-sistem) • [Panduan Cepat](#-panduan-memulai-cepat-quickstart) • [Keamanan & Privasi](#-keamanan-privasi-lokal--transparansi-model) • [Dokumentasi Lengkap](#-dokumentasi-teknis--spesifikasi-arsitektur)
 
 </div>
 
@@ -78,42 +78,55 @@ Mayoritas AI saat ini hanya berupa kotak obrolan di peramban web (*web chatbot*)
 
 ---
 
-## 🚀 Bagaimana AKSA Bekerja di PC Anda?
+## 🚀 Arsitektur Kecerdasan Desktop AKSA
+
+AKSA menerapkan arsitektur bertingkat (*layered architecture*) yang memisahkan antara pemahaman perintah, penemuan aplikasi, perizinan OS, ekstensi keahlian, dan lapisan eksekusi lokal:
 
 ```text
-                                  +---------------------------------------+
-                                  |         PENGGUNA / USER               |
-                                  |   (Desktop UI / Telegram Smartphone)  |
-                                  +-------------------+-------------------+
-                                                      |
-                                                      v
-                                  +---------------------------------------+
-                                  |        MANAJER EKSEKUTIF (AI)         |
-                                  |     (Supervisor Graph Orchestrator)   |
-                                  +-------------------+-------------------+
-                                                      |
-                  +-----------------------------------+-----------------------------------+
-                  |                                   |                                   |
-                  v                                   v                                   v
-      +-----------------------+           +-----------------------+           +-----------------------+
-      |  Spesialis Dokumen &  |           |  Peneliti Dokumen &   |           |    Operator PC &      |
-      |   Office Nusantara    |           |    Arsip RAG Lokal    |           |    Automasi Layar     |
-      +-----------+-----------+           +-----------+-----------+           +-----------+-----------+
-                  |                                   |                                   |
-                  v                                   v                                   v
-      +-----------------------+           +-----------------------+           +-----------------------+
-      |        TIER 1         |           |      HYBRID RAG       |           |     TIER 2 & TIER 3   |
-      | Excel, Word, PPT, PDF |           | LanceDB + SQLite FTS5 |           | Win32 COM, uv, Visual |
-      +-----------------------+           +-----------------------+           +-----------------------+
-                  |                                   |                                   |
-                  +-----------------------------------+-----------------------------------+
-                                                      |
-                                                      v
-                                  +---------------------------------------+
-                                  |       WORKSPACE SANDBOX PC            |
-                                  |    (Folder Kerja Aman Pengguna)       |
-                                  +---------------------------------------+
+                  +-------------------------------------------------------------+
+                  |                     PENGGUNA / USER                         |
+                  |           (Desktop UI / Telegram Smartphone)                |
+                  +------------------------------+------------------------------+
+                                                 |
+                                                 v
+                  +-------------------------------------------------------------+
+                  |                   AKSA AI ORCHESTRATOR                      |
+                  |        (Memahami Perintah, Memilih Aplikasi & Tools)        |
+                  +------------------------------+------------------------------+
+                                                 |
+                                                 v
+         +-----------------------+---------------+---------------+-----------------------+
+         |                       |                               |                       |
+         v                       v                               v                       v
++-----------------+     +-----------------+             +-----------------+     +-----------------+
+| APP INTELLIGENCE|     | OS PERMISSION   |             | EXTERNAL SKILL  |     | INTEGRATION     |
+| (Deteksi App    |     | BROKER          |             | MANAGER         |     | MANAGER         |
+| Terpasang &     |     | (Izin Native    |             | (Agent Skills   |     | (MCP Client &   |
+| Sedang Berjalan)|     | Windows/macOS)  |             | SKILL.md Aman)  |     | Adapter Native) |
++--------+--------+     +--------+--------+             +--------+--------+     +--------+--------+
+         |                       |                               |                       |
+         +-----------------------+---------------+---------------+-----------------------+
+                                                 |
+                                                 v
+                  +-------------------------------------------------------------+
+                  |                  NATIVE OS EXECUTION LAYER                  |
+                  |    Windows / macOS · Akses Sesuai Izin · Audit · Emergency  |
+                  +------------------------------+------------------------------+
+                                                 |
+                                                 v
+                  +-------------------------------------------------------------+
+                  |                    WORKSPACE SANDBOX PC                     |
+                  |      Folder Kerja Diizinkan Pengguna (Path Jail & Backup)   |
+                  +-------------------------------------------------------------+
 ```
+
+### Pemisahan Peran & Tanggung Jawab Keamanan:
+1. **AKSA AI Orchestrator:** Menerima instruksi pengguna, menyusun rencana eksekusi, memilih agen spesialis, dan menentukan alat yang relevan.
+2. **App Intelligence:** Memindai registri Windows dan bundle macOS untuk mendeteksi program terpasang beserta adapter yang tersedia tanpa hak administrator.
+3. **OS Permission Broker:** Meminta dan memverifikasi izin native platform (Accessibility, Screen Recording, File ACLs) secara terpisah dari konsen internal AKSA.
+4. **External Skill Manager:** Memasang paket instruksi `SKILL.md` terkurasi dengan isolasi karantina arsip dan status nonaktif secara default.
+5. **Integration Manager:** Menghubungkan server Model Context Protocol (MCP) dan antarmuka aplikasi native (Office COM, AppleScript).
+6. **Native OS Execution Layer:** Menjalankan eksekusi terverifikasi di bawah pembatasan folder `allowed_paths`, audit logging, dan tombol *Emergency Stop*.
 
 ---
 

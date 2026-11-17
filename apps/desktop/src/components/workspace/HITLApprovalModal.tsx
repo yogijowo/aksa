@@ -20,7 +20,7 @@ export const HITLApprovalModal: React.FC = () => {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-      <div className="w-full max-w-lg rounded-2xl bg-[#21211F] border border-amber-500/40 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      <div className="w-full max-w-lg rounded-2xl bg-[#161618] border border-amber-500/40 shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
         {/* Header */}
         <div className="bg-amber-500/10 border-b border-amber-500/20 px-5 py-4 flex items-center justify-between">
           <div className="flex items-center gap-2.5">
@@ -48,7 +48,7 @@ export const HITLApprovalModal: React.FC = () => {
             <p className="text-xs text-zinc-300 leading-relaxed">{current.description_id}</p>
           </div>
 
-          <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-3.5 space-y-2 text-xs">
+          <div className="rounded-xl bg-[#1E1E22] border border-white/[0.07] p-3.5 space-y-2 text-xs">
             <div className="flex items-center justify-between">
               <span className="text-zinc-400">Agen Peminta:</span>
               <span className="font-medium text-zinc-200">{current.agent_name}</span>

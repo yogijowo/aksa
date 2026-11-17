@@ -271,7 +271,9 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _row_to_dict(row: aiosqlite.Row) -> dict[str, Any]:
+def _row_to_dict(row: aiosqlite.Row | None) -> dict[str, Any]:
+    if row is None:
+        return {}
     return dict(row)
 
 
