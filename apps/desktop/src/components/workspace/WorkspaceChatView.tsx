@@ -91,7 +91,7 @@ export const WorkspaceChatView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-[#0C0C0E] overflow-hidden">
+    <div className="flex-1 flex flex-col h-full bg-[#191918] overflow-hidden">
       {/* Main Conversation Stream (Claude Desktop Editorial Layout) */}
       <div className="flex-1 overflow-y-auto px-6 py-8">
         <div className="max-w-[720px] mx-auto space-y-8">
@@ -252,7 +252,7 @@ export const WorkspaceChatView: React.FC = () => {
                     <button
                       key={qp.label}
                       onClick={() => setInputPrompt(qp.prompt)}
-                      className="group rounded-2xl bg-[#161618] hover:bg-[#1E1E22] border border-white/[0.07] hover:border-white/[0.14] p-4 text-left transition-all space-y-1.5"
+                      className="group rounded-2xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.07] hover:border-white/[0.14] p-4 text-left transition-all space-y-1.5"
                     >
                       <div className="flex items-center gap-2">
                         <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/[0.04] text-[#D97757] group-hover:bg-[#D97757]/10 transition-colors">
@@ -280,7 +280,7 @@ export const WorkspaceChatView: React.FC = () => {
             if (isUser) {
               return (
                 <div key={msg.id} className="flex justify-end">
-                  <div className="max-w-[82%] rounded-2xl bg-[#1E1E22] border border-white/[0.06] px-4 py-3 text-[13.5px] leading-relaxed text-zinc-100">
+                  <div className="max-w-[82%] rounded-2xl bg-[#262624] border border-white/[0.06] px-4 py-3 text-[13.5px] leading-relaxed text-zinc-100">
                     {msg.content}
                   </div>
                 </div>
@@ -412,7 +412,7 @@ export const WorkspaceChatView: React.FC = () => {
                     {msg.artifacts.map((art) => (
                       <div
                         key={art.id}
-                        className="group flex items-center justify-between gap-3 rounded-xl bg-[#161618] hover:bg-[#282826] border border-white/[0.07] hover:border-white/[0.14] p-3 text-left transition-all"
+                        className="group flex items-center justify-between gap-3 rounded-xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.07] hover:border-white/[0.14] p-3 text-left transition-all"
                       >
                         <div
                           className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer"
@@ -471,7 +471,7 @@ export const WorkspaceChatView: React.FC = () => {
               </div>
 
               {/* Minimalist Structured Execution Box */}
-              <div className="rounded-2xl bg-[#161618]/90 border border-white/[0.09] p-4 space-y-3 shadow-xl backdrop-blur-sm">
+              <div className="rounded-2xl bg-[#21211F]/95 border border-white/[0.09] p-4 space-y-3 shadow-xl backdrop-blur-sm">
                 <div className="flex items-center justify-between text-xs text-zinc-400 border-b border-white/[0.06] pb-2.5">
                   <div className="flex items-center gap-2">
                     <BrainCircuit size={13} className="text-[#D97757]" />
@@ -550,11 +550,11 @@ export const WorkspaceChatView: React.FC = () => {
       </div>
 
       {/* Bottom Floating Composer (Claude Desktop Signature Input Card) */}
-      <div className="px-6 pb-5 pt-2 bg-gradient-to-t from-[#0C0C0E] via-[#0C0C0E] to-transparent">
+      <div className="px-6 pb-5 pt-2 bg-gradient-to-t from-[#191918] via-[#191918] to-transparent">
         <div className="max-w-[720px] mx-auto space-y-2.5">
           <form
             onSubmit={handleSubmit}
-            className="rounded-2xl bg-[#161618] border border-white/[0.09] focus-within:border-white/[0.18] shadow-xl px-4 pt-3 pb-2.5 transition-colors"
+            className="rounded-2xl bg-[#21211F] border border-white/[0.09] focus-within:border-white/[0.18] shadow-xl px-4 pt-3 pb-2.5 transition-colors"
           >
             <input
               type="text"

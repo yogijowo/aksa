@@ -181,7 +181,7 @@ export const TelegramGatewayView: React.FC = () => {
   };
 
   return (
-    <div className="flex-1 p-6 md:p-8 overflow-y-auto bg-[#0C0C0E]">
+    <div className="flex-1 p-6 md:p-8 overflow-y-auto bg-[#191918]">
       <div className="max-w-6xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -208,14 +208,14 @@ export const TelegramGatewayView: React.FC = () => {
         </div>
 
         {feedbackNotice && (
-          <div className="rounded-xl bg-[#161618] border border-white/[0.08] px-4 py-3 text-xs text-zinc-300 flex items-center gap-2">
+          <div className="rounded-xl bg-[#21211F] border border-white/[0.08] px-4 py-3 text-xs text-zinc-300 flex items-center gap-2">
             <CheckCircle2 size={15} className="text-[#D97757]" />
             <span>{feedbackNotice}</span>
           </div>
         )}
 
         {/* Step 1 & Step 2: Token & 6-Digit Pairing */}
-        <div className="rounded-2xl bg-[#161618] border border-white/[0.08] p-5 space-y-4">
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-4">
           <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
             <Smartphone size={15} className="text-sky-400" />
             <span>Langkah 1: Konfigurasi Token Bot Telegram (@BotFather)</span>
@@ -232,7 +232,7 @@ export const TelegramGatewayView: React.FC = () => {
                     ? `Sudah terhubung ke ${botUsername} (Masukkan token baru jika ingin mengganti)`
                     : "Tempel HTTP API Token dari @BotFather (contoh: 748291:AAH...)"
                 }
-                className="flex-1 rounded-xl bg-[#1E1E22] border border-white/[0.08] px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-[#D97757]/60"
+                className="flex-1 rounded-xl bg-[#262624] border border-white/[0.08] px-3.5 py-2.5 text-xs text-zinc-100 focus:outline-none focus:border-[#D97757]/60"
               />
               <button
                 onClick={() => void handleConnectBot()}
@@ -249,7 +249,7 @@ export const TelegramGatewayView: React.FC = () => {
           </div>
 
           {/* Pairing Code Section */}
-          <div className="rounded-xl bg-[#1E1E22] border border-white/[0.06] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="rounded-xl bg-[#262624] border border-white/[0.06] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div className="space-y-1">
               <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
                 <ShieldCheck size={14} className="text-emerald-400" />
@@ -266,7 +266,7 @@ export const TelegramGatewayView: React.FC = () => {
               <button
                 onClick={() => void handleRegenerateCode()}
                 title="Buat kode pairing baru"
-                className="rounded-xl bg-[#161618] hover:bg-[#1E1E22] border border-white/[0.08] p-2.5 text-zinc-300 transition-colors"
+                className="rounded-xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.08] p-2.5 text-zinc-300 transition-colors"
               >
                 <RefreshCw size={14} />
               </button>
@@ -275,7 +275,7 @@ export const TelegramGatewayView: React.FC = () => {
         </div>
 
         {/* Remote Command Testing Section */}
-        <div className="rounded-2xl bg-[#161618] border border-white/[0.08] p-5 space-y-3">
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-semibold text-zinc-100 flex items-center gap-2">
               <Mic size={15} className="text-sky-400" />
@@ -293,7 +293,7 @@ export const TelegramGatewayView: React.FC = () => {
               onChange={(e) => setSimCommand(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleSimulateRemoteTask()}
               placeholder="Ketik instruksi simulasi (misal: Tolong buatkan rekap penjualan di Excel)..."
-              className="flex-1 rounded-xl bg-[#1E1E22] border border-white/[0.08] px-3.5 py-2 text-xs text-zinc-100 focus:outline-none focus:border-[#D97757]/60"
+              className="flex-1 rounded-xl bg-[#262624] border border-white/[0.08] px-3.5 py-2 text-xs text-zinc-100 focus:outline-none focus:border-[#D97757]/60"
             />
             <button
               onClick={() => void handleSimulateRemoteTask()}
@@ -307,7 +307,7 @@ export const TelegramGatewayView: React.FC = () => {
         </div>
 
         {/* Live Telegram Activity & Security Log */}
-        <div className="rounded-2xl bg-[#161618] border border-white/[0.08] p-5 space-y-3">
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300 flex items-center gap-2">
               <Activity size={14} className="text-[#D97757]" />
@@ -323,7 +323,7 @@ export const TelegramGatewayView: React.FC = () => {
               logs.map((entry) => (
                 <div
                   key={entry.id}
-                  className="rounded-xl bg-[#1E1E22] border border-white/[0.06] px-4 py-2.5 flex items-center justify-between gap-4"
+                  className="rounded-xl bg-[#262624] border border-white/[0.06] px-4 py-2.5 flex items-center justify-between gap-4"
                 >
                   <div className="text-xs text-zinc-200">{entry.detail}</div>
                   <span className="shrink-0 text-[10px] font-mono text-zinc-400">{entry.time}</span>
@@ -331,7 +331,7 @@ export const TelegramGatewayView: React.FC = () => {
               ))
             ) : (
               /* Clean Empty State */
-              <div className="rounded-xl bg-[#1E1E22]/40 border border-dashed border-white/[0.06] p-6 text-center space-y-1">
+              <div className="rounded-xl bg-[#262624]/40 border border-dashed border-white/[0.06] p-6 text-center space-y-1">
                 <p className="text-xs font-medium text-zinc-300">Belum Ada Aktivitas Telegram</p>
                 <p className="text-[11.5px] text-zinc-500">
                   Lakukan pairing bot Telegram di atas untuk mulai menerima perintah dan mengirim dokumen langsung ke HP Anda.

@@ -4,10 +4,10 @@
   "private": true,
   "description": "AKSA — Autonomous Hierarchical AI Agent & PC Automation Monorepo",
   "scripts": {
-    "dev": "python scripts/dev.py",
-    "dev:tauri": "python scripts/dev.py --tauri",
+    "dev": "node scripts/dev.js",
+    "dev:tauri": "node scripts/dev.js --tauri",
     "build": "npm --prefix apps/desktop run build",
-    "test:backend": "python -m pytest services/engine/tests -v",
+    "test:backend": "node scripts/dev.js --test",
     "test:frontend": "npm --prefix apps/desktop run build"
   }
 }
