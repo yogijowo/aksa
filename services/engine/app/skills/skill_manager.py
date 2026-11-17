@@ -148,7 +148,103 @@ CURATED_SKILL_CATALOG: list[SkillManifest] = [
         capabilities=["filesystem.workspace.read"],
         has_scripts=False,
         has_network=False,
-        instructions_preview="Evaluasi kode berdasarkan SOLID principles, clean architecture, penanganan eksepsi eksplisit, dan keamanan input pengguna.",
+        instructions_preview="Analisis statis perubahan kode pada git diff, pelacakan regresi fungsi, dan pembuatan checklist code review terperinci.",
+    ),
+    SkillManifest(
+        id="remotion-best-practices",
+        display_name="Praktik Terbaik Video Remotion",
+        version="1.0.0",
+        publisher="Remotion Official",
+        description="Pola kerja penyusunan video animasi terprogram dengan React, safe margins, pacing, transisi audio/visual, dan rendering MP4 efisien.",
+        trust_level="curated",
+        capabilities=["filesystem.workspace.read", "filesystem.workspace.write"],
+        has_scripts=False,
+        has_network=False,
+        instructions_preview="Pedoman komposisi Remotion: frame rate 30/60fps, aspect ratio 16:9 atau 9:16, sequence timing, dan sinkronisasi audio.",
+    ),
+    SkillManifest(
+        id="hyperframes-motion",
+        display_name="HyperFrames Motion Graphics",
+        version="1.0.0",
+        publisher="HeyGen / HyperFrames",
+        description="Pembuatan grafis gerak, kinetik tipografi, dan template motion visual untuk konten video media sosial beresolusi tinggi.",
+        trust_level="curated",
+        capabilities=["filesystem.workspace.read", "filesystem.workspace.write"],
+        has_scripts=False,
+        has_network=False,
+        instructions_preview="Standar layout kinetik teks, kurva animasi easing bezier, sinkronisasi visual beat, dan export WebM/MP4.",
+    ),
+    SkillManifest(
+        id="ai-video-generation",
+        display_name="Alur Kerja Generasi Video AI",
+        version="1.0.0",
+        publisher="Komunitas Global AI",
+        description="Pembuatan storyboard adegan, prompt text-to-video / image-to-video, penggabungan footage, dan kontrol konsistensi karakter.",
+        trust_level="curated",
+        capabilities=["filesystem.workspace.read", "filesystem.workspace.write"],
+        has_scripts=False,
+        has_network=True,
+        instructions_preview="Metodologi penyusunan shot list, deskripsi pergerakan kamera (pan/tilt/zoom), dan orkestrasi model video generasi.",
+    ),
+    SkillManifest(
+        id="frontend-design",
+        display_name="Desain Antarmuka Frontend & UI Taste",
+        version="1.1.0",
+        publisher="Vercel / Anthropic Community",
+        description="Panduan desain UI premium: tipografi Geist/Inter, palet warna gelap obsidian, micro-interactions Tailwind CSS, dan aksesibilitas WCAG.",
+        trust_level="curated",
+        capabilities=["filesystem.workspace.read", "filesystem.workspace.write"],
+        has_scripts=False,
+        has_network=False,
+        instructions_preview="Aturan hierarki visual, kontras warna, batas padding ritmis, dialog non-intrusif, dan zero-emoji icon standards.",
+    ),
+    SkillManifest(
+        id="prisma-ddti-skills",
+        display_name="Keahlian Teknis Perpustakaan & Naskah DDTI",
+        version="1.0.0",
+        publisher="Prisma DDTI Indonesia",
+        description="Koleksi instruksi keahlian Bahasa Indonesia untuk kurasi naskah teknis perpustakaan, metadata bibliografi, dan repositori digital.",
+        trust_level="curated",
+        capabilities=["filesystem.workspace.read", "filesystem.workspace.write"],
+        has_scripts=False,
+        has_network=False,
+        instructions_preview="Standar katalogisasi dokumen, ekstraksi tajuk subjek perpustakaan, dan format ringkasan naskah formal Bahasa Indonesia.",
+    ),
+    SkillManifest(
+        id="find-skills-id",
+        display_name="Pencari & Kurator Keahlian Bahasa Indonesia",
+        version="1.0.0",
+        publisher="Komunitas AI Indonesia",
+        description="Membantu agen menemukan dan mengadaptasi instruksi skill relevan dari repositori terbuka menggunakan Bahasa Indonesia alami.",
+        trust_level="curated",
+        capabilities=["filesystem.workspace.read"],
+        has_scripts=False,
+        has_network=True,
+        instructions_preview="Prosedur pencarian repositori skill terpercaya, analisis kesesuaian domain tugas, dan lokalisasi instruksi kerja.",
+    ),
+    SkillManifest(
+        id="naskah-id",
+        display_name="Penyuntingan Karya Ilmiah & Naskah ID",
+        version="1.0.2",
+        publisher="Nothinx Indonesia",
+        description="Pedoman penyuntingan tata bahasa formal Bahasa Indonesia (EYD V), struktur abstrak ilmiah, sitasi APA/IEEE, dan kohesi paragraf.",
+        trust_level="curated",
+        capabilities=["filesystem.workspace.read", "filesystem.workspace.write"],
+        has_scripts=False,
+        has_network=False,
+        instructions_preview="Pemeriksaan kebakuan kata (KBBI), penghindaran kata mubazir, konsistensi istilah teknis, dan verifikasi daftar pustaka.",
+    ),
+    SkillManifest(
+        id="pbj-asn-indonesia",
+        display_name="Pemeriksaan Administrasi PBJ & ASN",
+        version="1.0.0",
+        publisher="Kurasi Ahli Kebijakan RI",
+        description="Checklist pemeriksaan berkas Pengadaan Barang/Jasa (PBJ), Kerangka Acuan Kerja (KAK), Harga Perkiraan Sendiri (HPS), dan dokumen ASN.",
+        trust_level="curated",
+        capabilities=["filesystem.workspace.read", "filesystem.workspace.write"],
+        has_scripts=False,
+        has_network=False,
+        instructions_preview="Pemeriksaan kepatuhan regulasi pengadaan barang/jasa pemerintah, validasi dokumen kontrak, dan checklist kelengkapan audit.",
     ),
     SkillManifest(
         id="sql-query-optimizer",
@@ -425,13 +521,27 @@ class AgentSkillsManager:
             manifest=manifest,
         )
 
-    async def install_curated_skill(self, skill_id: str) -> dict[str, Any]:
-        """Install a verified curated skill into SQLite in a DISABLED default state."""
+    async def install_curated_skill(
+        self,
+        skill_id: str,
+        target_agent_id: str | None = None,
+        install_to_shared: bool = False,
+    ) -> dict[str, Any]:
+        """Install a verified curated skill into SQLite in a DISABLED default state (per-agent or shared)."""
         curated = next((c for c in CURATED_SKILL_CATALOG if c.id == skill_id), None)
         if not curated:
             raise KeyError(f"Keahlian terkurasi '{skill_id}' tidak ditemukan.")
 
-        target_dir = self.skills_dir / skill_id
+        from app.core.agent_directory import agent_directory_service
+        if target_agent_id:
+            target_dir = agent_directory_service.resolve_agent_path(
+                target_agent_id, f"skills/installed/{skill_id}"
+            )
+        elif install_to_shared:
+            target_dir = agent_directory_service.root_dir / "shared" / "skills" / skill_id / curated.version
+        else:
+            target_dir = self.skills_dir / skill_id
+
         target_dir.mkdir(parents=True, exist_ok=True)
         (target_dir / "SKILL.md").write_text(
             f"---\nname: {curated.display_name}\nversion: {curated.version}\npublisher: {curated.publisher}\n---\n\n"
@@ -468,6 +578,30 @@ class AgentSkillsManager:
         })
 
         return item
+
+    def load_skill_instructions(self, skill_id: str, agent_id: str | None = None) -> str:
+        """Progressive disclosure: loads actual markdown instructions on demand."""
+        from app.core.agent_directory import agent_directory_service
+        if agent_id:
+            agent_skill = agent_directory_service.resolve_agent_path(
+                agent_id, f"skills/installed/{skill_id}/SKILL.md"
+            )
+            if agent_skill.exists():
+                return agent_skill.read_text(encoding="utf-8")
+
+        shared_skill = agent_directory_service.root_dir / "shared" / "skills" / skill_id
+        if shared_skill.exists():
+            for v_dir in shared_skill.iterdir():
+                md = v_dir / "SKILL.md"
+                if md.exists():
+                    return md.read_text(encoding="utf-8")
+
+        sys_skill = self.skills_dir / skill_id / "SKILL.md"
+        if sys_skill.exists():
+            return sys_skill.read_text(encoding="utf-8")
+
+        curated = next((c for c in CURATED_SKILL_CATALOG if c.id == skill_id), None)
+        return curated.instructions_preview if curated else ""
 
     async def uninstall_skill(self, skill_id: str) -> bool:
         """Uninstall a skill, revoke all its grants, and remove its runtime directory."""

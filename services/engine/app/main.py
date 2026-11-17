@@ -99,7 +99,9 @@ def create_app() -> FastAPI:
 
         # 4. Token authentication
         if not settings.dev_mode:
-            token = request.headers.get("X-AKSA-Auth-Token")
+            raw_auth = request.headers.get("Authorization", "")
+            bearer_token = raw_auth.split(" ", 1)[1].strip() if raw_auth.startswith("Bearer ") else ""
+            token = request.headers.get("X-AKSA-Auth-Token") or bearer_token
             if not token or token != settings.auth_token:
                 return JSONResponse(
                     status_code=401,

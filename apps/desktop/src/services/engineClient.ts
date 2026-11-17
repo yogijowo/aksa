@@ -605,4 +605,102 @@ export async function deleteSkillRemote(skillId: string): Promise<boolean> {
   }
 }
 
+// --- Root Directory, Agent Learning & Dynamic Models API ---
+export async function fetchRootDirStatusRemote(): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/root-dir`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function setRootDirRemote(rootPath: string): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/root-dir`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ root_path: rootPath }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchDiscoveredModelsRemote(): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/models/discovered`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function refreshDiscoveredModelsRemote(providerId?: string): Promise<any | null> {
+  try {
+    const url = providerId
+      ? `${DEFAULT_BASE_URL}/api/v1/models/providers/${encodeURIComponent(providerId)}/refresh`
+      : `${DEFAULT_BASE_URL}/api/v1/models/refresh`;
+    const res = await fetch(url, { method: "POST" });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAgentMetricsRemote(agentId: string): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${encodeURIComponent(agentId)}/metrics`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAgentMemoryRemote(agentId: string): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${encodeURIComponent(agentId)}/memory`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAgentCandidateSkillsRemote(agentId: string): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${encodeURIComponent(agentId)}/skills/candidates`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function promoteCandidateSkillRemote(
+  agentId: string,
+  skillId: string,
+  version: string = "1.0.0",
+  promoteToShared: boolean = false
+): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}/promote`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ version, promote_to_shared: promoteToShared }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+
 

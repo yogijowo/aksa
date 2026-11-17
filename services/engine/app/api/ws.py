@@ -113,7 +113,7 @@ async def websocket_stream_endpoint(
     session_id: str | None = Query(default=None),
 ) -> None:
     """Bi-directional real-time WebSocket stream between Desktop UI and Python Engine with session isolation."""
-    if not settings.dev_mode and token != settings.auth_token:
+    if not settings.dev_mode and (not token or token != settings.auth_token):
         await websocket.close(code=4001, reason="Unauthorized")
         return
 

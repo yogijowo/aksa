@@ -594,6 +594,8 @@ class RequestCapabilityGrantRequest(BaseModel):
 
 class InstallCuratedSkillRequest(BaseModel):
     skill_id: str
+    target_agent_id: str | None = None
+    install_to_shared: bool = False
 
 
 class ToggleSkillRequest(BaseModel):
@@ -696,7 +698,11 @@ async def list_skills() -> dict[str, Any]:
 async def install_curated_skill(req: InstallCuratedSkillRequest) -> dict[str, Any]:
     """Install a curated Agent Skill in a DISABLED default state."""
     try:
-        skill = await agent_skills_manager.install_curated_skill(req.skill_id)
+        skill = await agent_skills_manager.install_curated_skill(
+            req.skill_id,
+            target_agent_id=req.target_agent_id,
+            install_to_shared=req.install_to_shared,
+        )
         return {"skill": skill, "message": "Keahlian berhasil dipasang dalam kondisi nonaktif (dinonaktifkan secara default)."}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -810,6 +816,198 @@ async def get_support_diagnostic_bundle() -> dict[str, Any]:
     """Generate a redacted support diagnostic bundle without secrets or document contents (Section 13.3)."""
     bundle = await observability_manager.generate_support_bundle()
     return {"support_bundle": bundle}
+
+
+# ---------------------------------------------------------------------------
+# Section 2 & 4: Root Directory, Agent Learning & Model Discovery Endpoints
+# ---------------------------------------------------------------------------
+
+from app.core.agent_directory import agent_directory_service, agent_isolation_policy
+from app.core.agent_learning import (
+    AgentLearningMetrics,
+    AgentMemoryService,
+    SkillVersionService,
+)
+from app.core.model_discovery import model_discovery_service
+
+
+class SetRootDirRequest(BaseModel):
+    root_path: str
+
+
+class UpdatePreferencesRequest(BaseModel):
+    preferences: dict[str, Any]
+
+
+class PromoteSkillRequest(BaseModel):
+    version: str = "1.0.0"
+    promote_to_shared: bool = False
+
+
+class RollbackSkillRequest(BaseModel):
+    target_version: str
+
+
+@api_router.get("/skills/{skill_id}/instructions")
+async def get_skill_instructions(skill_id: str, agent_id: str | None = None) -> dict[str, Any]:
+    """Progressive disclosure: loads actual skill Markdown instructions on demand."""
+    content = agent_skills_manager.load_skill_instructions(skill_id, agent_id=agent_id)
+    return {"skill_id": skill_id, "instructions": content}
+
+
+@api_router.get("/system/root-dir")
+async def get_system_root_dir_status() -> dict[str, Any]:
+    """Return status and space of user-selected AKSA root directory."""
+    return agent_directory_service.get_root_status()
+
+
+@api_router.post("/system/root-dir")
+async def set_system_root_dir(req: SetRootDirRequest) -> dict[str, Any]:
+    """Configure and initialize a user-selected AKSA root directory."""
+    try:
+        res = agent_directory_service.set_root_dir(req.root_path)
+        return res
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@api_router.get("/models/discovered")
+async def get_discovered_models() -> dict[str, Any]:
+    """Return live or cached models discovered across active providers."""
+    keys = await llm_router.get_saved_api_keys()
+    discovered = await model_discovery_service.discover_all_active_providers(keys)
+    serialized = {prov: [m.model_dump() for m in m_list] for prov, m_list in discovered.items()}
+    return {"providers": serialized}
+
+
+@api_router.post("/models/refresh")
+async def refresh_all_models() -> dict[str, Any]:
+    """Force fresh live discovery query across all configured providers."""
+    keys = await llm_router.get_saved_api_keys()
+    discovered = await model_discovery_service.discover_all_active_providers(keys)
+    serialized = {prov: [m.model_dump() for m in m_list] for prov, m_list in discovered.items()}
+    return {"refreshed": True, "providers": serialized}
+
+
+@api_router.post("/models/providers/{provider_id}/refresh")
+async def refresh_provider_models(provider_id: str) -> dict[str, Any]:
+    """Force fresh discovery query for a single provider."""
+    keys = await llm_router.get_saved_api_keys()
+    models = await model_discovery_service.discover_provider(provider_id, api_key=keys.get(provider_id))
+    return {"provider_id": provider_id, "models": [m.model_dump() for m in models]}
+
+
+@api_router.get("/models/recommend")
+async def recommend_model_for_role(role: str = "general") -> dict[str, Any]:
+    """Recommend best model matching role requirements and capability tags."""
+    keys = await llm_router.get_saved_api_keys()
+    discovered = await model_discovery_service.discover_all_active_providers(keys)
+    all_models = [m for sublist in discovered.values() for m in sublist]
+    rec = model_discovery_service.recommend_model_for_role(role, all_models)
+    return {"role": role, "recommended_model": rec.model_dump() if rec else None}
+
+
+@api_router.get("/agents/{agent_id}/memory")
+async def get_agent_memory(agent_id: str) -> dict[str, Any]:
+    """Get isolated episodic memory tasks and preferences for a specific agent."""
+    memory_svc = AgentMemoryService(agent_id)
+    episodic = [t.model_dump() for t in memory_svc.list_episodic_tasks()]
+    prefs = memory_svc.get_preferences()
+    return {"agent_id": agent_id, "episodic_tasks": episodic, "preferences": prefs}
+
+
+@api_router.post("/agents/{agent_id}/memory/preferences")
+async def update_agent_preferences(agent_id: str, req: UpdatePreferencesRequest) -> dict[str, Any]:
+    """Update agent preference profile with automatic privacy redaction."""
+    memory_svc = AgentMemoryService(agent_id)
+    updated = memory_svc.update_preferences(req.preferences)
+    return {"agent_id": agent_id, "preferences": updated}
+
+
+@api_router.get("/agents/{agent_id}/metrics")
+async def get_agent_metrics(agent_id: str) -> dict[str, Any]:
+    """Get learning metrics, success rates, and memory storage footprint for an agent."""
+    return AgentLearningMetrics.get_metrics(agent_id)
+
+
+@api_router.get("/agents/{agent_id}/skills/candidates")
+async def list_agent_candidate_skills(agent_id: str) -> dict[str, Any]:
+    """List candidate skills waiting for review/promotion for an agent."""
+    version_svc = SkillVersionService(agent_id)
+    candidates = version_svc.list_candidates()
+    return {"agent_id": agent_id, "candidates": candidates}
+
+
+@api_router.post("/agents/{agent_id}/skills/{skill_id}/evaluate")
+async def evaluate_agent_candidate_skill(agent_id: str, skill_id: str) -> dict[str, Any]:
+    """Evaluate candidate skill safety and structural compliance."""
+    version_svc = SkillVersionService(agent_id)
+    try:
+        report = version_svc.evaluate_candidate(skill_id)
+        return {"report": report.model_dump()}
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@api_router.post("/agents/{agent_id}/skills/{skill_id}/promote")
+async def promote_agent_skill(agent_id: str, skill_id: str, req: PromoteSkillRequest) -> dict[str, Any]:
+    """Promote evaluated candidate to active versioned learned skill."""
+    version_svc = SkillVersionService(agent_id)
+    try:
+        res = version_svc.promote_candidate(
+            skill_id=skill_id,
+            version=req.version,
+            promote_to_shared=req.promote_to_shared,
+        )
+        return res
+    except (FileNotFoundError, PermissionError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@api_router.post("/agents/{agent_id}/skills/{skill_name}/rollback")
+async def rollback_agent_skill(agent_id: str, skill_name: str, req: RollbackSkillRequest) -> dict[str, Any]:
+    """Rollback an active learned skill to an earlier version."""
+    version_svc = SkillVersionService(agent_id)
+    try:
+        return version_svc.rollback_skill(skill_name, req.target_version)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@api_router.post("/agents/{agent_id}/skills/{skill_name}/disable")
+async def disable_agent_skill(agent_id: str, skill_name: str) -> dict[str, Any]:
+    """Disable a learned skill."""
+    version_svc = SkillVersionService(agent_id)
+    try:
+        return version_svc.disable_skill(skill_name)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@api_router.get("/agents/{agent_id}/skills/learned")
+async def list_agent_learned_skills(agent_id: str) -> dict[str, Any]:
+    """List all active learned skills for an agent."""
+    version_svc = SkillVersionService(agent_id)
+    skills = version_svc.list_learned_skills()
+    return {"agent_id": agent_id, "learned_skills": skills}
+
+
+@api_router.post("/agents/{agent_id}/export")
+async def export_agent_bundle(agent_id: str) -> dict[str, Any]:
+    """Export agent memory, profile, and learned skills to a portable zip archive."""
+    try:
+        archive = agent_isolation_policy.export_agent_package(agent_id)
+        return {"agent_id": agent_id, "export_path": str(archive)}
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@api_router.post("/agents/{agent_id}/purge")
+async def purge_agent_bundle(agent_id: str) -> dict[str, Any]:
+    """Permanently delete an agent's memory, profile, and learned skills."""
+    purged = agent_isolation_policy.purge_agent_data(agent_id)
+    return {"agent_id": agent_id, "purged": purged}
+
 
 
 

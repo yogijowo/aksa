@@ -112,6 +112,12 @@ def main() -> int:
     procs: list[subprocess.Popen[str]] = []
 
     try:
+        engine_env = {
+            **os.environ,
+            "PYTHONUNBUFFERED": "1",
+            "AKSA_DEV_MODE": "1",
+            "AKSA_AUTH_TOKEN": os.environ.get("AKSA_AUTH_TOKEN", "dev-aksa-local-token"),
+        }
         engine_proc = subprocess.Popen(
             engine_cmd,
             cwd=str(ENGINE_DIR),
@@ -119,7 +125,7 @@ def main() -> int:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"},
+            env=engine_env,
         )
         procs.append(engine_proc)
 

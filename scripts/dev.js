@@ -19,6 +19,7 @@ if (args.includes("--test")) {
   const child = spawn(pythonExecutable, testArgs, {
     cwd: rootDir,
     stdio: "inherit",
+    env: { ...process.env, AKSA_DEV_MODE: "1", AKSA_AUTH_TOKEN: "dev-aksa-local-token" },
   });
   child.on("exit", (code) => process.exit(code || 0));
 } else {
@@ -26,6 +27,7 @@ if (args.includes("--test")) {
   const child = spawn(pythonExecutable, [scriptPath, ...args], {
     cwd: rootDir,
     stdio: "inherit",
+    env: { ...process.env, AKSA_DEV_MODE: "1", AKSA_AUTH_TOKEN: "dev-aksa-local-token" },
   });
   child.on("exit", (code) => process.exit(code || 0));
 }

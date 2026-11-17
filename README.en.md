@@ -6,7 +6,7 @@
 
 # AKSA
 ### Asisten Kerja &amp; Sistem Automasi — AI Desktop Operating Assistant
-*(Hierarchical Multi-Agent Orchestrator, Authorized PC App Control, 16+ Agent Skills, OS Permission Broker &amp; Enterprise Security Baseline)*
+*(Hierarchical Multi-Agent Orchestrator, Adaptive Agent Learning, Dynamic Model Catalog, 20+ Agent Skills, OS Permission Broker &amp; Enterprise Security Baseline)*
 
 <p align="center">
   <a href="./README.md"><img src="https://img.shields.io/badge/Baca_dalam-Bahasa_Indonesia-D97757?style=for-the-badge" alt="Indonesian Documentation"></a>
@@ -14,12 +14,12 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Tests-33%2F33%20Verified-10B981?style=for-the-badge" alt="33/33 Verified Tests">
+  <img src="https://img.shields.io/badge/Tests-41%2F41%20Verified-10B981?style=for-the-badge" alt="41/41 Verified Tests">
 </p>
 
 <p align="center">
-  <b>A local-first AI Desktop Operating Assistant built with an enterprise security baseline.</b><br>
-  AKSA unifies a hierarchical multi-agent team (Supervisor &amp; Specialist Sub-Agents), honest PC application discovery with independent Connect/Disconnect authorization, a 2-layer OS Permission Broker, 16+ portable Agent Skills (<code>SKILL.md</code>), local hybrid RAG, an OS Credential Vault (Windows DPAPI / macOS Keychain), and a Telegram remote command center.
+  <b>A local-first AI Desktop Operating Assistant with adaptive per-agent learning, dynamic model discovery, and portable agent skills.</b><br>
+  AKSA unifies a hierarchical multi-agent team (Supervisor &amp; Specialist Sub-Agents), isolated per-agent folders and memories under a user-chosen root directory, dynamic live model discovery across 10 official providers, honest PC app authorization, a 2-layer OS Permission Broker, 20+ portable Agent Skills (<code>SKILL.md</code>) including video and Indonesian administration workflows, local hybrid RAG, an OS Credential Vault (Windows DPAPI / macOS Keychain), and a Telegram remote command center.
 </p>
 
 [Key Features](#-key-features) • [Desktop Intelligence Architecture](#-aksa-desktop-intelligence-architecture) • [Enterprise Security & Privacy](#-enterprise-security-local-privacy--data-governance) • [Quickstart](#-quickstart) • [Documentation](#-technical--governance-documentation)
@@ -81,7 +81,7 @@ npm run dev
 # Or run Native Tauri v2 Desktop Window (Requires Rust / Cargo)
 npm run dev:tauri
 
-# Run all 33 backend unit, integration & security regression tests
+# Run all 41 backend unit, integration & security regression tests
 npm run test:backend
 
 # Run TypeScript typecheck & Vite production bundle

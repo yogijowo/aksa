@@ -621,6 +621,32 @@ class HierarchicalOrchestrator:
             session_id=session_id,
         )
 
+        # Record episodic task & evaluate candidate skills under isolated agent storage
+        try:
+            from app.core.agent_learning import AgentMemoryService, SkillCandidateExtractor
+            sup_agent_id = supervisor.get("id") or "supervisor"
+            tools_called = [s.get("action_label", "") for s in execution_steps]
+            mem_svc = AgentMemoryService(sup_agent_id)
+            task_uid = f"task_{uuid.uuid4().hex[:8]}"
+            mem_svc.record_episodic_task(
+                task_id=task_uid,
+                session_id=session_id or "default",
+                intent=prompt[:150],
+                summary=final_reply[:200],
+                tools_used=tools_called,
+                success=True,
+            )
+            extractor = SkillCandidateExtractor(sup_agent_id)
+            extractor.evaluate_task_for_learning(
+                task_id=task_uid,
+                intent=prompt,
+                tools_used=tools_called,
+                success=True,
+                user_explicit_teach="jadikan skill" in prompt.lower() or "pelajari ini" in prompt.lower(),
+            )
+        except Exception:
+            pass
+
         return {
             "supervisor_name": supervisor["name"],
             "reply": final_reply,
