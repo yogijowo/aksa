@@ -124,7 +124,7 @@ flowchart TD
 
 ## Keamanan Enterprise, Privasi Lokal & Tata Kelola Data
 
-AKSA memenuhi standar keamanan dalam [AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md](./AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md):
+AKSA menerapkan arsitektur keamanan berlapis yang terdokumentasi di [`SECURITY.md`](./SECURITY.md) dan [`PRIVACY.md`](./PRIVACY.md):
 
 | Kontrol Keamanan | Implementasi Teknis |
 |---|---|
@@ -183,7 +183,6 @@ npm run test:frontend
 ## Dokumentasi Teknis & Tata Kelola
 
 ### Dokumen Tata Kelola & Keamanan Utama
-* [**`AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md`**](./AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md) — Spesifikasi induk kesiapan enterprise, baseline keamanan, dan *release gates*.
 * [**`SECURITY.md`**](./SECURITY.md) — Model ancaman (*threat model*), batas kepercayaan, klasifikasi risiko `R0`–`R4`, dan prosedur pelaporan celah keamanan.
 * [**`PRIVACY.md`**](./PRIVACY.md) — Kebijakan privasi *local-first*, `ProviderMode`, `DataClassification`, dan inventaris penyimpanan data lokal.
 * [**`SUPPORT.md`**](./SUPPORT.md) — Panduan pemecahan masalah operasional (14 skenario kegagalan), kode error standar, dan cara mengekspor *Support Bundle* yang telah disensor.

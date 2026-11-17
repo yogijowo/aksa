@@ -92,7 +92,6 @@ npm run test:frontend
 
 ## Technical & Governance Documentation
 
-* [**`AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md`**](./AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md)
 * [**`SECURITY.md`**](./SECURITY.md) • [**`PRIVACY.md`**](./PRIVACY.md) • [**`SUPPORT.md`**](./SUPPORT.md) • [**`CHANGELOG.md`**](./CHANGELOG.md) • [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) • [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) • [**`PROGRESS.md`**](./PROGRESS.md)
 
 ## License
