@@ -216,12 +216,16 @@ async def test_tier2_os_bridge_uv_runner_and_mcp(tmp_path: Path) -> None:
     assert res_py_blocked.success is False
     assert res_py_blocked.data["hitl_required"] is True
 
-    # High-risk tool with approval/override executes cleanly
+    # High-risk tool with bound one-time ApprovalGrant executes cleanly
+    from app.core.sandbox import execution_policy_gateway
+
+    py_args = {"working_dir": str(tmp_path), "script_code": script}
+    py_grant = execution_policy_gateway.create_grant("run_custom_python_task", py_args)
     res_py = await tool_registry.execute(
         "run_custom_python_task",
         working_dir=str(tmp_path),
         script_code=script,
-        execution_policy_override=True,
+        hitl_grant_id=py_grant.id,
     )
     assert res_py.success is True
     assert any("hasil_hitung.csv" in art for art in res_py.artifacts)
@@ -274,13 +278,19 @@ async def test_tier3_computer_use_and_failsafe(tmp_path: Path) -> None:
     assert res_click_blocked.success is False
     assert res_click_blocked.data["hitl_required"] is True
 
-    # High-risk visual action with approval/override executes
+    # High-risk visual action with bound ApprovalGrant executes
+    from app.core.sandbox import execution_policy_gateway
+
+    click_grant = execution_policy_gateway.create_grant(
+        "visual_screen_action",
+        {"action_type": "click", "x": 320, "y": 240},
+    )
     res_click = await tool_registry.execute(
         "visual_screen_action",
         action_type="click",
         x=320,
         y=240,
-        execution_policy_override=True,
+        hitl_grant_id=click_grant.id,
     )
     assert res_click.data["action_type"] == "click"
     if res_click.data["driver"] == "pyautogui":
@@ -291,13 +301,17 @@ async def test_tier3_computer_use_and_failsafe(tmp_path: Path) -> None:
         assert res_click.data["status"] == "simulated"
 
     # Corner coordinate (0, 0) must trigger Failsafe Corner Abort
+    corner_grant = execution_policy_gateway.create_grant(
+        "visual_screen_action",
+        {"action_type": "click", "x": 0, "y": 0},
+    )
     with pytest.raises(RuntimeError, match="Failsafe Corner Abort"):
         await tool_registry.execute(
             "visual_screen_action",
             action_type="click",
             x=0,
             y=0,
-            execution_policy_override=True,
+            hitl_grant_id=corner_grant.id,
         )
 
     # Emergency stop is now active, subsequent actions must be blocked until reset

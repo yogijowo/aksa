@@ -182,6 +182,8 @@ class HierarchicalOrchestrator:
         workspace_id: str | None = None,
         workspace_path: str | None = None,
         session_id: str | None = None,
+        explicit_attachments: list[str] | None = None,
+        allow_external_disclosure: bool = False,
     ) -> dict[str, Any]:
         """Run a full Supervisor -> Sub-Agents workflow with isolated scratchpads and WebSocket events."""
         teams = await self.db.list_teams_with_agents()
@@ -195,32 +197,32 @@ class HierarchicalOrchestrator:
 
         delegated_agents = self._select_relevant_sub_agents(prompt, sub_agents)
 
-        # Resolve workspace directory dynamically
+        # Resolve workspace directory explicitly (NO fallback to workspaces[0] or Path.cwd())
         target_ws_path: Path | None = None
-        if workspace_path:
-            p = Path(workspace_path).expanduser().resolve()
-            if p.exists() and p.is_dir():
-                target_ws_path = p
-        elif workspace_id:
-            workspaces = await self.db.list_workspaces()
+        ws_policy_record: dict[str, Any] | None = None
+        workspaces = await self.db.list_workspaces()
+
+        if workspace_id:
             ws = next((w for w in workspaces if w["id"] == workspace_id), None)
             if ws:
                 p = Path(ws["folder_path"]).expanduser().resolve()
                 if p.exists() and p.is_dir():
                     target_ws_path = p
-
-        if not target_ws_path:
-            workspaces = await self.db.list_workspaces()
-            if workspaces:
-                candidate = Path(workspaces[0]["folder_path"]).expanduser().resolve()
-                if candidate.exists() and candidate.is_dir():
-                    target_ws_path = candidate
+                    ws_policy_record = ws
+        elif workspace_path:
+            p = Path(workspace_path).expanduser().resolve()
+            if p.exists() and p.is_dir():
+                target_ws_path = p
+                ws_policy_record = next(
+                    (w for w in workspaces if Path(w["folder_path"]).expanduser().resolve() == p),
+                    None,
+                )
 
         if not target_ws_path:
             await ws_manager.broadcast_event(
                 "task_failed",
                 {
-                    "error": "Folder kerja belum dipilih. Silakan pilih dan izinkan folder di PC Anda sebelum memulai pekerjaan.",
+                    "error": "Folder kerja belum dipilih secara eksplisit. Silakan pilih dan izinkan folder di PC Anda sebelum memulai pekerjaan.",
                 },
                 session_id=session_id,
             )
@@ -233,19 +235,23 @@ class HierarchicalOrchestrator:
                 "token_usage": {"input_tokens": 0, "output_tokens": 0, "savings_percent": 0.0},
             }
 
-        # Enforce sandbox registration
+        # Enforce sandbox registration preserving stored least-privilege policy (never auto-escalate)
+        allow_read = bool(ws_policy_record["allow_read"]) if ws_policy_record else True
+        allow_write = bool(ws_policy_record["allow_write"]) if ws_policy_record else True
+        allow_execute = bool(ws_policy_record["allow_execute"]) if ws_policy_record else False
+
         sandbox_manager.register_workspace(
             WorkspacePolicy(
                 folder_path=str(target_ws_path),
-                allow_read=True,
-                allow_write=True,
-                allow_execute=False,
+                allow_read=allow_read,
+                allow_write=allow_write,
+                allow_execute=allow_execute,
             )
         )
 
         ws_dir = target_ws_path
         real_files: list[dict[str, Any]] = []
-        if ws_dir.exists() and ws_dir.is_dir():
+        if allow_read and ws_dir.exists() and ws_dir.is_dir():
             for item in sorted(ws_dir.iterdir(), key=lambda x: x.name.lower()):
                 if item.name.startswith("."):
                     continue
@@ -276,32 +282,27 @@ class HierarchicalOrchestrator:
         else:
             workspace_files_text = f"Folder Kerja '{ws_dir}' saat ini kosong (belum ada berkas yang tersimpan)."
 
-        # Check if the user refers to any PDF file in the workspace or asks to inspect/read
+        # Strict DataDisclosureGate: NEVER auto-attach PDF/workspace files without explicit user selection & consent
         attachments: list[dict[str, Any]] = []
         pdf_files = [f for f in real_files if f["ext"] == ".pdf"]
-        lower_prompt = prompt.lower()
-        wants_read_pdf = any(
-            k in lower_prompt
-            for k in ("pdf", "baca", "cek", "isi", "analisis", "ringkas", "surat", "dokumen", "apa")
-        )
-
         pdf_extracted_notes: list[str] = []
-        if pdf_files and wants_read_pdf:
-            for pf in pdf_files[:2]:
+
+        if explicit_attachments and allow_external_disclosure:
+            for req_file in explicit_attachments[:2]:
                 try:
-                    p_path = Path(pf["path"])
-                    if p_path.exists() and p_path.stat().st_size <= 15 * 1024 * 1024:
-                        with open(p_path, "rb") as f:
-                            raw_bytes = f.read()
-                            pdf_b64 = base64.b64encode(raw_bytes).decode("utf-8")
-                            attachments.append({
-                                "name": pf["name"],
-                                "mime_type": "application/pdf",
-                                "data": pdf_b64,
-                            })
-                            pdf_extracted_notes.append(
-                                f"Dokumen '{pf['name']}' ({pf['size_label']}) telah dimuat ke konteks pembacaan multimodal."
-                            )
+                    candidate_path = (ws_dir / req_file) if not Path(req_file).is_absolute() else Path(req_file)
+                    validated_path = sandbox_manager.validate_path(candidate_path, mode="read")
+                    if validated_path.exists() and validated_path.is_file() and validated_path.stat().st_size <= 15 * 1024 * 1024:
+                        raw_bytes = validated_path.read_bytes()
+                        pdf_b64 = base64.b64encode(raw_bytes).decode("utf-8")
+                        attachments.append({
+                            "name": validated_path.name,
+                            "mime_type": "application/pdf" if validated_path.suffix.lower() == ".pdf" else "application/octet-stream",
+                            "data": pdf_b64,
+                        })
+                        pdf_extracted_notes.append(
+                            f"Dokumen '{validated_path.name}' telah dilampirkan atas persetujuan eksplisit pengguna."
+                        )
                 except Exception:
                     pass
 
@@ -355,6 +356,7 @@ class HierarchicalOrchestrator:
                 temperature=sub.get("temperature", 0.2),
                 max_tokens=sub.get("max_tokens", 2048),
                 attachments=attachments,
+                user_consent_granted=allow_external_disclosure,
             )
 
             handback_summary, metrics = token_optimizer.compact_subagent_handback(
@@ -423,16 +425,12 @@ class HierarchicalOrchestrator:
         artifacts: list[dict[str, Any]] = []
         action_confirmation_note = ""
 
-        if wants_doc:
+        if wants_doc and allow_write:
             is_word = "word" in lower_prompt or "surat" in lower_prompt or "docx" in lower_prompt
             is_ppt = "ppt" in lower_prompt or "slide" in lower_prompt or "presentasi" in lower_prompt
             is_pdf = "pdf" in lower_prompt and not is_word and not is_ppt and not is_duplication
 
             ws_candidate = ws_dir
-            if ws_candidate.exists() and ws_candidate.is_dir():
-                sandbox_manager.register_workspace(
-                    WorkspacePolicy(folder_path=str(ws_candidate), allow_read=True, allow_write=True)
-                )
 
             if is_duplication and pdf_files and is_word:
                 source_candidates = [f for f in pdf_files if not f["name"].lower().startswith("laporan_resmi")]
@@ -578,6 +576,7 @@ class HierarchicalOrchestrator:
             temperature=supervisor.get("temperature", 0.2),
             max_tokens=supervisor.get("max_tokens", 4096),
             attachments=attachments,
+            user_consent_granted=allow_external_disclosure,
         )
         sup_tokens = sup_completion["input_tokens"] + sup_completion["output_tokens"]
         total_tokens_used += sup_tokens

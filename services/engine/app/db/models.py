@@ -266,6 +266,47 @@ CREATE TABLE IF NOT EXISTS mcp_servers (
     trust_level TEXT DEFAULT 'unreviewed',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS credentials_metadata (
+    id TEXT PRIMARY KEY,
+    provider TEXT NOT NULL UNIQUE,
+    credential_ref TEXT NOT NULL,
+    label TEXT,
+    masked_preview TEXT,
+    backend TEXT DEFAULT 'windows_dpapi',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS approval_requests (
+    approval_id TEXT PRIMARY KEY,
+    action_id TEXT NOT NULL,
+    session_id TEXT,
+    user_id TEXT DEFAULT 'default_user',
+    tool_id TEXT NOT NULL,
+    tool_version TEXT DEFAULT '1.0.0',
+    arguments_json TEXT NOT NULL,
+    arguments_hash TEXT NOT NULL,
+    resource_ids_json TEXT DEFAULT '[]',
+    workspace_id TEXT,
+    risk_level TEXT NOT NULL,
+    data_classification TEXT DEFAULT 'INTERNAL',
+    requested_permissions_json TEXT DEFAULT '[]',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT NOT NULL,
+    decided_at TEXT,
+    decision TEXT DEFAULT 'pending',
+    one_time INTEGER DEFAULT 1,
+    consumed INTEGER DEFAULT 0,
+    policy_version INTEGER DEFAULT 1,
+    decision_reason TEXT
+);
 """
 
 
@@ -286,9 +327,11 @@ class DatabaseManager:
         self.db_path = db_path or settings.sqlite_path
 
     async def initialize(self) -> None:
-        """Create database tables if they do not exist."""
+        """Create database tables and apply versioned migrations transactionally."""
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("PRAGMA foreign_keys = ON;")
+            await db.execute("PRAGMA journal_mode = WAL;")
             await db.executescript(SCHEMA_SQL)
             try:
                 await db.execute("ALTER TABLE installed_applications ADD COLUMN is_connected INTEGER DEFAULT 0")
@@ -298,6 +341,20 @@ class DatabaseManager:
                 await db.execute("ALTER TABLE installed_applications ADD COLUMN category_label TEXT DEFAULT 'Aplikasi Komputer Umum'")
             except Exception:
                 pass
+
+            now = _now_iso()
+            for ver, name in (
+                (1, "v1_initial_core_schema"),
+                (2, "v2_enterprise_security_vault_and_approvals"),
+            ):
+                await db.execute(
+                    """
+                    INSERT INTO schema_migrations (version, name, applied_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(version) DO NOTHING
+                    """,
+                    (ver, name, now),
+                )
             await db.commit()
 
     async def list_teams_with_agents(self) -> list[dict[str, Any]]:
@@ -861,8 +918,95 @@ class DatabaseManager:
             return await self.get_installed_skill(skill_id)
 
     async def delete_installed_skill(self, skill_id: str) -> bool:
+        now = _now_iso()
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute("DELETE FROM installed_skills WHERE skill_id = ?", (skill_id,))
+            deleted = cursor.rowcount > 0
+            # Revoke all capability requests and permission grants bound to this skill
+            await db.execute(
+                "UPDATE skill_capability_requests SET decision = 'revoked', revoked_at = ? WHERE skill_id = ? AND revoked_at IS NULL",
+                (now, skill_id),
+            )
+            await db.execute(
+                "UPDATE permission_grants SET revoked_at = ? WHERE (resource_scope = ? OR principal_id = ?) AND revoked_at IS NULL",
+                (now, skill_id, skill_id),
+            )
+            await db.commit()
+            return deleted
+
+    async def revoke_all_workspaces(self) -> int:
+        """Revoke all workspace access and remove registered workspace entries."""
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("DELETE FROM workspaces")
+            removed = cursor.rowcount
+            await db.execute(
+                "UPDATE permission_grants SET revoked_at = ? WHERE capability_id LIKE 'filesystem.%' AND revoked_at IS NULL",
+                (now,),
+            )
+            aud_id = f"aud_{uuid.uuid4().hex[:12]}"
+            await db.execute(
+                """
+                INSERT INTO permission_audit_events (id, principal_type, principal_id, capability_id, resource_scope, decision, reason_code, created_at)
+                VALUES (?, 'user', 'default_user', 'filesystem.workspace.revoke_all', 'all_workspaces', 'deny', 'USER_REVOKE_ALL_WORKSPACES', ?)
+                """,
+                (aud_id, now),
+            )
+            await db.commit()
+            return removed
+
+    async def list_schema_migrations(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM schema_migrations ORDER BY version ASC")
+            return [_row_to_dict(r) for r in await cursor.fetchall()]
+
+    # --- Credentials Metadata CRUD (No Plaintext Secrets) ---
+    async def upsert_credential_metadata(
+        self,
+        provider: str,
+        credential_ref: str,
+        masked_preview: str,
+        backend: str = "windows_dpapi",
+        label: str | None = None,
+    ) -> dict[str, Any]:
+        meta_id = f"cmeta_{provider}"
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                """
+                INSERT INTO credentials_metadata (id, provider, credential_ref, label, masked_preview, backend, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(provider) DO UPDATE SET
+                    credential_ref = excluded.credential_ref,
+                    label = excluded.label,
+                    masked_preview = excluded.masked_preview,
+                    backend = excluded.backend,
+                    updated_at = excluded.updated_at
+                """,
+                (meta_id, provider, credential_ref, label or f"{provider} API Key", masked_preview, backend, now, now),
+            )
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM credentials_metadata WHERE provider = ?", (provider,))
+            return _row_to_dict(await cursor.fetchone())
+
+    async def get_credential_metadata(self, provider: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM credentials_metadata WHERE provider = ?", (provider,))
+            row = await cursor.fetchone()
+            return _row_to_dict(row) if row else None
+
+    async def list_credentials_metadata(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM credentials_metadata ORDER BY provider ASC")
+            return [_row_to_dict(r) for r in await cursor.fetchall()]
+
+    async def delete_credential_metadata(self, provider: str) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("DELETE FROM credentials_metadata WHERE provider = ?", (provider,))
             await db.commit()
             return cursor.rowcount > 0
 

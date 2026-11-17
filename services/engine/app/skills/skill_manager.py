@@ -314,7 +314,7 @@ class AgentSkillsManager:
         }
 
     async def scan_package_archive(self, zip_path: Path) -> SkillScanReport:
-        """Inspect a skill ZIP archive safely in quarantine before installation."""
+        """Inspect a skill ZIP archive safely in quarantine before installation (Section 7.3)."""
         if not zip_path.exists() or not zipfile.is_zipfile(zip_path):
             raise ValueError("Berkas arsip keahlian (ZIP) tidak valid atau rusak.")
 
@@ -328,7 +328,12 @@ class AgentSkillsManager:
         scripts_found: list[str] = []
         total_files = 0
         total_size = 0
+        total_compressed = 0
         skill_md_content = ""
+        seen_paths_lower: set[str] = set()
+
+        MAX_UNCOMPRESSED_BYTES = 25 * 1024 * 1024  # 25 MB archive bomb limit
+        MAX_COMPRESSION_RATIO = 50.0
 
         with zipfile.ZipFile(zip_path, "r") as zf:
             infolist = zf.infolist()
@@ -338,23 +343,48 @@ class AgentSkillsManager:
 
             for info in infolist:
                 total_size += info.file_size
+                total_compressed += max(1, info.compress_size)
                 name = info.filename
 
-                # 1. Path traversal check (Strict ../ prevention)
-                if ".." in name or name.startswith("/") or name.startswith("\\"):
-                    raise ValueError(f"Path traversal terdeteksi pada arsip: '{name}'")
+                # 1. Path traversal & absolute path check (Strict ../ prevention)
+                if ".." in name or name.startswith("/") or name.startswith("\\") or ":" in name:
+                    raise ValueError(f"Path traversal atau path absolut terdeteksi pada arsip: '{name}'")
 
-                # 2. Reject binary executables
+                # 2. Symlink escape detection in ZIP external attributes
+                unix_mode = (info.external_attr >> 16) & 0o170000
+                if unix_mode == 0o120000:
+                    raise ValueError(f"Symbolic link tidak diizinkan di dalam arsip keahlian: '{name}'")
+
+                # 3. Duplicate path & case-collision detection
+                norm_lower = name.strip("/\\").lower()
+                if norm_lower and not info.is_dir():
+                    if norm_lower in seen_paths_lower:
+                        raise ValueError(f"Duplikasi path atau tabrakan huruf besar/kecil (case collision) terdeteksi: '{name}'")
+                    seen_paths_lower.add(norm_lower)
+
+                # 4. Archive bomb size and ratio check
+                if total_size > MAX_UNCOMPRESSED_BYTES:
+                    raise ValueError("Ukuran arsip tidak terkompresi melebihi batas keamanan 25 MB (potensi Zip Bomb).")
+                if info.compress_size > 0 and (info.file_size / info.compress_size) > MAX_COMPRESSION_RATIO:
+                    warnings.append(f"Rasio kompresi mencurigakan pada berkas '{name}' (potensi Zip Bomb).")
+
+                # 5. Reject binary executables & install hooks
                 lower_name = name.lower()
-                forbidden_exts = (".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".vbs", ".msi")
+                forbidden_exts = (".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".vbs", ".msi", ".ps1", ".sh")
                 if any(lower_name.endswith(ext) for ext in forbidden_exts):
                     warnings.append(f"Berkas biner/skrip berisiko tinggi '{name}' ditemukan dalam arsip.")
 
-                # 3. Read SKILL.md
+                # 6. Read SKILL.md
                 if Path(name).name.lower() == "skill.md":
                     skill_md_content = zf.read(info).decode("utf-8", errors="replace")
+                    lower_md = skill_md_content.lower()
+                    if any(
+                        inj in lower_md
+                        for inj in ("ignore previous instructions", "abaikan seluruh instruksi", "bypass policy", "execution_policy_override")
+                    ):
+                        warnings.append("Berkas 'SKILL.md' memuat indikasi instruksi prompt injection berbahaya.")
 
-                # 4. Inspect python scripts
+                # 7. Inspect python scripts
                 if lower_name.endswith(".py"):
                     scripts_found.append(name)
                     script_text = zf.read(info).decode("utf-8", errors="replace")
@@ -366,7 +396,9 @@ class AgentSkillsManager:
 
         parsed = self.parse_skill_markdown(skill_md_content) if skill_md_content else {}
         skill_id = parsed.get("name") or zip_path.stem
-        risk_level = "critical" if any("berbahaya" in w or "lingkungan" in w for w in warnings) else (
+        risk_level = "critical" if any(
+            k in w.lower() for w in warnings for k in ("berbahaya", "lingkungan", "injection", "zip bomb", "biner")
+        ) else (
             "medium" if (warnings or scripts_found) else "low"
         )
 
@@ -384,7 +416,7 @@ class AgentSkillsManager:
         )
 
         return SkillScanReport(
-            is_valid=len(warnings) == 0 or risk_level != "critical",
+            is_valid=len(warnings) == 0 and risk_level != "critical",
             package_hash=package_hash,
             total_files=total_files,
             total_size_bytes=total_size,
@@ -406,6 +438,16 @@ class AgentSkillsManager:
             f"# {curated.display_name}\n\n{curated.instructions_preview}\n",
             encoding="utf-8",
         )
+        manifest_yaml = (
+            f"schema_version: 1\n"
+            f"id: {curated.id}\n"
+            f"name: \"{curated.display_name}\"\n"
+            f"version: \"{curated.version}\"\n"
+            f"publisher:\n  name: \"{curated.publisher}\"\n  verified: true\n"
+            f"capabilities:\n  network:\n    enabled: {str(curated.has_network).lower()}\n"
+            f"  secrets:\n    access: false\n"
+        )
+        (target_dir / "aksa.skill.yaml").write_text(manifest_yaml, encoding="utf-8")
 
         fake_hash = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
         item = await db_manager.upsert_installed_skill({
@@ -426,6 +468,22 @@ class AgentSkillsManager:
         })
 
         return item
+
+    async def uninstall_skill(self, skill_id: str) -> bool:
+        """Uninstall a skill, revoke all its grants, and remove its runtime directory."""
+        import shutil
+
+        deleted = await db_manager.delete_installed_skill(skill_id)
+        target_dir = self.skills_dir / skill_id
+        if target_dir.exists() and target_dir.is_dir():
+            shutil.rmtree(target_dir, ignore_errors=True)
+        await db_manager.log_permission_audit_event({
+            "capability_id": "skill_uninstalled",
+            "resource_scope": skill_id,
+            "decision": "deny",
+            "reason_code": "UNINSTALL_AND_REVOKE_GRANTS",
+        })
+        return deleted
 
 
 agent_skills_manager = AgentSkillsManager()

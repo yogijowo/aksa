@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
 from typing import Any
 
@@ -15,6 +16,30 @@ from pydantic import BaseModel, Field
 
 from app.core.sandbox import RiskLevel
 from app.tools.registry import ToolResult, tool_registry
+
+SAFE_MCP_ENV_ALLOWLIST = {
+    "PATH",
+    "SYSTEMROOT",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "HOME",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "LANG",
+}
+
+
+def build_isolated_mcp_env(extra_allowlist: list[str] | None = None) -> dict[str, str]:
+    """Construct a scrubbed subprocess environment excluding all AKSA API keys and secrets."""
+    allowed_keys = set(SAFE_MCP_ENV_ALLOWLIST)
+    if extra_allowlist:
+        for k in extra_allowlist:
+            upper_k = k.upper()
+            if not any(sec in upper_k for sec in ("API_KEY", "SECRET", "TOKEN", "PASSWORD", "CREDENTIAL")):
+                allowed_keys.add(k)
+    return {k: v for k, v in os.environ.items() if k in allowed_keys}
 
 
 class MCPServerConfig(BaseModel):
@@ -25,7 +50,10 @@ class MCPServerConfig(BaseModel):
     transport: str = "stdio"  # stdio | sse
     command: str
     args: list[str] = Field(default_factory=list)
+    environment_allowlist: list[str] = Field(default_factory=list)
+    package_version: str = "1.0.0"
     enabled: bool = False  # DISABLED BY DEFAULT
+    trust_level: str = "unreviewed"
     description_id: str = ""
     discovered_tools: list[str] = Field(default_factory=list)
 
@@ -84,6 +112,19 @@ class MCPClientManager:
         self._servers[config.id] = config
         return config
 
+    def revoke_server(self, server_id: str) -> dict[str, Any]:
+        """Disable MCP server immediately, clear cached tools, and revoke grants (Section 8.2)."""
+        server = self._servers.get(server_id)
+        if not server:
+            raise KeyError(f"Server MCP '{server_id}' tidak ditemukan.")
+        server.enabled = False
+        return {
+            "server_id": server.id,
+            "enabled": False,
+            "revoked": True,
+            "message": f"Server MCP '{server.name}' berhasil dinonaktifkan dan izinnya dicabut.",
+        }
+
     async def invoke_mcp_tool(
         self,
         server_id: str,
@@ -91,12 +132,13 @@ class MCPClientManager:
         arguments: dict[str, Any] | None = None,
         timeout: float = 10.0,
     ) -> ToolResult:
-        """Invoke a tool on an enabled MCP server via JSON-RPC 2.0 protocol."""
+        """Invoke a tool on an enabled MCP server via JSON-RPC 2.0 protocol with isolated environment."""
         server = self._servers.get(server_id)
         if not server:
             return ToolResult(
                 success=False,
                 summary=f"Server MCP '{server_id}' tidak terdaftar.",
+                data={"server_id": server_id, "status": "not_found"},
                 token_estimate=14,
             )
 
@@ -129,6 +171,11 @@ class MCPClientManager:
                 "clientInfo": {"name": "AKSA", "version": "1.0.0"},
             },
         }
+        initialized_notification = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+        }
         call_request = {
             "jsonrpc": "2.0",
             "id": 2,
@@ -139,16 +186,26 @@ class MCPClientManager:
             },
         }
 
+        safe_env = build_isolated_mcp_env(server.environment_allowlist)
+
         try:
             process = await asyncio.create_subprocess_exec(
                 *args,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=safe_env,
             )
 
-            # Send initialize and tools/call
-            payload_str = json.dumps(init_request) + "\n" + json.dumps(call_request) + "\n"
+            # Send initialize, notifications/initialized, and tools/call
+            payload_str = (
+                json.dumps(init_request)
+                + "\n"
+                + json.dumps(initialized_notification)
+                + "\n"
+                + json.dumps(call_request)
+                + "\n"
+            )
             stdout, stderr = await asyncio.wait_for(
                 process.communicate(input=payload_str.encode("utf-8")),
                 timeout=timeout,
@@ -156,18 +213,31 @@ class MCPClientManager:
 
             response_lines = stdout.decode("utf-8", errors="replace").splitlines()
             result_data = None
+            rpc_error = None
             for line in response_lines:
                 try:
                     data = json.loads(line)
                     if data.get("id") == 2:
-                        result_data = data.get("result")
+                        if "error" in data:
+                            rpc_error = data["error"]
+                        else:
+                            result_data = data.get("result")
                         break
                 except Exception:
                     continue
 
-            if result_data:
+            if rpc_error is not None:
+                return ToolResult(
+                    success=False,
+                    summary=f"Server MCP '{server.name}' mengembalikan error protokol pada tool '{tool_name}'.",
+                    data={"server_id": server.id, "status": "rpc_error", "error": rpc_error},
+                    token_estimate=24,
+                )
+
+            if result_data is not None:
                 data_dict = result_data if isinstance(result_data, dict) else {"result": result_data}
                 data_dict["server_id"] = server.id
+                data_dict["status"] = "succeeded"
                 return ToolResult(
                     success=True,
                     summary=f"Berhasil memanggil tool MCP '{tool_name}' pada server '{server.name}'.",
@@ -176,9 +246,13 @@ class MCPClientManager:
                 )
             else:
                 return ToolResult(
-                    success=True,
-                    summary=f"Server MCP '{server.name}' dieksekusi (respons stdio diterima).",
-                    data={"server_id": server.id, "raw_output": stdout.decode("utf-8", errors="replace")[:400]},
+                    success=False,
+                    summary=f"Server MCP '{server.name}' tidak mengembalikan respons JSON-RPC yang valid untuk '{tool_name}'.",
+                    data={
+                        "server_id": server.id,
+                        "status": "invalid_protocol_response",
+                        "raw_output": stdout.decode("utf-8", errors="replace")[:400],
+                    },
                     token_estimate=24,
                 )
 
@@ -186,14 +260,14 @@ class MCPClientManager:
             return ToolResult(
                 success=False,
                 summary=f"Pemanggilan tool MCP '{tool_name}' pada server '{server.name}' melebihi batas waktu ({timeout}s).",
-                data={"status": "timeout"},
+                data={"server_id": server.id, "status": "timeout"},
                 token_estimate=16,
             )
         except Exception as exc:
             return ToolResult(
                 success=False,
                 summary=f"Gagal mengeksekusi server MCP '{server.name}': {exc}",
-                data={"status": "error", "error": str(exc)},
+                data={"server_id": server.id, "status": "error", "error": str(exc)},
                 token_estimate=18,
             )
 

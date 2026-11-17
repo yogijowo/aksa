@@ -15,6 +15,8 @@ except ImportError:  # pragma: no cover
     litellm = None  # type: ignore[assignment]
 
 from app.config import settings
+from app.core.credential_vault import CredentialVault, mask_secret
+from app.core.privacy_gate import DataClassification, ProviderMode, privacy_policy_gate
 from app.core.token_optimizer import token_optimizer
 from app.db.models import DatabaseManager, _now_iso
 
@@ -132,51 +134,96 @@ SUPPORTED_PROVIDERS: list[dict[str, Any]] = [
 
 
 class UnifiedLLMRouter:
-    """Routes per-agent LLM requests to Cloud APIs (via LiteLLM) or Local Ollama / LM Studio."""
+    """Routes per-agent LLM requests to Cloud APIs or Local Ollama / LM Studio with strict privacy gates."""
 
     def __init__(self, db: DatabaseManager) -> None:
         self.db = db
+        self.vault = CredentialVault(vault_dir=self.db.db_path.parent)
 
-    async def get_saved_api_keys(self) -> dict[str, str]:
-        """Load stored API keys from SQLite app_settings."""
+    async def migrate_legacy_plaintext_keys(self) -> int:
+        """One-time transactional migration of plaintext API keys from app_settings to OS Credential Vault."""
+        migrated_count = 0
         async with aiosqlite.connect(self.db.db_path) as conn:
             cursor = await conn.execute(
                 "SELECT value_json FROM app_settings WHERE key = 'provider_api_keys'"
             )
             row = await cursor.fetchone()
-            if not row:
-                return {}
+            if not row or not row[0]:
+                return 0
             try:
-                return json.loads(row[0])
+                legacy_keys = json.loads(row[0])
             except Exception:
-                return {}
+                return 0
+
+            if not isinstance(legacy_keys, dict):
+                return 0
+
+            all_verified = True
+            for prov, raw_secret in legacy_keys.items():
+                if not isinstance(raw_secret, str) or not raw_secret.strip():
+                    continue
+                stored = self.vault.store_secret(prov, raw_secret.strip())
+                # Verify secret can be retrieved from vault before scrubbing plaintext
+                verified = self.vault.retrieve_secret(stored["credential_ref"])
+                if verified != raw_secret.strip():
+                    all_verified = False
+                    break
+                await self.db.upsert_credential_metadata(
+                    provider=prov,
+                    credential_ref=stored["credential_ref"],
+                    masked_preview=stored["masked_preview"],
+                    backend=stored["backend"],
+                )
+                migrated_count += 1
+
+            if all_verified:
+                await conn.execute("DELETE FROM app_settings WHERE key = 'provider_api_keys'")
+                await conn.commit()
+
+        return migrated_count
+
+    async def get_saved_api_keys(self) -> dict[str, str]:
+        """Resolve stored API keys from OS Credential Vault via SQLite credential_ref metadata."""
+        await self.migrate_legacy_plaintext_keys()
+        meta_rows = await self.db.list_credentials_metadata()
+        resolved: dict[str, str] = {}
+        for row in meta_rows:
+            prov = row.get("provider")
+            cred_ref = row.get("credential_ref")
+            if prov and cred_ref:
+                secret = self.vault.retrieve_secret(cred_ref)
+                if secret:
+                    resolved[prov] = secret
+        return resolved
 
     async def save_api_key(self, provider: str, api_key: str) -> dict[str, bool]:
-        """Save a provider API key to SQLite and export it to the process environment."""
-        keys = await self.get_saved_api_keys()
+        """Store a provider API key in OS Credential Vault and save only its reference in SQLite."""
+        await self.migrate_legacy_plaintext_keys()
+        existing_meta = await self.db.get_credential_metadata(provider)
+        existing_ref = existing_meta.get("credential_ref") if existing_meta else None
+
         if api_key.strip():
-            keys[provider] = api_key.strip()
-        else:
-            keys.pop(provider, None)
-
-        async with aiosqlite.connect(self.db.db_path) as conn:
-            await conn.execute(
-                """
-                INSERT INTO app_settings (key, value_json, updated_at)
-                VALUES ('provider_api_keys', ?, ?)
-                ON CONFLICT(key) DO UPDATE SET
-                    value_json = excluded.value_json,
-                    updated_at = excluded.updated_at
-                """,
-                (json.dumps(keys), _now_iso()),
+            stored = self.vault.store_secret(provider, api_key.strip(), existing_ref=existing_ref)
+            await self.db.upsert_credential_metadata(
+                provider=provider,
+                credential_ref=stored["credential_ref"],
+                masked_preview=stored["masked_preview"],
+                backend=stored["backend"],
             )
-            await conn.commit()
+        else:
+            if existing_ref:
+                self.vault.delete_secret(existing_ref)
+            await self.db.delete_credential_metadata(provider)
 
-        for prov in SUPPORTED_PROVIDERS:
-            if prov["id"] == provider and prov.get("env_key") and api_key.strip():
-                os.environ[prov["env_key"]] = api_key.strip()
-
+        keys = await self.get_saved_api_keys()
         return {p["id"]: bool(keys.get(p["id"])) for p in SUPPORTED_PROVIDERS if not p["is_local"]}
+
+    async def revoke_api_key(self, provider: str) -> bool:
+        """Revoke and delete a provider API key from OS Credential Vault and SQLite metadata."""
+        existing_meta = await self.db.get_credential_metadata(provider)
+        if existing_meta and existing_meta.get("credential_ref"):
+            self.vault.delete_secret(existing_meta["credential_ref"])
+        return await self.db.delete_credential_metadata(provider)
 
     async def discover_local_models(self) -> dict[str, Any]:
         """Auto-detect running Ollama and LM Studio instances and their installed models."""
@@ -216,8 +263,10 @@ class UnifiedLLMRouter:
         }
 
     async def list_providers_status(self) -> list[dict[str, Any]]:
-        """Return all supported providers with key configuration status and local discovery."""
-        saved_keys = await self.get_saved_api_keys()
+        """Return all supported providers with vault reference status and local discovery (no plaintext keys)."""
+        await self.migrate_legacy_plaintext_keys()
+        meta_list = await self.db.list_credentials_metadata()
+        meta_by_prov = {m["provider"]: m for m in meta_list}
         local_info = await self.discover_local_models()
         results: list[dict[str, Any]] = []
 
@@ -242,21 +291,21 @@ class UnifiedLLMRouter:
                     }
                 )
             else:
+                meta = meta_by_prov.get(pid)
                 env_key = prov.get("env_key", "")
-                raw_k = saved_keys.get(pid) or os.environ.get(env_key) or ""
-                has_key = bool(raw_k.strip())
-                masked = ""
-                if has_key:
-                    k = raw_k.strip()
-                    if len(k) > 8:
-                        masked = f"{k[:4]}••••••••{k[-4:]}"
-                    else:
-                        masked = "••••••••"
+                env_val = os.environ.get(env_key, "").strip() if env_key else ""
+                has_key = bool(meta or env_val)
+                masked = (
+                    meta["masked_preview"]
+                    if meta and meta.get("masked_preview")
+                    else (mask_secret(env_val) if env_val else "")
+                )
                 results.append(
                     {
                         **prov,
                         "configured": has_key,
                         "online": has_key,
+                        "credential_ref": meta["credential_ref"] if meta else None,
                         "api_key_masked": masked,
                         "installed_models": prov["recommended_models"],
                     }
@@ -271,28 +320,128 @@ class UnifiedLLMRouter:
         temperature: float = 0.2,
         max_tokens: int = 2048,
         attachments: list[dict[str, Any]] | None = None,
+        data_classification: str | DataClassification | None = None,
+        user_consent_granted: bool = False,
     ) -> dict[str, Any]:
-        """Execute an async completion via native REST APIs (Gemini, OpenAI, DeepSeek, Anthropic, Ollama)."""
+        """Execute an async completion enforcing PrivacyPolicyGate and zero local-to-cloud fallback."""
+        prov = provider.lower().strip()
+
+        # 0. Evaluate DataDisclosureGate & ProviderMode BEFORE any network activity
+        disclosure = privacy_policy_gate.evaluate_disclosure(
+            provider=prov,
+            model_id=model_id,
+            messages=messages,
+            attachments=attachments,
+            explicit_classification=data_classification,
+            user_consent_granted=user_consent_granted,
+        )
+        if not disclosure.allowed:
+            return {
+                "content": f"[Diblokir oleh Kebijakan Privasi AKSA] {disclosure.denial_reason}",
+                "input_tokens": sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+                "output_tokens": 24,
+                "simulated": True,
+                "blocked_by_privacy_gate": True,
+                "cloud_called": False,
+                "disclosure": disclosure.model_dump(),
+            }
+
+        # 1. Local Providers (Ollama / LM Studio) — NEVER fall back to cloud!
+        if prov == "ollama":
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(
+                        f"{settings.ollama_base_url}/api/chat",
+                        json={
+                            "model": model_id.replace("ollama/", ""),
+                            "messages": messages,
+                            "stream": False,
+                            "options": {"temperature": temperature},
+                        },
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        content = data.get("message", {}).get("content", "")
+                        return {
+                            "content": content,
+                            "input_tokens": data.get(
+                                "prompt_eval_count",
+                                sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+                            ),
+                            "output_tokens": data.get(
+                                "eval_count", token_optimizer.estimate_tokens(content)
+                            ),
+                            "simulated": False,
+                            "cloud_called": False,
+                            "provider_used": "ollama",
+                        }
+            except Exception:
+                pass
+
+            user_last = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+            offline_msg = (
+                f"Server AI Lokal (Ollama) untuk model '{model_id}' saat ini tidak dapat dijangkau di {settings.ollama_base_url}. "
+                f"Sesuai kebijakan keamanan AKSA (Tanpa Fallback ke Cloud), data Anda tetap tersimpan 100% lokal dan tidak dikirim ke penyedia cloud mana pun. "
+                f"Konteks tugas lokal: \"{user_last[:120]}\"."
+            )
+            return {
+                "content": offline_msg,
+                "input_tokens": sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+                "output_tokens": token_optimizer.estimate_tokens(offline_msg),
+                "simulated": True,
+                "cloud_called": False,
+                "provider_used": "ollama",
+            }
+
+        if prov == "lmstudio":
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    resp = await client.post(
+                        f"{settings.lmstudio_base_url}/chat/completions",
+                        json={
+                            "model": model_id.replace("lmstudio/", ""),
+                            "messages": messages,
+                            "temperature": temperature,
+                            "max_tokens": max_tokens,
+                        },
+                    )
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        choice = data.get("choices", [{}])[0]
+                        content = choice.get("message", {}).get("content", "")
+                        usage = data.get("usage", {})
+                        return {
+                            "content": content,
+                            "input_tokens": usage.get("prompt_tokens", 150),
+                            "output_tokens": usage.get("completion_tokens", 100),
+                            "simulated": False,
+                            "cloud_called": False,
+                            "provider_used": "lmstudio",
+                        }
+            except Exception:
+                pass
+
+            user_last = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+            offline_msg = (
+                f"Server AI Lokal (LM Studio) untuk model '{model_id}' saat ini tidak aktif di {settings.lmstudio_base_url}. "
+                f"Sesuai kebijakan keamanan AKSA (Tanpa Fallback ke Cloud), tidak ada data yang dikirim keluar perangkat. "
+                f"Konteks tugas lokal: \"{user_last[:120]}\"."
+            )
+            return {
+                "content": offline_msg,
+                "input_tokens": sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+                "output_tokens": token_optimizer.estimate_tokens(offline_msg),
+                "simulated": True,
+                "cloud_called": False,
+                "provider_used": "lmstudio",
+            }
+
+        # 2. Cloud Providers — strictly use ONLY the requested provider's key (no silent cross-provider routing)
         saved_keys = await self.get_saved_api_keys()
-        api_key = saved_keys.get(provider) or os.environ.get(f"{provider.upper()}_API_KEY")
+        api_key = saved_keys.get(prov) or os.environ.get(f"{prov.upper()}_API_KEY")
 
-        # Smart provider fallback: if the requested provider has no key, route through an active key
-        if not api_key and provider != "ollama":
-            for active_prov in ("gemini", "deepseek", "openai", "anthropic", "groq", "openrouter"):
-                candidate_key = saved_keys.get(active_prov) or os.environ.get(f"{active_prov.upper()}_API_KEY")
-                if candidate_key:
-                    provider = active_prov
-                    api_key = candidate_key
-                    if active_prov == "gemini":
-                        model_id = "gemini-flash-latest"
-                    elif active_prov == "deepseek":
-                        model_id = "deepseek-chat"
-                    elif active_prov == "openai":
-                        model_id = "gpt-4o-mini"
-                    break
-
-        # 1. Google Gemini Native REST API
-        if provider == "gemini" and api_key:
+        # 2a. Google Gemini Native REST API
+        if prov == "gemini" and api_key:
             clean_model = model_id.replace("gemini/", "").replace("google/", "")
             if clean_model in ("gemini-2.5-pro", "gemini-pro"):
                 clean_model = "gemini-flash-latest"
@@ -309,7 +458,7 @@ class UnifiedLLMRouter:
                 if not user_contents:
                     user_contents.append({"role": "user", "parts": [{"text": "Halo"}]})
 
-                if attachments:
+                if attachments and user_consent_granted:
                     for att in attachments:
                         user_contents[-1]["parts"].insert(
                             0,
@@ -341,20 +490,22 @@ class UnifiedLLMRouter:
                                     "input_tokens": usage.get("promptTokenCount", 150),
                                     "output_tokens": usage.get("candidatesTokenCount", 100),
                                     "simulated": False,
+                                    "cloud_called": True,
+                                    "provider_used": "gemini",
                                 }
                 except Exception:
                     continue
 
-        # 2. OpenAI / DeepSeek / Groq / OpenRouter Compatible REST APIs
-        if provider in ("openai", "deepseek", "groq", "openrouter") and api_key:
+        # 2b. OpenAI / DeepSeek / Groq / OpenRouter Compatible REST APIs
+        if prov in ("openai", "deepseek", "groq", "openrouter") and api_key:
             base_urls = {
                 "openai": "https://api.openai.com/v1",
                 "deepseek": "https://api.deepseek.com",
                 "groq": "https://api.groq.com/openai/v1",
                 "openrouter": "https://openrouter.ai/api/v1",
             }
-            base = base_urls.get(provider, "https://api.openai.com/v1")
-            clean_model = model_id.replace(f"{provider}/", "")
+            base = base_urls.get(prov, "https://api.openai.com/v1")
+            clean_model = model_id.replace(f"{prov}/", "")
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(
@@ -377,12 +528,14 @@ class UnifiedLLMRouter:
                             "input_tokens": usage.get("prompt_tokens", 150),
                             "output_tokens": usage.get("completion_tokens", 100),
                             "simulated": False,
+                            "cloud_called": True,
+                            "provider_used": prov,
                         }
             except Exception:
                 pass
 
-        # 3. Anthropic Claude Native REST API
-        if provider == "anthropic" and api_key:
+        # 2c. Anthropic Claude Native REST API
+        if prov == "anthropic" and api_key:
             system_text = "\n".join(m["content"] for m in messages if m["role"] == "system")
             chat_msgs = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]
             try:
@@ -412,68 +565,24 @@ class UnifiedLLMRouter:
                             "input_tokens": usage.get("input_tokens", 150),
                             "output_tokens": usage.get("output_tokens", 100),
                             "simulated": False,
+                            "cloud_called": True,
+                            "provider_used": "anthropic",
                         }
             except Exception:
                 pass
 
-        # 4. Local Ollama API
-        if provider == "ollama":
-            try:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    resp = await client.post(
-                        f"{settings.ollama_base_url}/api/chat",
-                        json={
-                            "model": model_id.replace("ollama/", ""),
-                            "messages": messages,
-                            "stream": False,
-                            "options": {"temperature": temperature},
-                        },
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        content = data.get("message", {}).get("content", "")
-                        return {
-                            "content": content,
-                            "input_tokens": data.get(
-                                "prompt_eval_count",
-                                sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
-                            ),
-                            "output_tokens": data.get(
-                                "eval_count", token_optimizer.estimate_tokens(content)
-                            ),
-                            "simulated": False,
-                        }
-            except Exception:
-                pass
-
-            # Fallback if Ollama daemon is offline or model missing: use active Cloud API key (e.g. Gemini)
-            for active_prov in ("gemini", "deepseek", "openai", "anthropic"):
-                candidate_key = saved_keys.get(active_prov) or os.environ.get(f"{active_prov.upper()}_API_KEY")
-                if candidate_key:
-                    fallback_model = (
-                        "gemini-flash-latest"
-                        if active_prov == "gemini"
-                        else ("gpt-4o-mini" if active_prov == "openai" else "deepseek-chat")
-                    )
-                    return await self.complete(
-                        provider=active_prov,
-                        model_id=fallback_model,
-                        messages=messages,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        attachments=attachments,
-                    )
-
-        # Fallback when no valid API key or offline daemon
+        # Fallback when no valid API key for the requested provider
         user_last = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
         simulated_reply = (
-            f"Halo! Saya Asisten AKSA. Mohon pastikan Kunci API {provider.upper()} sudah disimpan di menu Pengaturan "
-            f"atau server Ollama sudah berjalan di komputer Anda untuk mulai memproses instruksi: \"{user_last[:120]}\"."
+            f"Halo! Saya Asisten AKSA. Mohon pastikan Kunci API {prov.upper()} sudah disimpan di menu Pengaturan "
+            f"atau gunakan model lokal untuk memproses instruksi: \"{user_last[:120]}\"."
         )
         return {
             "content": simulated_reply,
             "input_tokens": sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
             "output_tokens": token_optimizer.estimate_tokens(simulated_reply),
             "simulated": True,
+            "cloud_called": False,
+            "provider_used": prov,
         }
 

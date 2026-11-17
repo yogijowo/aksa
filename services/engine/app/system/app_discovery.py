@@ -22,19 +22,27 @@ from app.db.models import db_manager
 
 
 class ApplicationRecord(BaseModel):
-    """Normalized application inventory record."""
+    """Normalized application inventory record (Section 5.1 Enterprise Spec)."""
 
     id: str
+    app_id: str = ""
     platform: str = "windows"
     platform_app_id: str
     bundle_id: str | None = None
     aumid: str | None = None
+    executable_path: str | None = None
+    bundle_path: str | None = None
     display_name: str
     publisher: str | None = None
     version: str | None = None
     install_location: str | None = None
     install_scope: str = "machine"  # machine | user
-    signature_status: str = "unknown"
+    signature_status: str = "unknown"  # valid | invalid | unsigned | unknown
+    install_source: str = "registry"  # registry | start_menu | package_manager | launch_services | application_directory | user_import
+    detection_status: str = "installed"  # installed | running | portable | unavailable
+    launch_status: str = "unknown"  # launchable | not_launchable | unknown
+    automation_status: str = "unknown"  # supported | permission_required | unsupported | unknown
+    confidence: float = 0.85
     detection_sources: list[str] = Field(default_factory=list)
     is_installed: bool = True
     is_running: bool = False
@@ -186,7 +194,18 @@ class ApplicationDiscoveryManager:
                                 location = None
                                 try:
                                     l_val, _ = winreg.QueryValueEx(subkey, "InstallLocation")
-                                    location = str(l_val).strip()
+                                    raw_loc = str(l_val).strip().strip('"')
+                                    if raw_loc:
+                                        location = raw_loc
+                                except Exception:
+                                    pass
+
+                                exe_path = None
+                                try:
+                                    icon_val, _ = winreg.QueryValueEx(subkey, "DisplayIcon")
+                                    raw_icon = str(icon_val).split(",")[0].strip().strip('"')
+                                    if raw_icon and raw_icon.lower().endswith(".exe") and Path(raw_icon).exists():
+                                        exe_path = raw_icon
                                 except Exception:
                                     pass
 
@@ -202,21 +221,43 @@ class ApplicationDiscoveryManager:
                                         is_running = True
                                         break
 
+                                has_valid_target = bool(
+                                    (exe_path and Path(exe_path).exists())
+                                    or (location and Path(location).exists())
+                                )
+                                launch_status = "launchable" if has_valid_target else "not_launchable"
+                                automation_status = "supported" if ("office" in adapters or "uia" in adapters) else "permission_required"
+                                confidence = 0.95 if has_valid_target else 0.75
+
                                 if app_id not in discovered:
                                     discovered[app_id] = ApplicationRecord(
                                         id=app_id,
+                                        app_id=app_id,
                                         platform="windows",
                                         platform_app_id=key_name,
+                                        executable_path=exe_path,
                                         display_name=disp_name,
                                         publisher=publisher,
                                         version=version,
-                                        install_location=location,
+                                        install_location=exe_path or location,
                                         install_scope=scope,
+                                        install_source="registry",
+                                        detection_status="running" if is_running else "installed",
+                                        launch_status=launch_status,
+                                        automation_status=automation_status,
+                                        confidence=confidence,
                                         detection_sources=["registry"],
                                         is_installed=True,
                                         is_running=is_running,
                                         category_label=category_label,
                                         available_adapters=adapters,
+                                        metadata={
+                                            "install_source": "registry",
+                                            "launch_status": launch_status,
+                                            "automation_status": automation_status,
+                                            "confidence": confidence,
+                                            "executable_path": exe_path,
+                                        },
                                     )
                         except Exception:
                             continue
@@ -264,63 +305,92 @@ class ApplicationDiscoveryManager:
 
                     discovered[app_id] = ApplicationRecord(
                         id=app_id,
+                        app_id=app_id,
                         platform="darwin",
                         platform_app_id=bundle_id or item.name,
                         bundle_id=bundle_id,
+                        bundle_path=str(item),
                         display_name=str(display_name),
                         publisher=None,
                         version=str(version) if version else None,
                         install_location=str(item),
                         install_scope="machine" if base.name == "Applications" else "user",
+                        install_source="application_directory",
+                        detection_status="running" if is_running else "installed",
+                        launch_status="launchable",
+                        automation_status="permission_required",
+                        confidence=0.98,
                         detection_sources=["bundle"],
                         is_installed=True,
                         is_running=is_running,
                         category_label=category_label,
                         available_adapters=adapters,
+                        metadata={
+                            "install_source": "application_directory",
+                            "launch_status": "launchable",
+                            "automation_status": "permission_required",
+                            "confidence": 0.98,
+                            "bundle_path": str(item),
+                        },
                     )
                 except Exception:
                     continue
 
         return list(discovered.values())
 
+    def scan_posix_installed_binaries(self) -> list[ApplicationRecord]:
+        """Scan genuine installed binaries on POSIX/Linux environments without fake fallbacks."""
+        import shutil
+
+        discovered: list[ApplicationRecord] = []
+        candidates = [
+            ("python3", "Python 3 Runtime", "Penyunting Kode & Teks"),
+            ("git", "Git Version Control", "Penyunting Kode & Teks"),
+            ("bash", "GNU Bourne-Again Shell", "Alat Sistem & Utilitas"),
+        ]
+        for bin_name, label, cat in candidates:
+            resolved = shutil.which(bin_name)
+            if resolved and Path(resolved).exists():
+                app_id = _sanitize_app_id(label)
+                discovered.append(
+                    ApplicationRecord(
+                        id=app_id,
+                        app_id=app_id,
+                        platform=sys.platform,
+                        platform_app_id=bin_name,
+                        executable_path=resolved,
+                        display_name=label,
+                        publisher="System Package Manager",
+                        install_location=resolved,
+                        install_source="package_manager",
+                        detection_status="installed",
+                        launch_status="launchable",
+                        automation_status="supported",
+                        confidence=1.0,
+                        detection_sources=["package_manager"],
+                        is_installed=True,
+                        is_running=False,
+                        category_label=cat,
+                        available_adapters=["launcher"],
+                        metadata={
+                            "install_source": "package_manager",
+                            "launch_status": "launchable",
+                            "confidence": 1.0,
+                            "executable_path": resolved,
+                        },
+                    )
+                )
+        return discovered
+
     async def scan_and_sync(self) -> list[dict[str, Any]]:
-        """Run platform scanner and synchronize records into SQLite database."""
+        """Run platform scanner and synchronize genuine discovered records into SQLite database (no fake fallbacks)."""
         records: list[ApplicationRecord] = []
         if sys.platform == "win32":
             records = self.scan_windows_installed_apps()
         elif sys.platform == "darwin":
             records = self.scan_macos_installed_apps()
-
-        # In case of empty platform results in test/container environments, provide verified fallback records
-        if not records:
-            records = [
-                ApplicationRecord(
-                    id="app_office_excel",
-                    platform=sys.platform,
-                    platform_app_id="excel.exe",
-                    display_name="Microsoft Excel",
-                    publisher="Microsoft Corporation",
-                    version="16.0",
-                    is_installed=True,
-                    is_running=False,
-                    category_label="Otomasi Dokumen Office",
-                    available_adapters=["office", "uia", "launcher"],
-                    detection_sources=["system_catalog"],
-                ),
-                ApplicationRecord(
-                    id="app_chrome",
-                    platform=sys.platform,
-                    platform_app_id="chrome.exe",
-                    display_name="Google Chrome",
-                    publisher="Google LLC",
-                    version="131.0",
-                    is_installed=True,
-                    is_running=True,
-                    category_label="Navigasi & Analisis Web",
-                    available_adapters=["browser", "uia", "launcher"],
-                    detection_sources=["system_catalog"],
-                ),
-            ]
+        else:
+            records = self.scan_posix_installed_binaries()
 
         synced = []
         for r in records:
@@ -335,49 +405,62 @@ class ApplicationDiscoveryManager:
         app_id: str,
         document_path: str | None = None,
     ) -> dict[str, Any]:
-        """Safely launch an application or open a user-selected document with it."""
+        """Safely launch an application ONLY after verifying executable/install path exists on disk."""
         app = await db_manager.get_installed_app(app_id)
         if not app:
-            return {"success": False, "message": f"Aplikasi '{app_id}' tidak ditemukan dalam katalog."}
+            return {
+                "success": False,
+                "launch_status": "not_launchable",
+                "message": f"Aplikasi '{app_id}' tidak ditemukan dalam katalog.",
+            }
 
-        target = document_path
-        if not target and app.get("install_location"):
-            target = app["install_location"]
+        target = document_path or app.get("install_location") or app.get("metadata", {}).get("executable_path")
+        if not target or not str(target).strip():
+            return {
+                "success": False,
+                "launch_status": "not_launchable",
+                "message": f"Aplikasi '{app['display_name']}' tidak memiliki lokasi executable (InstallLocation kosong).",
+            }
+
+        target_path = Path(str(target).strip())
+        if not target_path.exists():
+            return {
+                "success": False,
+                "launch_status": "not_launchable",
+                "message": f"Lokasi berkas aplikasi '{app['display_name']}' ({target_path}) tidak ditemukan di disk.",
+            }
 
         try:
             if sys.platform == "win32":
-                if target and Path(target).exists():
-                    os.startfile(target)  # type: ignore[attr-defined]
-                    return {
-                        "success": True,
-                        "message": f"Berhasil membuka '{app['display_name']}' ({target}).",
-                    }
-                else:
-                    return {
-                        "success": True,
-                        "message": f"Instruksi buka aplikasi '{app['display_name']}' diterima.",
-                    }
+                os.startfile(str(target_path))  # type: ignore[attr-defined]
+                return {
+                    "success": True,
+                    "launch_status": "launchable",
+                    "message": f"Berhasil membuka '{app['display_name']}' ({target_path}).",
+                }
             elif sys.platform == "darwin":
-                loc = app.get("install_location")
-                if loc and Path(loc).exists():
-                    subprocess.run(["open", loc], check=False)
+                proc = subprocess.run(["open", str(target_path)], check=False, capture_output=True, text=True)
+                if proc.returncode == 0:
                     return {
                         "success": True,
+                        "launch_status": "launchable",
                         "message": f"Berhasil membuka aplikasi '{app['display_name']}' di macOS.",
                     }
-                else:
-                    return {
-                        "success": True,
-                        "message": f"Aplikasi '{app['display_name']}' diluncurkan.",
-                    }
+                return {
+                    "success": False,
+                    "launch_status": "not_launchable",
+                    "message": f"Gagal membuka aplikasi '{app['display_name']}': {proc.stderr.strip()}",
+                }
             else:
                 return {
                     "success": True,
-                    "message": f"Simulasi pembukaan aplikasi '{app['display_name']}'.",
+                    "launch_status": "launchable",
+                    "message": f"Path aplikasi '{app['display_name']}' ({target_path}) terverifikasi.",
                 }
         except Exception as exc:
             return {
                 "success": False,
+                "launch_status": "not_launchable",
                 "message": f"Gagal membuka aplikasi '{app['display_name']}': {exc}",
             }
 

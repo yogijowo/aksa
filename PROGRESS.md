@@ -7,14 +7,16 @@
 
 ---
 
-## 📍 Current Status Summary (Live State)
+## 📍 Current Status Summary (Live State — Section 23.2 Disciplined Tracking)
 
 | Field | Value |
 | :--- | :--- |
-| **Current Phase** | `Multi-Provider Models, Authorized App Control & Dynamic Skill Assignment [COMPLETED]` |
-| **Overall Progress** | `100% (Latest Official Models across All Providers, PC Application Authorization & Connect/Disconnect Actions, 15+ Popular Agent Skills Catalog, Unified Team Agent Configuration & 23/23 Verified Tests)` |
-| **Last Completed Task** | `Updated latest official models across all cloud and local providers (Gemini 2.5, Claude 3.7/3.5, OpenAI GPT-4.5/o3-mini/o1, DeepSeek V3/R1, Groq, Ollama); upgraded ApplicationsView with integration categories, authorization badges, and offline/online Connect/Disconnect actions; expanded Agent Skills catalog with 15+ popular repositories; unified all settings directly into Tim Agen (AgentHierarchyView) with dedicated sub-tabs for Authorized PC Apps, Installed Skills, and Core Tools; verified 23/23 pytest test suites and clean TypeScript Vite production build.` |
-| **Next Immediate Action** | `Final End-to-End Release Tagging & Production Distribution` |
+| **Current Phase** | `Phase 9 — Enterprise Readiness Master Specification Baseline [VERIFIED_WINDOWS / TESTED]` |
+| **Release Status Classification** | `Release Candidate (All P0/P1/P2 code & security regression gates implemented and tested on Windows; formal Enterprise Ready sign-off awaits production code-signing certificates & macOS physical/CI runner notarization)` |
+| **Verification Evidence** | `Backend: node scripts/dev.js --test -> 33 passed in 40.48s (Python 3.12.16, win32) | Frontend: npm --prefix apps/desktop run build -> 0 TypeScript/Vite errors` |
+| **Last Completed Task** | `Implemented AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md across P0/P1/P2: OS Credential Vault (Windows DPAPI / macOS Keychain / Sealed Vault) with transactional plaintext migration; ProviderMode (local_only) & zero local-to-cloud fallback; DataClassification & DataDisclosureGate (no auto PDF attachment); ExecutionPolicyGateway override field rejection & bound one-time approvals; UNC/ADS path blocking & workspace revoke-all; WebSocket cross-session hijack prevention & Host/Origin validation; honest App Discovery & Launch verification; Skill zip-bomb/collision/injection checks & grant revocation on uninstall; MCP isolated env secret scrubbing; Computer Use sensitive window blocking; structured log redaction & support bundle; governance docs (SECURITY.md, PRIVACY.md, SUPPORT.md, CHANGELOG.md, CONTRIBUTING.md, CODE_OF_CONDUCT.md) and CI/CD workflows.` |
+| **Known Limitations** | `1. Native Tauri .exe compilation (npm run dev:tauri) requires Rust toolchain (cargo) installed on host; Browser Dev mode (npm run dev) works without Rust. 2. Production code-signing (.msi/.exe Authenticode & macOS Apple Developer ID notarization) requires organization signing certificates in CI secrets. 3. macOS TCC Accessibility/Screen Recording dialogs require testing on a physical/VM macOS host (VERIFIED_WINDOWS completed; macOS status is TESTED via unit/CI spec).` |
+| **Next Immediate Action** | `Execute CI/CD Multi-Platform Workflow on GitHub Actions (windows-latest & macos-latest) and attach signed release evidence` |
 | **Active Blockers** | `None` |
 
 ---
@@ -210,6 +212,28 @@
 
 ---
 
+### Phase 9: Enterprise Readiness Master Specification (`AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md`) [VERIFIED_WINDOWS / TESTED]
+
+- [x] **9.1 P0 Security Blockers Remediation (`VERIFIED_WINDOWS`, `TESTED`):**
+  - [x] **9.1.1** Implemented `CredentialVault` (`app/core/credential_vault.py`) using Windows DPAPI (`CryptProtectData`), macOS Keychain, and sealed HMAC-SHA256 vault; added transactional one-time migration scrubbing plaintext `provider_api_keys` from SQLite (`test_p0_credential_vault_and_plaintext_migration`).
+  - [x] **9.1.2** Implemented `PrivacyPolicyGate` (`app/core/privacy_gate.py`) with `ProviderMode` (`local_only`, `cloud_by_choice`, `hybrid_with_consent`, `enterprise_managed`) and eliminated all silent local-to-cloud and cross-provider fallbacks (`test_p0_local_only_mode_blocks_cloud_and_prevents_fallback`).
+  - [x] **9.1.3** Implemented `DataClassification` (`PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, `RESTRICTED`) and `DataDisclosureGate`, removing automatic PDF workspace attachments (`test_p0_data_classification_and_no_auto_pdf_attachment`).
+  - [x] **9.1.4** Hardened `ExecutionPolicyGateway` (`app/core/sandbox.py`) to actively reject `execution_policy_override`, `skip_approval`, `is_admin`, and `force_allow`, binding one-time `ApprovalGrant`s to canonical SHA-256 argument hashes, session ID, workspace ID, tool version, and expiry (`test_p0_policy_override_rejected_and_approval_binding`).
+  - [x] **9.1.5** Hardened `SandboxManager` & `HierarchicalOrchestrator`: removed `workspaces[0]` fallback, blocked UNC network paths (`\\server\share`) and NTFS ADS (`:`), preserved read-only workspace flags, and added `POST /api/v1/workspaces/revoke-all` (`test_p0_workspace_isolation_unc_and_read_only_preservation`).
+- [x] **9.2 P1 Sidecar, OS Integration, Skills, MCP & Computer Use Hardening (`VERIFIED_WINDOWS`, `TESTED`):**
+  - [x] **9.2.1** Hardened FastAPI middleware (`app/main.py`) and WebSocket hub (`app/api/ws.py`): enforced loopback Host/Origin allowlists, 10 MB body limit, 64 KB WebSocket frame limit, and per-session ownership preventing cross-session subscription hijacking (`test_p1_websocket_cross_session_hijack_and_host_origin_protection`).
+  - [x] **9.2.2** Hardened Tauri Rust `SidecarState` (`apps/desktop/src-tauri/src/sidecar.rs`) with dynamic loopback port allocation (`allocate_loopback_port`), 256-bit per-launch token, and child-process `Drop` cleanup (`IMPLEMENTED`).
+  - [x] **9.2.3** Removed hardcoded fake fallback apps from `app_discovery.py`, added `launch_status`, `automation_status`, and `confidence` metadata, and enforced honest `not_launchable` failure when `InstallLocation` is empty (`test_p1_app_launcher_verifies_install_location`).
+  - [x] **9.2.4** Hardened `AgentSkillsManager` (`app/skills/skill_manager.py`) with zip-bomb (25 MB / 50:1 ratio), symlink, case-collision, and prompt-injection checks, `aksa.skill.yaml` manifest generation, and automatic grant revocation upon uninstall (`test_p1_skill_archive_security_and_uninstall_grant_revocation`).
+  - [x] **9.2.5** Hardened `MCPClientManager` (`app/tools/mcp/mcp_client.py`) with `build_isolated_mcp_env` secret scrubbing, full `initialize` -> `notifications/initialized` -> `tools/call` lifecycle, strict JSON-RPC result verification, and `revoke_server` (`test_p1_mcp_isolated_env_and_computer_use_sensitive_window`).
+  - [x] **9.2.6** Refactored `gui_agent.py` with `WindowsComputerUseAdapter` and `MacOSComputerUseAdapter`, sensitive window blocking (`1Password`, `Bitwarden`, `KeePass`, `Windows Security`, `Keychain Access`), and precondition/postcondition metadata (`test_p1_mcp_isolated_env_and_computer_use_sensitive_window`).
+- [x] **9.3 P2 Observability, Migrations, Governance Docs & CI/CD (`VERIFIED_WINDOWS`, `TESTED`):**
+  - [x] **9.3.1** Implemented `StructuredObservabilityManager` (`app/core/observability.py`) with secret/token redaction and `GET /api/v1/system/diagnostics/support-bundle` (`test_p2_observability_redaction_and_support_bundle`).
+  - [x] **9.3.2** Added `schema_migrations`, `credentials_metadata`, and `approval_requests` tables with WAL mode and `PRAGMA foreign_keys = ON` in `app/db/models.py`.
+  - [x] **9.3.3** Created `SECURITY.md`, `PRIVACY.md`, `SUPPORT.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `.github/PULL_REQUEST_TEMPLATE.md`, and `.github/workflows/{ci.yml,security.yml,release.yml}`.
+
+---
+
 ## 📝 Session Changelog
 
 - **2026-11-17:** Completed Phase 0 — Created full architectural blueprint (`docs/01` through `docs/08`), `AGENTS.md`, bilingual `README.md` / `README.en.md`, and initialized `PROGRESS.md` master tracker.
@@ -238,6 +262,8 @@
   3. Expanded `CURATED_SKILL_CATALOG` in `skill_manager.py` with 15+ popular open-source agent skills (Anthropic, Microsoft, CrewAI, LangChain, GitHub) available uninstalled by default for 1-click installation in `SkillsView.tsx`, complete with category pills, search bar, and secure disabled-by-default isolation.
   4. Interconnected all configurations into **Tim Agen** (`AgentHierarchyView.tsx`): upgraded the agent inspector panel with 3 dynamic sub-tabs under *Keahlian & Akses Alat (Lazy Tool Loading)* allowing users to assign specific **Authorized PC Applications**, **Installed Agent Skills**, and **Core System Tools** to any individual agent in the team alongside their preferred model.
   5. Verified 23/23 pytest test suites passing (100% success) and clean TypeScript + Vite production bundle (`tsc --noEmit && vite build`).
+- **2026-11-17:** Completed Phase 9 Enterprise Readiness Master Specification (`AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md`) — Implemented P0/P1/P2 controls (`credential_vault.py`, `privacy_gate.py`, `observability.py`, hardened `sandbox.py`, `llm_router.py`, `orchestrator.py`, `app_discovery.py`, `permission_broker.py`, `skill_manager.py`, `mcp_client.py`, `gui_agent.py`, `main.py`, `ws.py`, `sidecar.rs`), created governance & support docs (`SECURITY.md`, `PRIVACY.md`, `SUPPORT.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/{ci.yml,security.yml,release.yml}`), and verified 33/33 pytest test suites (`test_phase8_enterprise_readiness.py`) + 0 TypeScript build errors on Windows (`VERIFIED_WINDOWS`).
+
 
 
 

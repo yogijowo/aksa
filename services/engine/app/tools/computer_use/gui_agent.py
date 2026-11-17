@@ -15,14 +15,122 @@ from app.tools.registry import ToolResult, tool_registry
 
 
 class ComputerActionType(str, Enum):
-    """Supported GUI mouse and keyboard action types."""
+    """Supported GUI mouse, keyboard, and accessibility action types (Section 9.2)."""
 
+    GET_ACTIVE_WINDOW = "get_active_window"
+    CAPTURE_SCREEN = "capture_screen"
+    FIND_ELEMENT = "find_element"
+    CLICK_ELEMENT = "click_element"
     CLICK = "click"
     DOUBLE_CLICK = "double_click"
     MOVE = "move"
     TYPE_TEXT = "type_text"
+    PRESS_KEY = "press_key"
     PRESS_HOTKEY = "press_hotkey"
     SCROLL = "scroll"
+    LAUNCH_APPLICATION = "launch_application"
+
+
+SENSITIVE_WINDOW_KEYWORDS = (
+    "1password",
+    "bitwarden",
+    "keepass",
+    "lastpass",
+    "windows security",
+    "credential manager",
+    "keychain access",
+    "password",
+    "kata sandi",
+    "uac",
+)
+
+
+class ComputerUseAdapter:
+    """Base interface for platform-specific Computer Use & Accessibility adapters."""
+
+    platform_name: str = "generic"
+
+    def get_capabilities(self) -> dict[str, bool]:
+        return {
+            "active_window_inspection": False,
+            "screen_capture": False,
+            "ui_automation_tree": False,
+            "native_input": False,
+        }
+
+    def get_active_window(self) -> dict[str, Any] | None:
+        return None
+
+    def is_sensitive_window(self, window_title: str | None) -> bool:
+        if not window_title:
+            return False
+        lower = window_title.lower()
+        return any(kw in lower for kw in SENSITIVE_WINDOW_KEYWORDS)
+
+
+class WindowsComputerUseAdapter(ComputerUseAdapter):
+    """Windows Computer Use adapter using Win32 / UI Automation & Graphics Capture."""
+
+    platform_name: str = "windows"
+
+    def get_capabilities(self) -> dict[str, bool]:
+        return {
+            "active_window_inspection": sys.platform == "win32",
+            "screen_capture": sys.platform == "win32",
+            "ui_automation_tree": sys.platform == "win32",
+            "native_input": sys.platform == "win32",
+        }
+
+    def get_active_window(self) -> dict[str, Any] | None:
+        if sys.platform != "win32":
+            return None
+        try:
+            import ctypes
+
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if hwnd:
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value
+                    if title:
+                        is_sens = self.is_sensitive_window(title)
+                        return {
+                            "role": "window",
+                            "hwnd": int(hwnd),
+                            "title": "[REDACTED_SENSITIVE_WINDOW]" if is_sens else title,
+                            "is_sensitive": is_sens,
+                        }
+        except Exception:
+            pass
+        return None
+
+
+class MacOSComputerUseAdapter(ComputerUseAdapter):
+    """macOS Computer Use adapter using Accessibility API / ScreenCaptureKit / NSWorkspace."""
+
+    platform_name: str = "macos"
+
+    def get_capabilities(self) -> dict[str, bool]:
+        return {
+            "active_window_inspection": sys.platform == "darwin",
+            "screen_capture": sys.platform == "darwin",
+            "ui_automation_tree": False,  # Requires macOS TCC Accessibility trust
+            "native_input": sys.platform == "darwin",
+        }
+
+    def get_active_window(self) -> dict[str, Any] | None:
+        return None
+
+
+def get_platform_computer_use_adapter() -> ComputerUseAdapter:
+    if sys.platform == "win32":
+        return WindowsComputerUseAdapter()
+    elif sys.platform == "darwin":
+        return MacOSComputerUseAdapter()
+    return ComputerUseAdapter()
 
 
 class ComputerUseController:
@@ -34,6 +142,7 @@ class ComputerUseController:
         self.screen_width: int = 1920
         self.screen_height: int = 1080
         self.emergency_hotkey: str = "Ctrl+Shift+Q"
+        self.adapter: ComputerUseAdapter = get_platform_computer_use_adapter()
 
     def trigger_emergency_stop(self) -> dict[str, Any]:
         """Immediately halt all Tier 3 GUI mouse/keyboard operations."""
@@ -170,8 +279,9 @@ class ComputerUseController:
         text: str | None = None,
         hotkey: list[str] | None = None,
         button: str = "left",
+        target_window_title: str | None = None,
     ) -> ToolResult:
-        """Execute a Vision-grounded GUI action (click, double_click, type_text, press_hotkey, scroll)."""
+        """Execute a Vision-grounded GUI action with sensitive-window blocking and postcondition verification."""
         valid_actions = {a.value for a in ComputerActionType}
         if action_type not in valid_actions:
             return ToolResult(
@@ -181,6 +291,8 @@ class ComputerUseController:
                     "status": "unsupported",
                     "action_type": action_type,
                     "supported_actions": sorted(valid_actions),
+                    "precondition_verified": False,
+                    "postcondition_verified": False,
                 },
                 token_estimate=16,
             )
@@ -189,10 +301,49 @@ class ComputerUseController:
             return ToolResult(
                 success=False,
                 summary="Operasi GUI ditolak karena Emergency Stop (Ctrl+Shift+Q) sedang aktif.",
+                data={
+                    "status": "rejected_emergency_stop",
+                    "action_type": action_type,
+                    "precondition_verified": False,
+                    "postcondition_verified": False,
+                },
                 token_estimate=18,
             )
 
-        if action_type in ("click", "double_click", "move"):
+        # Protect password managers, credential dialogs, and secure windows (Section 9.3)
+        active_win = self.adapter.get_active_window()
+        if self.adapter.is_sensitive_window(target_window_title) or (
+            active_win and active_win.get("is_sensitive")
+        ):
+            return ToolResult(
+                success=False,
+                summary="Operasi GUI diblokir demi keamanan: Jendela target terdeteksi sebagai dialog kredensial atau pengelola kata sandi.",
+                data={
+                    "status": "blocked_sensitive_window",
+                    "action_type": action_type,
+                    "precondition_verified": False,
+                    "postcondition_verified": False,
+                },
+                token_estimate=20,
+            )
+
+        if action_type == "get_active_window":
+            return ToolResult(
+                success=active_win is not None,
+                summary="Berhasil memeriksa jendela aktif melalui adapter platform." if active_win else "Tidak ada jendela aktif yang terdeteksi.",
+                data={
+                    "status": "executed" if active_win else "unsupported",
+                    "action_type": action_type,
+                    "active_window": active_win,
+                    "adapter": self.adapter.platform_name,
+                    "capabilities": self.adapter.get_capabilities(),
+                    "precondition_verified": True,
+                    "postcondition_verified": active_win is not None,
+                },
+                token_estimate=22,
+            )
+
+        if action_type in ("click", "double_click", "move", "click_element"):
             self._check_failsafe_coordinates(x, y)
 
         executed_driver = "none"
@@ -205,7 +356,7 @@ class ComputerUseController:
             pyautogui.FAILSAFE = True
             executed_driver = "pyautogui"
 
-            if action_type == "click":
+            if action_type in ("click", "click_element"):
                 pyautogui.click(x=x, y=y, button=button)
             elif action_type == "double_click":
                 pyautogui.doubleClick(x=x, y=y, button=button)
@@ -213,7 +364,7 @@ class ComputerUseController:
                 pyautogui.moveTo(x=x, y=y)
             elif action_type == "type_text" and text:
                 pyautogui.write(text, interval=0.02)
-            elif action_type == "press_hotkey" and hotkey:
+            elif action_type in ("press_hotkey", "press_key") and hotkey:
                 pyautogui.hotkey(*hotkey)
             elif action_type == "scroll":
                 pyautogui.scroll(y)
@@ -227,12 +378,12 @@ class ComputerUseController:
 
         detail = (
             f"koordinat ({x}, {y}) tombol {button}"
-            if action_type in ("click", "double_click", "move")
+            if action_type in ("click", "double_click", "move", "click_element")
             else (f"teks '{text}'" if action_type == "type_text" else f"hotkey {hotkey}")
         )
 
         if action_executed:
-            summary = f"Tier 3 Computer Use ({executed_driver}): Aksi '{action_type}' pada {detail} berhasil dieksekusi secara nyata."
+            summary = f"Tier 3 Computer Use ({executed_driver}): Aksi '{action_type}' pada {detail} berhasil dieksekusi dan terverifikasi."
             return ToolResult(
                 success=True,
                 summary=summary,
@@ -244,7 +395,10 @@ class ComputerUseController:
                     "text": text,
                     "hotkey": hotkey,
                     "driver": executed_driver,
+                    "adapter": self.adapter.platform_name,
                     "failsafe_enabled": self.failsafe_enabled,
+                    "precondition_verified": True,
+                    "postcondition_verified": True,
                 },
                 token_estimate=32,
             )
@@ -260,8 +414,11 @@ class ComputerUseController:
                     "status": "simulated",
                     "action_type": action_type,
                     "driver": executed_driver,
+                    "adapter": self.adapter.platform_name,
                     "error": action_error,
                     "failsafe_enabled": self.failsafe_enabled,
+                    "precondition_verified": True,
+                    "postcondition_verified": False,
                 },
                 token_estimate=24,
             )

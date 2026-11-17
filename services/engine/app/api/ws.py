@@ -8,36 +8,63 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from app.config import settings
+from app.core.observability import redact_payload
 
 ws_router = APIRouter()
 
+MAX_WS_MESSAGE_BYTES = 64 * 1024  # 64 KB
+MAX_ACTIVE_CONNECTIONS = 32
+
 
 class ConnectionManager:
-    """Manages authenticated WebSocket clients with per-session isolation."""
+    """Manages authenticated WebSocket clients with strict per-session ownership and isolation."""
 
     def __init__(self) -> None:
         self.active_connections: list[WebSocket] = []
         self.connection_subscriptions: dict[WebSocket, set[str]] = {}
+        self.session_owners: dict[str, WebSocket] = {}
 
-    async def connect(self, websocket: WebSocket, session_id: str | None = None) -> None:
+    async def connect(self, websocket: WebSocket, session_id: str | None = None) -> bool:
+        if len(self.active_connections) >= MAX_ACTIVE_CONNECTIONS:
+            await websocket.close(code=4008, reason="Connection limit exceeded")
+            return False
+
         await websocket.accept()
         self.active_connections.append(websocket)
         self.connection_subscriptions[websocket] = set()
         if session_id:
-            self.connection_subscriptions[websocket].add(session_id)
+            # Bind ownership if not owned by another active connection
+            owner = self.session_owners.get(session_id)
+            if owner is None or owner not in self.active_connections or owner is websocket:
+                self.session_owners[session_id] = websocket
+                self.connection_subscriptions[websocket].add(session_id)
+        return True
 
-    def subscribe_session(self, websocket: WebSocket, session_id: str) -> None:
-        if websocket in self.connection_subscriptions:
-            self.connection_subscriptions[websocket].add(session_id)
+    def subscribe_session(self, websocket: WebSocket, session_id: str) -> bool:
+        """Authorize and subscribe a WebSocket connection to a session if not owned by another client."""
+        if websocket not in self.connection_subscriptions:
+            return False
+        owner = self.session_owners.get(session_id)
+        if owner is not None and owner in self.active_connections and owner is not websocket:
+            # Cross-session hijacking prevented
+            return False
+        self.session_owners[session_id] = websocket
+        self.connection_subscriptions[websocket].add(session_id)
+        return True
 
     def unsubscribe_session(self, websocket: WebSocket, session_id: str) -> None:
         if websocket in self.connection_subscriptions:
             self.connection_subscriptions[websocket].discard(session_id)
+        if self.session_owners.get(session_id) is websocket:
+            self.session_owners.pop(session_id, None)
 
     def disconnect(self, websocket: WebSocket) -> None:
         if websocket in self.active_connections:
             self.active_connections.remove(websocket)
         self.connection_subscriptions.pop(websocket, None)
+        owned = [sid for sid, owner in self.session_owners.items() if owner is websocket]
+        for sid in owned:
+            self.session_owners.pop(sid, None)
 
     async def broadcast_event(
         self,
@@ -45,13 +72,14 @@ class ConnectionManager:
         payload: dict[str, Any],
         session_id: str | None = None,
     ) -> None:
-        """Broadcast a structured JSON event to authenticated, session-isolated UI clients."""
+        """Broadcast a structured, redacted JSON event to authenticated, session-isolated UI clients."""
+        safe_payload = redact_payload(payload)
         message = json.dumps(
             {
                 "event": event_type,
                 "session_id": session_id,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "payload": payload,
+                "payload": safe_payload,
             }
         )
 
@@ -104,6 +132,15 @@ async def websocket_stream_endpoint(
         )
         while True:
             raw = await websocket.receive_text()
+            if len(raw.encode("utf-8")) > MAX_WS_MESSAGE_BYTES:
+                await websocket.send_json(
+                    {
+                        "event": "error",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "payload": {"code": "MESSAGE_TOO_LARGE", "message": "Pesan WebSocket melebihi batas 64 KB."},
+                    }
+                )
+                continue
             try:
                 data = json.loads(raw)
             except json.JSONDecodeError:
@@ -121,15 +158,24 @@ async def websocket_stream_endpoint(
             elif action == "subscribe":
                 target_session = data.get("session_id")
                 if target_session:
-                    ws_manager.subscribe_session(websocket, target_session)
-                    await websocket.send_json(
-                        {
-                            "event": "subscribed",
-                            "session_id": target_session,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "payload": {"session_id": target_session},
-                        }
-                    )
+                    if ws_manager.subscribe_session(websocket, target_session):
+                        await websocket.send_json(
+                            {
+                                "event": "subscribed",
+                                "session_id": target_session,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "payload": {"session_id": target_session},
+                            }
+                        )
+                    else:
+                        await websocket.send_json(
+                            {
+                                "event": "subscription_denied",
+                                "session_id": target_session,
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "payload": {"code": "SESSION_UNAUTHORIZED", "session_id": target_session},
+                            }
+                        )
             elif action == "unsubscribe":
                 target_session = data.get("session_id")
                 if target_session:

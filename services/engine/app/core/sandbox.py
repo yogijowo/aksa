@@ -20,11 +20,25 @@ from app.api.ws import ws_manager
 
 
 class RiskLevel(str, Enum):
-    """Risk classification for tool operations."""
+    """Risk classification for tool operations (R0-R4 enterprise baseline + aliases)."""
 
-    LOW = "low"          # Read-only or safe new file creation in workspace
-    MEDIUM = "medium"    # Overwriting existing files (auto-backup to .aksa_backup/)
-    HIGH = "high"        # Deleting files, shell scripts, Tier 3 GUI control, outside workspace
+    LOW = "low"                                   # R0/R1 alias: Read-only or safe workspace inspect
+    MEDIUM = "medium"                             # R2 alias: Reversible write with auto-backup
+    HIGH = "high"                                 # R3/R4 alias: High-risk / external / destructive
+    R0_READ_LOW = "R0"
+    R1_READ_SENSITIVE = "R1"
+    R2_REVERSIBLE_WRITE = "R2"
+    R3_EXTERNAL_SIDE_EFFECT = "R3"
+    R4_DESTRUCTIVE_PRIVILEGED = "R4"
+
+
+FORBIDDEN_POLICY_OVERRIDE_FIELDS = {
+    "execution_policy_override",
+    "skip_approval",
+    "is_admin",
+    "force_allow",
+    "bypass_policy",
+}
 
 
 class WorkspacePolicy(BaseModel):
@@ -40,11 +54,14 @@ class HITLApprovalRequest(BaseModel):
     """Represents a pending or resolved Human-in-the-Loop approval gate item."""
 
     id: str
+    action_id: str = Field(default_factory=lambda: f"act_{uuid.uuid4().hex[:10]}")
     tool_name: str
+    tool_version: str = "1.0.0"
     risk_level: RiskLevel
     title_id: str
     description_id: str
     target_path: str | None = None
+    workspace_id: str | None = None
     agent_name: str = "Operator PC & Automasi Sistem"
     arguments: dict[str, Any] = Field(default_factory=dict)
     arguments_hash: str = ""
@@ -57,15 +74,30 @@ class HITLApprovalRequest(BaseModel):
 
 
 class ApprovalGrant(BaseModel):
-    """One-time cryptographic grant bound to exact tool, arguments, session, and resource."""
+    """One-time cryptographic grant bound to exact action, tool, version, arguments, session, workspace, and resource."""
 
     id: str
+    approval_id: str = ""
+    action_id: str = Field(default_factory=lambda: f"act_{uuid.uuid4().hex[:10]}")
+    user_id: str = "default_user"
     tool_name: str
+    tool_version: str = "1.0.0"
+    arguments: dict[str, Any] = Field(default_factory=dict)
     arguments_hash: str
     session_id: str | None = None
+    workspace_id: str | None = None
     resource_path: str | None = None
+    resource_ids: list[str] = Field(default_factory=list)
+    risk_level: str = "high"
+    data_classification: str = "INTERNAL"
+    requested_permissions: list[str] = Field(default_factory=list)
     created_at: str
     expires_at: str
+    decided_at: str | None = None
+    decision: str = "approved"
+    one_time: bool = True
+    policy_version: int = 1
+    decision_reason: str | None = None
     consumed: bool = False
 
 
@@ -80,11 +112,13 @@ def _utc_now_iso() -> str:
 def compute_canonical_arguments_hash(arguments: dict[str, Any]) -> str:
     """Compute a deterministic SHA-256 hash of tool arguments ignoring policy metadata."""
     filtered = {
-        k: v for k, v in arguments.items()
-        if k not in ("hitl_grant_id", "session_id", "execution_policy_override")
+        k: v
+        for k, v in arguments.items()
+        if k not in ("hitl_grant_id", "session_id", "workspace_id", "tool_version")
+        and k not in FORBIDDEN_POLICY_OVERRIDE_FIELDS
     }
     cleaned = json.dumps(filtered, sort_keys=True, default=str)
-    return hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:16]
+    return hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:32]
 
 
 class ExecutionPolicyGateway:
@@ -98,20 +132,40 @@ class ExecutionPolicyGateway:
         tool_name: str,
         arguments: dict[str, Any],
         session_id: str | None = None,
+        workspace_id: str | None = None,
         resource_path: str | None = None,
+        tool_version: str = "1.0.0",
+        risk_level: str = "high",
+        data_classification: str = "INTERNAL",
         ttl_seconds: int = 300,
     ) -> ApprovalGrant:
         grant_id = f"grant_{uuid.uuid4().hex[:12]}"
         now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=ttl_seconds)
+        now_iso = now.isoformat()
+        filtered_args = {
+            k: v
+            for k, v in arguments.items()
+            if k not in ("hitl_grant_id", "session_id", "workspace_id", "tool_version")
+        }
         grant = ApprovalGrant(
             id=grant_id,
+            approval_id=grant_id,
             tool_name=tool_name,
+            tool_version=tool_version,
+            arguments=filtered_args,
             arguments_hash=compute_canonical_arguments_hash(arguments),
             session_id=session_id,
+            workspace_id=workspace_id,
             resource_path=resource_path,
-            created_at=now.isoformat(),
+            resource_ids=[resource_path] if resource_path else [],
+            risk_level=risk_level,
+            data_classification=data_classification,
+            created_at=now_iso,
+            decided_at=now_iso,
             expires_at=expires.isoformat(),
+            decision="approved",
+            one_time=True,
             consumed=False,
         )
         self._grants[grant_id] = grant
@@ -123,21 +177,39 @@ class ExecutionPolicyGateway:
         tool_name: str,
         arguments: dict[str, Any],
         session_id: str | None = None,
+        workspace_id: str | None = None,
+        tool_version: str = "1.0.0",
     ) -> bool:
         grant = self._grants.get(grant_id)
         if not grant or grant.consumed:
             return False
+        if grant.decision != "approved":
+            return False
         if grant.tool_name != tool_name:
+            return False
+        if grant.tool_version != tool_version:
             return False
         if grant.arguments_hash != compute_canonical_arguments_hash(arguments):
             return False
         if grant.session_id and session_id and grant.session_id != session_id:
             return False
+        if grant.workspace_id and workspace_id and grant.workspace_id != workspace_id:
+            return False
         now_iso = datetime.now(timezone.utc).isoformat()
         if now_iso > grant.expires_at:
+            grant.decision = "expired"
             return False
 
-        # Invalidate grant immediately after verification to prevent replay attacks
+        # Atomically consume one-time grant before execution to prevent replay attacks
+        if grant.one_time:
+            grant.consumed = True
+        return True
+
+    def revoke_grant(self, grant_id: str) -> bool:
+        grant = self._grants.get(grant_id)
+        if not grant:
+            return False
+        grant.decision = "revoked"
         grant.consumed = True
         return True
 
@@ -152,24 +224,50 @@ class ExecutionPolicyGateway:
         arguments: dict[str, Any],
         session_id: str | None = None,
     ) -> Any:
-        """Evaluate policy before dispatching to underlying tool handler."""
-        # Check override for automated test harness
-        override = arguments.get("execution_policy_override", False)
-        grant_id = arguments.get("hitl_grant_id")
+        """Evaluate policy before dispatching to underlying tool handler. Fail closed."""
+        from app.tools.registry import ToolResult
 
-        if risk_level == RiskLevel.HIGH and not override:
+        # 1. Actively reject any public request trying to pass policy override fields
+        forbidden_found = FORBIDDEN_POLICY_OVERRIDE_FIELDS.intersection(arguments.keys())
+        if forbidden_found:
+            return ToolResult(
+                success=False,
+                summary=(
+                    f"Pelanggaran Keamanan ExecutionPolicyGateway: Field ilegal {sorted(forbidden_found)} "
+                    "ditolak secara eksplisit. Tidak ada bypass kebijakan yang diizinkan."
+                ),
+                data={
+                    "policy_violation": "FORBIDDEN_OVERRIDE_FIELD",
+                    "rejected_fields": sorted(forbidden_found),
+                    "tool_name": tool_name,
+                },
+                token_estimate=20,
+            )
+
+        grant_id = arguments.get("hitl_grant_id")
+        workspace_id = arguments.get("workspace_id")
+        tool_version = arguments.get("tool_version", "1.0.0")
+
+        requires_approval = risk_level in (
+            RiskLevel.HIGH,
+            RiskLevel.R3_EXTERNAL_SIDE_EFFECT,
+            RiskLevel.R4_DESTRUCTIVE_PRIVILEGED,
+        )
+
+        if requires_approval:
             if not grant_id or not self.verify_and_consume_grant(
                 grant_id=grant_id,
                 tool_name=tool_name,
                 arguments=arguments,
                 session_id=session_id,
+                workspace_id=workspace_id,
+                tool_version=tool_version,
             ):
-                from app.tools.registry import ToolResult
                 return ToolResult(
                     success=False,
                     summary=(
                         f"Aksi berisiko tinggi '{tool_name}' dicegah oleh ExecutionPolicyGateway: "
-                        "Memerlukan persetujuan pengguna (HITL Approval Gate) yang sah dan belum pernah digunakan."
+                        "Memerlukan persetujuan pengguna (HITL Approval Gate) yang sah, terikat pada argumen, dan belum pernah digunakan."
                     ),
                     data={
                         "hitl_required": True,
@@ -181,8 +279,9 @@ class ExecutionPolicyGateway:
                 )
 
         clean_args = {
-            k: v for k, v in arguments.items()
-            if k not in ("hitl_grant_id", "session_id", "execution_policy_override")
+            k: v
+            for k, v in arguments.items()
+            if k not in ("hitl_grant_id", "session_id", "workspace_id", "tool_version")
         }
         return await handler(**clean_args)
 
@@ -217,6 +316,12 @@ class SandboxManager:
         real_path = Path(os.path.realpath(os.path.expanduser(str(folder_path))))
         return self._workspaces.pop(real_path, None) is not None
 
+    def clear_all_workspaces(self) -> int:
+        """Revoke all registered workspace policies in memory immediately."""
+        count = len(self._workspaces)
+        self._workspaces.clear()
+        return count
+
     def list_policies(self) -> list[WorkspacePolicy]:
         """Return all registered workspace policies."""
         return list(self._workspaces.values())
@@ -229,9 +334,21 @@ class SandboxManager:
         """Validate that target_path is inside an authorized workspace and permitted for mode.
 
         Modes: 'read', 'write', 'execute'.
-        Raises SandboxViolationError if outside allowed_paths or permission is disabled.
+        Raises SandboxViolationError if outside allowed_paths, UNC network path, ADS, or permission is disabled.
         """
-        resolved = Path(os.path.realpath(os.path.expanduser(str(target_path))))
+        raw_str = str(target_path).strip()
+        if raw_str.startswith("\\\\") or raw_str.startswith("//"):
+            raise SandboxViolationError(
+                f"Akses ditolak oleh Sandbox AKSA: Path jaringan UNC '{raw_str}' tidak diizinkan."
+            )
+
+        expanded = os.path.expanduser(raw_str)
+        if ":" in Path(expanded).name:
+            raise SandboxViolationError(
+                f"Akses ditolak oleh Sandbox AKSA: Alternate Data Stream (ADS) tidak diizinkan pada '{raw_str}'."
+            )
+
+        resolved = Path(os.path.realpath(expanded))
 
         matched_root: Path | None = None
         matched_policy: WorkspacePolicy | None = None

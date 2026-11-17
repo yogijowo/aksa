@@ -713,11 +713,104 @@ async def toggle_skill_status(skill_id: str, req: ToggleSkillRequest) -> dict[st
 
 @api_router.delete("/skills/{skill_id}")
 async def delete_installed_skill(skill_id: str) -> dict[str, Any]:
-    """Uninstall an Agent Skill."""
-    deleted = await db_manager.delete_installed_skill(skill_id)
+    """Uninstall an Agent Skill, revoke all its grants, and remove its runtime files."""
+    deleted = await agent_skills_manager.uninstall_skill(skill_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Keahlian tidak ditemukan.")
-    return {"deleted": True, "skill_id": skill_id}
+    return {"deleted": True, "skill_id": skill_id, "grants_revoked": True}
+
+
+from app.core.observability import observability_manager
+from app.core.privacy_gate import privacy_policy_gate
+from app.tools.mcp.mcp_client import mcp_client_manager
+
+
+class UpdatePrivacySettingsRequest(BaseModel):
+    provider_mode: str | None = None
+    default_classification: str | None = None
+    allowed_providers: list[str] | None = None
+    telemetry_opt_in: bool | None = None
+
+
+class EvaluateDisclosureRequest(BaseModel):
+    provider: str
+    model_id: str
+    prompt: str
+    attachments: list[dict[str, Any]] | None = None
+    data_classification: str | None = None
+    user_consent_granted: bool = False
+
+
+@api_router.post("/workspaces/revoke-all")
+async def revoke_all_workspaces_endpoint() -> dict[str, Any]:
+    """Immediately revoke all workspace access in SQLite and in-memory SandboxManager (Section 4.4)."""
+    removed_db = await db_manager.revoke_all_workspaces()
+    removed_mem = sandbox_manager.clear_all_workspaces()
+    return {
+        "revoked": True,
+        "workspaces_removed": max(removed_db, removed_mem),
+        "message": "Seluruh izin akses Folder Kerja telah dicabut secara menyeluruh.",
+    }
+
+
+@api_router.delete("/models/keys/{provider}")
+async def revoke_provider_api_key(provider: str) -> dict[str, Any]:
+    """Revoke and delete a provider API key from OS Credential Vault and SQLite metadata."""
+    revoked = await llm_router.revoke_api_key(provider)
+    return {"revoked": revoked, "provider": provider}
+
+
+@api_router.get("/privacy/settings")
+async def get_privacy_settings() -> dict[str, Any]:
+    """Return active LLM provider mode, default data classification, and telemetry status."""
+    return privacy_policy_gate.get_status()
+
+
+@api_router.post("/privacy/settings")
+async def update_privacy_settings(req: UpdatePrivacySettingsRequest) -> dict[str, Any]:
+    """Update LLM provider mode (local_only, cloud_by_choice, hybrid_with_consent, enterprise_managed)."""
+    try:
+        updated = privacy_policy_gate.configure(
+            provider_mode=req.provider_mode,
+            default_classification=req.default_classification,
+            allowed_providers=req.allowed_providers,
+            telemetry_opt_in=req.telemetry_opt_in,
+        )
+        return {"updated": True, "settings": updated}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@api_router.post("/privacy/evaluate-disclosure")
+async def evaluate_data_disclosure(req: EvaluateDisclosureRequest) -> dict[str, Any]:
+    """Evaluate DataDisclosureGate before external processing."""
+    summary = privacy_policy_gate.evaluate_disclosure(
+        provider=req.provider,
+        model_id=req.model_id,
+        messages=[{"role": "user", "content": req.prompt}],
+        attachments=req.attachments,
+        explicit_classification=req.data_classification,
+        user_consent_granted=req.user_consent_granted,
+    )
+    return {"disclosure": summary.model_dump()}
+
+
+@api_router.post("/mcp/servers/{server_id}/revoke")
+async def revoke_mcp_server_endpoint(server_id: str) -> dict[str, Any]:
+    """Disable an MCP server and revoke its active grants."""
+    try:
+        res = mcp_client_manager.revoke_server(server_id)
+        return res
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@api_router.get("/system/diagnostics/support-bundle")
+async def get_support_diagnostic_bundle() -> dict[str, Any]:
+    """Generate a redacted support diagnostic bundle without secrets or document contents (Section 13.3)."""
+    bundle = await observability_manager.generate_support_bundle()
+    return {"support_bundle": bundle}
+
 
 
 

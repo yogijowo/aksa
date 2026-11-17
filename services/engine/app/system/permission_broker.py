@@ -20,7 +20,7 @@ from app.db.models import db_manager
 
 
 class PermissionState(str, Enum):
-    """Normalized operating-system permission states."""
+    """Normalized operating-system permission states (Layer A)."""
 
     NOT_REQUESTED = "NOT_REQUESTED"
     CHECKING = "CHECKING"
@@ -30,6 +30,16 @@ class PermissionState(str, Enum):
     NEEDS_USER_ACTION = "NEEDS_USER_ACTION"
     UNSUPPORTED = "UNSUPPORTED"
     ERROR = "ERROR"
+
+
+class AKSAConsentState(str, Enum):
+    """Normalized AKSA explicit user consent states (Layer B)."""
+
+    NOT_GRANTED = "NOT_GRANTED"
+    GRANTED_SCOPED = "GRANTED_SCOPED"
+    DENIED = "DENIED"
+    REVOKED = "REVOKED"
+    EXPIRED = "EXPIRED"
 
 
 class CapabilityDefinition(BaseModel):
@@ -182,16 +192,37 @@ class OSPermissionBroker:
         workspace_folder: str | None = None,
     ) -> list[dict[str, Any]]:
         """Combine native OS status, AKSA consent grant status, and audit history for all capabilities."""
-        grants = await db_manager.list_permission_grants(active_only=True)
-        grants_by_cap = {g["capability_id"]: g for g in grants}
+        all_grants = await db_manager.list_permission_grants(active_only=False)
+        active_by_cap: dict[str, dict[str, Any]] = {}
+        revoked_by_cap: dict[str, dict[str, Any]] = {}
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        for g in all_grants:
+            cap_id = g["capability_id"]
+            if g.get("revoked_at"):
+                if cap_id not in revoked_by_cap:
+                    revoked_by_cap[cap_id] = g
+            elif g.get("expires_at") and g["expires_at"] < now_iso:
+                continue
+            else:
+                if cap_id not in active_by_cap:
+                    active_by_cap[cap_id] = g
 
         results: list[dict[str, Any]] = []
         for cap in self.list_capabilities():
             resource_ref = workspace_folder if cap.scope_type == "workspace" else None
             os_state = self.check_native_os_permission(cap.id, resource_id=resource_ref)
-            active_grant = grants_by_cap.get(cap.id)
+            active_grant = active_by_cap.get(cap.id)
 
-            aksa_status = "granted" if active_grant else ("not_granted" if cap.requires_hitl else "automatic_sandbox")
+            if active_grant:
+                aksa_status = "granted"
+                aksa_consent_state = AKSAConsentState.GRANTED_SCOPED.value
+            elif cap.id in revoked_by_cap:
+                aksa_status = "not_granted"
+                aksa_consent_state = AKSAConsentState.REVOKED.value
+            else:
+                aksa_status = "not_granted" if cap.requires_hitl else "automatic_sandbox"
+                aksa_consent_state = AKSAConsentState.NOT_GRANTED.value
 
             results.append({
                 "capability_id": cap.id,
@@ -201,11 +232,26 @@ class OSPermissionBroker:
                 "requires_hitl": cap.requires_hitl,
                 "os_status": os_state.value,
                 "aksa_status": aksa_status,
+                "aksa_consent_state": aksa_consent_state,
                 "grant_id": active_grant["id"] if active_grant else None,
                 "granted_at": active_grant["granted_at"] if active_grant else None,
             })
 
         return results
+
+    async def has_active_consent(self, capability_id: str, resource_scope: str | None = None) -> bool:
+        """Check whether an explicit, non-revoked, non-expired AKSA consent grant exists."""
+        grants = await db_manager.list_permission_grants(active_only=True)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for g in grants:
+            if g["capability_id"] != capability_id:
+                continue
+            if g.get("expires_at") and g["expires_at"] < now_iso:
+                continue
+            if resource_scope and g.get("resource_scope") not in (resource_scope, "workspace", "session", "device"):
+                continue
+            return True
+        return False
 
     async def request_capability_grant(
         self,
