@@ -1,0 +1,123 @@
+export type NavSection =
+  | "ruang_kerja"
+  | "tim_agen"
+  | "pengetahuan_rag"
+  | "telegram"
+  | "izin_pc"
+  | "pengaturan";
+
+export type ModelProvider =
+  | "openai"
+  | "anthropic"
+  | "gemini"
+  | "deepseek"
+  | "openrouter"
+  | "groq"
+  | "ollama"
+  | "lmstudio";
+
+export interface AgentNodeConfig {
+  id: string;
+  team_id: string;
+  parent_id: string | null;
+  name: string;
+  role_title: string;
+  description: string;
+  avatar_icon: string;
+  tier_level: number;
+  provider: ModelProvider;
+  model_id: string;
+  temperature: number;
+  max_tokens: number;
+  system_prompt: string;
+  tool_categories: string[];
+  position_x: number;
+  position_y: number;
+}
+
+export interface AgentTeam {
+  id: string;
+  name: string;
+  description: string;
+  is_default: boolean;
+  agents: AgentNodeConfig[];
+}
+
+export interface WorkspaceFolder {
+  id: string;
+  name: string;
+  folder_path: string;
+  allow_read: boolean;
+  allow_write: boolean;
+  allow_execute: boolean;
+  auto_rag_sync: boolean;
+  last_indexed_at?: string | null;
+}
+
+export interface FileArtifact {
+  id: string;
+  name: string;
+  file_path: string;
+  file_type: "xlsx" | "docx" | "pptx" | "pdf" | "py" | "other";
+  size_label: string;
+  created_by_agent: string;
+  created_at_label: string;
+  summary: string;
+}
+
+export interface ExecutionStep {
+  id: string;
+  agent_name: string;
+  agent_role: string;
+  provider: ModelProvider;
+  model_id: string;
+  action_label: string;
+  detail: string;
+  status: "completed" | "running" | "pending";
+  tokens_used: number;
+  tokens_saved: number;
+}
+
+export interface ChatMessage {
+  id: string;
+  sender_role: "user" | "supervisor";
+  sender_name: string;
+  content: string;
+  timestamp_label: string;
+  execution_steps?: ExecutionStep[];
+  artifacts?: FileArtifact[];
+}
+
+export interface EngineHealth {
+  online: boolean;
+  version: string;
+  ollama_online: boolean;
+  ollama_models: string[];
+  telegram_connected: boolean;
+  telegram_bot_username: string | null;
+}
+
+export interface HITLApprovalItem {
+  id: string;
+  tool_name: string;
+  risk_level: "low" | "medium" | "high";
+  title_id: string;
+  description_id: string;
+  target_path?: string | null;
+  agent_name: string;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+}
+
+export interface MCPServerItem {
+  id: string;
+  name: string;
+  transport: string;
+  command: string;
+  args: string[];
+  enabled: boolean;
+  description_id: string;
+  discovered_tools: string[];
+}
+
+

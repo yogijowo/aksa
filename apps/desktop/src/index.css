@@ -1,0 +1,74 @@
+@import "tailwindcss";
+
+:root {
+  --background: #191918;
+  --surface-sidebar: #141413;
+  --surface-1: #21211f;
+  --surface-2: #282826;
+  --border-subtle: rgba(255, 255, 255, 0.07);
+  --text-primary: #ececeb;
+  --text-secondary: #9c9a92;
+  --accent-claude: #d97757;
+  --accent-emerald: #10b981;
+  --accent-amber: #f59e0b;
+  --accent-rose: #f43f5e;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
+  background-color: var(--background);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+/* React Flow Dark Theme Controls */
+.react-flow__controls {
+  background-color: #21211f !important;
+  border: 1px solid rgba(255, 255, 255, 0.1) !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  box-shadow: 0 8px 24px -4px rgba(0, 0, 0, 0.5) !important;
+}
+
+.react-flow__controls-button {
+  background-color: #21211f !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+  color: #d4d4d8 !important;
+  fill: #d4d4d8 !important;
+}
+
+.react-flow__controls-button:last-child {
+  border-bottom: none !important;
+}
+
+.react-flow__controls-button:hover {
+  background-color: #2a2a28 !important;
+}
+
+.react-flow__controls-button svg {
+  fill: #d4d4d8 !important;
+}
