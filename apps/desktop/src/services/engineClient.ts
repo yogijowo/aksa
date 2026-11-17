@@ -463,3 +463,129 @@ export async function regenerateTelegramCodeRemote(): Promise<string | null> {
   }
 }
 
+// --- Desktop Applications API ---
+export async function fetchDesktopAppsRemote(): Promise<any[] | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/apps`);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.apps ?? [];
+  } catch {
+    return null;
+  }
+}
+
+export async function refreshDesktopAppsRemote(): Promise<any[] | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/apps/refresh`, { method: "POST" });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.apps ?? [];
+  } catch {
+    return null;
+  }
+}
+
+export async function launchDesktopAppRemote(appId: string, documentPath?: string): Promise<{ success: boolean; message: string }> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/apps/${encodeURIComponent(appId)}/launch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ document_path: documentPath }),
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, message: String(err?.message || err) };
+  }
+}
+
+// --- OS Permissions & Security Broker API ---
+export async function fetchSystemPermissionsRemote(workspaceFolder?: string): Promise<any[] | null> {
+  try {
+    const url = workspaceFolder
+      ? `${DEFAULT_BASE_URL}/api/v1/system/permissions?workspace_folder=${encodeURIComponent(workspaceFolder)}`
+      : `${DEFAULT_BASE_URL}/api/v1/system/permissions`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.capabilities ?? [];
+  } catch {
+    return null;
+  }
+}
+
+export async function requestSystemPermissionRemote(capabilityId: string, resourceScope: string = "workspace"): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/permissions/request`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ capability_id: capabilityId, resource_scope: resourceScope }),
+    });
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function revokeSystemPermissionRemote(grantId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/permissions/${encodeURIComponent(grantId)}`, {
+      method: "DELETE",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+// --- Agent Skills Manager API ---
+export async function fetchSkillsRemote(): Promise<{ installed_skills: any[]; curated_catalog: any[] } | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/skills`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function installCuratedSkillRemote(skillId: string): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/skills/install-curated`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ skill_id: skillId }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function toggleSkillStatusRemote(skillId: string, enabled: boolean): Promise<any | null> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/skills/${encodeURIComponent(skillId)}/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteSkillRemote(skillId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/skills/${encodeURIComponent(skillId)}`, {
+      method: "DELETE",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+

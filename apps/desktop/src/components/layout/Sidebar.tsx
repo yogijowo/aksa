@@ -2,6 +2,8 @@ import React from "react";
 import {
   MessageSquareText,
   Network,
+  LayoutGrid,
+  Sparkles,
   BookOpenCheck,
   Send,
   ShieldCheck,
@@ -25,6 +27,16 @@ const NAV_ITEMS: { id: NavSection; label: string; icon: React.ElementType }[] = 
     id: "tim_agen",
     label: "Tim Agen",
     icon: Network,
+  },
+  {
+    id: "aplikasi",
+    label: "Aplikasi PC",
+    icon: LayoutGrid,
+  },
+  {
+    id: "keahlian",
+    label: "Keahlian (Skills)",
+    icon: Sparkles,
   },
   {
     id: "pengetahuan_rag",

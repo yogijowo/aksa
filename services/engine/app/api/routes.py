@@ -258,30 +258,8 @@ async def delete_agent(agent_id: str) -> dict[str, Any]:
 
 @api_router.get("/workspaces")
 async def list_workspaces() -> dict[str, Any]:
-    """List all authorized PC workspace folders."""
+    """List all authorized PC workspace folders. Strictly read-only; never auto-grants permissions."""
     workspaces = await db_manager.list_workspaces()
-    if not workspaces:
-        repo_root = Path(__file__).resolve().parent.parent.parent.parent
-        ws = await db_manager.upsert_workspace(
-            {
-                "name": "Proyek AKSA (Lokal)",
-                "folder_path": str(repo_root),
-                "allow_read": True,
-                "allow_write": True,
-                "allow_execute": True,
-                "auto_rag_sync": True,
-            }
-        )
-        sandbox_manager.register_workspace(
-            WorkspacePolicy(
-                folder_path=str(repo_root),
-                allow_read=True,
-                allow_write=True,
-                allow_execute=True,
-            )
-        )
-        workspaces = [ws]
-
     return {"workspaces": workspaces}
 
 
@@ -595,14 +573,132 @@ async def regenerate_telegram_pairing_code() -> dict[str, Any]:
     return {"pairing_code": code}
 
 
-@api_router.post("/telegram/simulate")
-async def simulate_telegram_command(req: SimulateTelegramMessageRequest) -> dict[str, Any]:
-    """Process a simulated or live Telegram message through the auth guard and orchestrator."""
-    return await telegram_gateway.handler.handle_incoming_message(
-        telegram_user_id=req.telegram_user_id,
-        text=req.text,
-        username=req.username,
-        workspace_path=req.workspace_path,
+from app.system.app_discovery import application_discovery_manager
+from app.system.permission_broker import permission_broker
+from app.skills.skill_manager import agent_skills_manager
+
+
+class LaunchAppRequest(BaseModel):
+    document_path: str | None = None
+
+
+class RequestCapabilityGrantRequest(BaseModel):
+    capability_id: str
+    resource_scope: str = "workspace"
+    grant_source: str = "desktop_ui"
+
+
+class InstallCuratedSkillRequest(BaseModel):
+    skill_id: str
+
+
+class ToggleSkillRequest(BaseModel):
+    enabled: bool
+
+
+@api_router.get("/system/apps")
+async def list_desktop_applications() -> dict[str, Any]:
+    """List discovered desktop applications and their running/adapter status."""
+    apps = await db_manager.list_installed_apps()
+    if not apps:
+        apps = await application_discovery_manager.scan_and_sync()
+    return {"apps": apps}
+
+
+@api_router.post("/system/apps/refresh")
+async def refresh_desktop_applications() -> dict[str, Any]:
+    """Rescan local operating system registry / application bundles and update database."""
+    apps = await application_discovery_manager.scan_and_sync()
+    return {"apps": apps, "total": len(apps)}
+
+
+@api_router.get("/system/apps/{app_id}")
+async def get_desktop_application(app_id: str) -> dict[str, Any]:
+    """Get detailed metadata and available adapters for a specific desktop application."""
+    app = await db_manager.get_installed_app(app_id)
+    if not app:
+        raise HTTPException(status_code=404, detail="Aplikasi tidak ditemukan.")
+    return {"app": app}
+
+
+@api_router.post("/system/apps/{app_id}/launch")
+async def launch_desktop_application(app_id: str, req: LaunchAppRequest) -> dict[str, Any]:
+    """Safely launch an application or open a file with it."""
+    result = await application_discovery_manager.launch_application(app_id, req.document_path)
+    return result
+
+
+@api_router.get("/system/permissions")
+async def list_system_permissions(workspace_folder: str | None = None) -> dict[str, Any]:
+    """Return all platform capabilities with both native OS status and AKSA consent status."""
+    statuses = await permission_broker.get_all_capability_statuses(workspace_folder=workspace_folder)
+    return {"capabilities": statuses}
+
+
+@api_router.post("/system/permissions/request")
+async def request_system_permission(req: RequestCapabilityGrantRequest) -> dict[str, Any]:
+    """Record an explicit user consent grant for a system capability."""
+    result = await permission_broker.request_capability_grant(
+        capability_id=req.capability_id,
+        resource_scope=req.resource_scope,
+        grant_source=req.grant_source,
     )
+    return result
+
+
+@api_router.delete("/system/permissions/{grant_id}")
+async def revoke_system_permission(grant_id: str) -> dict[str, Any]:
+    """Revoke an active AKSA capability grant immediately."""
+    success = await permission_broker.revoke_capability_grant(grant_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Izin tidak ditemukan atau sudah dicabut.")
+    return {"revoked": True, "grant_id": grant_id}
+
+
+@api_router.get("/system/permissions/audit")
+async def list_permission_audit_log(limit: int = 50) -> dict[str, Any]:
+    """List permission authorization and revocation audit ledger events."""
+    events = await db_manager.list_permission_audit_events(limit=limit)
+    return {"audit_events": events}
+
+
+@api_router.get("/skills")
+async def list_skills() -> dict[str, Any]:
+    """List installed Agent Skills and available curated catalog."""
+    installed = await db_manager.list_installed_skills()
+    curated = [c.model_dump() for c in agent_skills_manager.list_curated_catalog()]
+    return {
+        "installed_skills": installed,
+        "curated_catalog": curated,
+    }
+
+
+@api_router.post("/skills/install-curated")
+async def install_curated_skill(req: InstallCuratedSkillRequest) -> dict[str, Any]:
+    """Install a curated Agent Skill in a DISABLED default state."""
+    try:
+        skill = await agent_skills_manager.install_curated_skill(req.skill_id)
+        return {"skill": skill, "message": "Keahlian berhasil dipasang dalam kondisi nonaktif (dinonaktifkan secara default)."}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@api_router.post("/skills/{skill_id}/toggle")
+async def toggle_skill_status(skill_id: str, req: ToggleSkillRequest) -> dict[str, Any]:
+    """Explicitly enable or disable an installed Agent Skill."""
+    updated = await db_manager.toggle_skill_enabled(skill_id, req.enabled)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Keahlian tidak ditemukan.")
+    return {"skill": updated}
+
+
+@api_router.delete("/skills/{skill_id}")
+async def delete_installed_skill(skill_id: str) -> dict[str, Any]:
+    """Uninstall an Agent Skill."""
+    deleted = await db_manager.delete_installed_skill(skill_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Keahlian tidak ditemukan.")
+    return {"deleted": True, "skill_id": skill_id}
+
 
 

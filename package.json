@@ -7,7 +7,7 @@
     "dev": "python scripts/dev.py",
     "dev:tauri": "python scripts/dev.py --tauri",
     "build": "npm --prefix apps/desktop run build",
-    "test:backend": "pytest services/engine/tests -v",
+    "test:backend": "python -m pytest services/engine/tests -v",
     "test:frontend": "npm --prefix apps/desktop run build"
   }
 }

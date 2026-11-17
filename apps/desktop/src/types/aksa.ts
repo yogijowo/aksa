@@ -1,6 +1,8 @@
 export type NavSection =
   | "ruang_kerja"
   | "tim_agen"
+  | "aplikasi"
+  | "keahlian"
   | "pengetahuan_rag"
   | "telegram"
   | "izin_pc"
@@ -118,6 +120,59 @@ export interface MCPServerItem {
   enabled: boolean;
   description_id: string;
   discovered_tools: string[];
+}
+
+export interface DesktopApp {
+  id: string;
+  platform: string;
+  platform_app_id: string;
+  display_name: string;
+  publisher?: string | null;
+  version?: string | null;
+  install_location?: string | null;
+  install_scope: string;
+  is_installed: boolean;
+  is_running: boolean;
+  available_adapters: string[];
+  detection_sources: string[];
+}
+
+export interface CapabilityStatus {
+  capability_id: string;
+  display_name: string;
+  description: string;
+  scope_type: string;
+  requires_hitl: boolean;
+  os_status: "GRANTED" | "DENIED" | "NEEDS_USER_ACTION" | "UNSUPPORTED" | "NOT_REQUESTED";
+  aksa_status: "granted" | "not_granted" | "automatic_sandbox";
+  grant_id?: string | null;
+  granted_at?: string | null;
+}
+
+export interface SkillItem {
+  id: string;
+  skill_id: string;
+  display_name: string;
+  publisher: string;
+  installed_version: string;
+  package_hash: string;
+  trust_level: "curated" | "verified_publisher" | "community_reviewed" | "unreviewed" | "blocked";
+  enabled: boolean;
+  installed_at: string;
+}
+
+export interface CuratedSkill {
+  id: string;
+  display_name: string;
+  version: string;
+  publisher: string;
+  description: string;
+  trust_level: string;
+  capabilities: string[];
+  has_scripts: boolean;
+  has_network: boolean;
+  scripts: string[];
+  instructions_preview: string;
 }
 
 

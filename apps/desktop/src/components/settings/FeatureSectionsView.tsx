@@ -38,6 +38,9 @@ import { ProviderIcon } from "@/components/ui/DynamicIcon";
 import type { ModelProvider } from "@/types/aksa";
 import { KnowledgeBaseView } from "@/components/rag/KnowledgeBaseView";
 import { TelegramGatewayView } from "@/components/telegram/TelegramGatewayView";
+import { ApplicationsView } from "@/components/apps/ApplicationsView";
+import { SkillsView } from "@/components/skills/SkillsView";
+import { PermissionsAndPCView } from "@/components/settings/PermissionsAndPCView";
 
 interface PreloadedModel {
   provider: ModelProvider;
@@ -303,14 +306,9 @@ export const FeatureSectionsView: React.FC = () => {
 
   if (activeNav === "pengetahuan_rag") return <KnowledgeBaseView />;
   if (activeNav === "telegram") return <TelegramGatewayView />;
-  if (activeNav === "izin_pc") {
-    // If navigated via sidebar "Izin & Akses PC", open permissions tab
-    return (
-      <div className="flex-1 p-6 md:p-8 overflow-y-auto bg-[#191918]">
-        <PermissionsTabContent />
-      </div>
-    );
-  }
+  if (activeNav === "aplikasi") return <ApplicationsView />;
+  if (activeNav === "keahlian") return <SkillsView />;
+  if (activeNav === "izin_pc") return <PermissionsAndPCView />;
 
   const handleSaveKey = async (provider: string) => {
     const key = apiKeys[provider]?.trim() ?? "";

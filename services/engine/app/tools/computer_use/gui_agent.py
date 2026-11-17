@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,17 @@ from PIL import Image, ImageDraw
 
 from app.core.sandbox import RiskLevel, sandbox_manager
 from app.tools.registry import ToolResult, tool_registry
+
+
+class ComputerActionType(str, Enum):
+    """Supported GUI mouse and keyboard action types."""
+
+    CLICK = "click"
+    DOUBLE_CLICK = "double_click"
+    MOVE = "move"
+    TYPE_TEXT = "type_text"
+    PRESS_HOTKEY = "press_hotkey"
+    SCROLL = "scroll"
 
 
 class ComputerUseController:
@@ -160,6 +172,19 @@ class ComputerUseController:
         button: str = "left",
     ) -> ToolResult:
         """Execute a Vision-grounded GUI action (click, double_click, type_text, press_hotkey, scroll)."""
+        valid_actions = {a.value for a in ComputerActionType}
+        if action_type not in valid_actions:
+            return ToolResult(
+                success=False,
+                summary=f"Aksi GUI '{action_type}' tidak didukung oleh sistem. Pilihan valid: {sorted(valid_actions)}.",
+                data={
+                    "status": "unsupported",
+                    "action_type": action_type,
+                    "supported_actions": sorted(valid_actions),
+                },
+                token_estimate=16,
+            )
+
         if self.emergency_stop_active:
             return ToolResult(
                 success=False,

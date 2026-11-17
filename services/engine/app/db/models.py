@@ -136,6 +136,134 @@ CREATE TABLE IF NOT EXISTS user_memories (
     workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS installed_applications (
+    id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    platform_app_id TEXT NOT NULL,
+    bundle_id TEXT,
+    aumid TEXT,
+    display_name TEXT NOT NULL,
+    publisher TEXT,
+    version TEXT,
+    install_location TEXT,
+    install_scope TEXT DEFAULT 'machine',
+    signature_status TEXT DEFAULT 'unknown',
+    detection_sources_json TEXT DEFAULT '[]',
+    is_installed INTEGER DEFAULT 1,
+    is_running INTEGER DEFAULT 0,
+    available_adapters_json TEXT DEFAULT '[]',
+    last_seen_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    metadata_json TEXT DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS application_adapters (
+    id TEXT PRIMARY KEY,
+    application_id TEXT NOT NULL REFERENCES installed_applications(id) ON DELETE CASCADE,
+    adapter_type TEXT NOT NULL,
+    adapter_version TEXT DEFAULT '1.0.0',
+    status TEXT DEFAULT 'available',
+    supported_actions_json TEXT DEFAULT '[]',
+    last_verified_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS os_permission_states (
+    id TEXT PRIMARY KEY,
+    platform TEXT NOT NULL,
+    capability_id TEXT NOT NULL,
+    resource_id TEXT,
+    status TEXT NOT NULL,
+    checked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_requested_at TEXT,
+    last_error_code TEXT
+);
+
+CREATE TABLE IF NOT EXISTS permission_grants (
+    id TEXT PRIMARY KEY,
+    principal_type TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    capability_id TEXT NOT NULL,
+    resource_scope TEXT NOT NULL,
+    grant_source TEXT DEFAULT 'desktop_ui',
+    granted_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    expires_at TEXT,
+    revoked_at TEXT,
+    policy_version INTEGER DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS permission_audit_events (
+    id TEXT PRIMARY KEY,
+    task_id TEXT,
+    session_id TEXT,
+    principal_type TEXT NOT NULL,
+    principal_id TEXT NOT NULL,
+    capability_id TEXT NOT NULL,
+    resource_scope TEXT NOT NULL,
+    decision TEXT NOT NULL,
+    reason_code TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS skill_sources (
+    id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    source_url TEXT NOT NULL,
+    publisher_id TEXT,
+    trust_level TEXT DEFAULT 'unreviewed',
+    enabled INTEGER DEFAULT 1,
+    last_checked_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS installed_skills (
+    id TEXT PRIMARY KEY,
+    skill_id TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    publisher TEXT,
+    source_id TEXT REFERENCES skill_sources(id) ON DELETE SET NULL,
+    installed_version TEXT NOT NULL,
+    package_hash TEXT NOT NULL,
+    trust_level TEXT DEFAULT 'unreviewed',
+    enabled INTEGER DEFAULT 0,
+    installed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_verified_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS skill_versions (
+    id TEXT PRIMARY KEY,
+    skill_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    package_hash TEXT NOT NULL,
+    source_commit TEXT,
+    manifest_json TEXT NOT NULL,
+    scan_report_json TEXT NOT NULL,
+    installed_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS skill_capability_requests (
+    id TEXT PRIMARY KEY,
+    skill_id TEXT NOT NULL,
+    version TEXT NOT NULL,
+    capability_id TEXT NOT NULL,
+    resource_scope TEXT NOT NULL,
+    decision TEXT DEFAULT 'pending',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    revoked_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS mcp_servers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    source TEXT NOT NULL,
+    transport TEXT DEFAULT 'stdio',
+    command TEXT NOT NULL,
+    args_json TEXT DEFAULT '[]',
+    environment_allowlist_json TEXT DEFAULT '[]',
+    package_version TEXT,
+    package_hash TEXT,
+    enabled INTEGER DEFAULT 0,
+    trust_level TEXT DEFAULT 'unreviewed',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -359,6 +487,301 @@ class DatabaseManager:
             await db.commit()
             cursor = await db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
             return _row_to_dict(await cursor.fetchone())
+
+    # --- Installed Applications CRUD ---
+    async def upsert_installed_app(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Store or update a normalized application discovery record."""
+        app_id = payload.get("id") or f"app_{uuid.uuid4().hex[:10]}"
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                """
+                INSERT INTO installed_applications (
+                    id, platform, platform_app_id, bundle_id, aumid, display_name,
+                    publisher, version, install_location, install_scope, signature_status,
+                    detection_sources_json, is_installed, is_running, available_adapters_json,
+                    last_seen_at, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    publisher = excluded.publisher,
+                    version = excluded.version,
+                    install_location = excluded.install_location,
+                    is_installed = excluded.is_installed,
+                    is_running = excluded.is_running,
+                    available_adapters_json = excluded.available_adapters_json,
+                    last_seen_at = excluded.last_seen_at,
+                    metadata_json = excluded.metadata_json
+                """,
+                (
+                    app_id,
+                    payload.get("platform", "windows"),
+                    payload.get("platform_app_id", app_id),
+                    payload.get("bundle_id"),
+                    payload.get("aumid"),
+                    payload.get("display_name", "Aplikasi"),
+                    payload.get("publisher"),
+                    payload.get("version"),
+                    payload.get("install_location"),
+                    payload.get("install_scope", "machine"),
+                    payload.get("signature_status", "unknown"),
+                    json.dumps(payload.get("detection_sources", [])),
+                    int(payload.get("is_installed", True)),
+                    int(payload.get("is_running", False)),
+                    json.dumps(payload.get("available_adapters", [])),
+                    now,
+                    json.dumps(payload.get("metadata", {})),
+                ),
+            )
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM installed_applications WHERE id = ?", (app_id,))
+            row = await cursor.fetchone()
+            item = _row_to_dict(row)
+            item["detection_sources"] = json.loads(item.pop("detection_sources_json", "[]"))
+            item["available_adapters"] = json.loads(item.pop("available_adapters_json", "[]"))
+            item["metadata"] = json.loads(item.pop("metadata_json", "{}"))
+            item["is_installed"] = bool(item["is_installed"])
+            item["is_running"] = bool(item["is_running"])
+            return item
+
+    async def list_installed_apps(self, platform: str | None = None) -> list[dict[str, Any]]:
+        """List all discovered desktop applications."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if platform:
+                cursor = await db.execute(
+                    "SELECT * FROM installed_applications WHERE platform = ? ORDER BY display_name ASC",
+                    (platform,),
+                )
+            else:
+                cursor = await db.execute("SELECT * FROM installed_applications ORDER BY display_name ASC")
+            items = []
+            for r in await cursor.fetchall():
+                d = _row_to_dict(r)
+                d["detection_sources"] = json.loads(d.pop("detection_sources_json", "[]"))
+                d["available_adapters"] = json.loads(d.pop("available_adapters_json", "[]"))
+                d["metadata"] = json.loads(d.pop("metadata_json", "{}"))
+                d["is_installed"] = bool(d["is_installed"])
+                d["is_running"] = bool(d["is_running"])
+                items.append(d)
+            return items
+
+    async def get_installed_app(self, app_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM installed_applications WHERE id = ?", (app_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            d = _row_to_dict(row)
+            d["detection_sources"] = json.loads(d.pop("detection_sources_json", "[]"))
+            d["available_adapters"] = json.loads(d.pop("available_adapters_json", "[]"))
+            d["metadata"] = json.loads(d.pop("metadata_json", "{}"))
+            d["is_installed"] = bool(d["is_installed"])
+            d["is_running"] = bool(d["is_running"])
+            return d
+
+    # --- OS Permission States & Grants CRUD ---
+    async def upsert_os_permission(self, payload: dict[str, Any]) -> dict[str, Any]:
+        perm_id = payload.get("id") or f"perm_{uuid.uuid4().hex[:10]}"
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                """
+                INSERT INTO os_permission_states (id, platform, capability_id, resource_id, status, checked_at, last_requested_at, last_error_code)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    status = excluded.status,
+                    checked_at = excluded.checked_at,
+                    last_requested_at = excluded.last_requested_at,
+                    last_error_code = excluded.last_error_code
+                """,
+                (
+                    perm_id,
+                    payload.get("platform", "windows"),
+                    payload["capability_id"],
+                    payload.get("resource_id"),
+                    payload["status"],
+                    now,
+                    payload.get("last_requested_at"),
+                    payload.get("last_error_code"),
+                ),
+            )
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM os_permission_states WHERE id = ?", (perm_id,))
+            return _row_to_dict(await cursor.fetchone())
+
+    async def list_os_permissions(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM os_permission_states ORDER BY capability_id ASC")
+            return [_row_to_dict(r) for r in await cursor.fetchall()]
+
+    async def create_permission_grant(self, payload: dict[str, Any]) -> dict[str, Any]:
+        grant_id = payload.get("id") or f"grant_{uuid.uuid4().hex[:12]}"
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                """
+                INSERT INTO permission_grants (id, principal_type, principal_id, capability_id, resource_scope, grant_source, granted_at, expires_at, policy_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    grant_id,
+                    payload.get("principal_type", "user"),
+                    payload.get("principal_id", "default_user"),
+                    payload["capability_id"],
+                    payload["resource_scope"],
+                    payload.get("grant_source", "desktop_ui"),
+                    now,
+                    payload.get("expires_at"),
+                    payload.get("policy_version", 1),
+                ),
+            )
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM permission_grants WHERE id = ?", (grant_id,))
+            return _row_to_dict(await cursor.fetchone())
+
+    async def list_permission_grants(self, active_only: bool = True) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if active_only:
+                cursor = await db.execute("SELECT * FROM permission_grants WHERE revoked_at IS NULL ORDER BY granted_at DESC")
+            else:
+                cursor = await db.execute("SELECT * FROM permission_grants ORDER BY granted_at DESC")
+            return [_row_to_dict(r) for r in await cursor.fetchall()]
+
+    async def revoke_permission_grant(self, grant_id: str) -> bool:
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute(
+                "UPDATE permission_grants SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL",
+                (now, grant_id),
+            )
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def log_permission_audit_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+        event_id = f"aud_{uuid.uuid4().hex[:12]}"
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                """
+                INSERT INTO permission_audit_events (id, task_id, session_id, principal_type, principal_id, capability_id, resource_scope, decision, reason_code, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    event_id,
+                    payload.get("task_id"),
+                    payload.get("session_id"),
+                    payload.get("principal_type", "agent"),
+                    payload.get("principal_id", "operator"),
+                    payload["capability_id"],
+                    payload.get("resource_scope", "workspace"),
+                    payload["decision"],
+                    payload.get("reason_code"),
+                    now,
+                ),
+            )
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM permission_audit_events WHERE id = ?", (event_id,))
+            return _row_to_dict(await cursor.fetchone())
+
+    async def list_permission_audit_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM permission_audit_events ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            )
+            return [_row_to_dict(r) for r in await cursor.fetchall()]
+
+    # --- Agent Skills CRUD ---
+    async def upsert_installed_skill(self, payload: dict[str, Any]) -> dict[str, Any]:
+        skill_id = payload["skill_id"]
+        pk_id = payload.get("id") or f"iskill_{uuid.uuid4().hex[:10]}"
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                """
+                INSERT INTO installed_skills (
+                    id, skill_id, display_name, publisher, source_id,
+                    installed_version, package_hash, trust_level, enabled,
+                    installed_at, last_verified_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(skill_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    publisher = excluded.publisher,
+                    installed_version = excluded.installed_version,
+                    package_hash = excluded.package_hash,
+                    trust_level = excluded.trust_level,
+                    last_verified_at = excluded.last_verified_at
+                """,
+                (
+                    pk_id,
+                    skill_id,
+                    payload.get("display_name", skill_id),
+                    payload.get("publisher", "Komunitas"),
+                    payload.get("source_id"),
+                    payload.get("installed_version", "1.0.0"),
+                    payload.get("package_hash", ""),
+                    payload.get("trust_level", "unreviewed"),
+                    int(payload.get("enabled", False)),  # Disabled by default
+                    now,
+                    now,
+                ),
+            )
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM installed_skills WHERE skill_id = ?", (skill_id,))
+            row = await cursor.fetchone()
+            d = _row_to_dict(row)
+            d["enabled"] = bool(d["enabled"])
+            return d
+
+    async def list_installed_skills(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM installed_skills ORDER BY display_name ASC")
+            items = []
+            for r in await cursor.fetchall():
+                d = _row_to_dict(r)
+                d["enabled"] = bool(d["enabled"])
+                items.append(d)
+            return items
+
+    async def get_installed_skill(self, skill_id: str) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM installed_skills WHERE skill_id = ?", (skill_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            d = _row_to_dict(row)
+            d["enabled"] = bool(d["enabled"])
+            return d
+
+    async def toggle_skill_enabled(self, skill_id: str, enabled: bool) -> dict[str, Any] | None:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                "UPDATE installed_skills SET enabled = ?, last_verified_at = ? WHERE skill_id = ?",
+                (int(enabled), _now_iso(), skill_id),
+            )
+            await db.commit()
+            return await self.get_installed_skill(skill_id)
+
+    async def delete_installed_skill(self, skill_id: str) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("DELETE FROM installed_skills WHERE skill_id = ?", (skill_id,))
+            await db.commit()
+            return cursor.rowcount > 0
 
 
 db_manager = DatabaseManager()

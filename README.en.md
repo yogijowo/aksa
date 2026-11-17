@@ -71,6 +71,11 @@ Most AI tools today are web chatbots isolated from your local desktop applicatio
 * **Instant File Delivery:** Receives live step-by-step progress updates and finished files (`.docx`, `.xlsx`, `.pdf`, screenshots) directly in your Telegram chat.
 * **Strict Whitelist & Pairing Security:** Only authorized Telegram user IDs verified with a 6-digit desktop pairing code can interact with the bot.
 
+### 🖥️ 6. Native Desktop Discovery, OS Permissions & Portable Agent Skills
+* **Zero-Elevation Application Inventory:** Safely discovers installed desktop applications (Office suites, browsers, IDEs) and automation adapters without requiring administrative privileges.
+* **OS-Level Permission Broker:** Independently tracks native operating system permissions (Accessibility, Screen Recording, filesystem ACLs) versus AKSA user consent grants with audit event logs.
+* **Standard Agent Skills (`SKILL.md`):** Extends agent workflows using the standard portable format with quarantine extraction validation, static code scanning, and disabled-by-default activation.
+
 ---
 
 ## 🚀 How AKSA Works on Your PC
@@ -156,7 +161,7 @@ The application will automatically launch on `http://localhost:5173` or open a n
 
 ### 4. Run Automated Test Suite
 ```bash
-# Backend Unit & Integration Tests (16 comprehensive test suites)
+# Backend Unit & Integration Tests (23 comprehensive test suites)
 uv run --project services/engine pytest services/engine/tests -v
 
 # Frontend TypeScript Check & Production Build
@@ -165,12 +170,16 @@ npm --prefix apps/desktop run build
 
 ---
 
-## 🔒 Local-First Security & Privacy
+## 🔒 Local-First Security, Privacy & Model Transparency
 
 AKSA is architected on strict **Local-First Data Sovereignty**:
-* **Zero Telemetry:** No conversation records, document contents, or file indices are transmitted to third-party servers.
-* **Encrypted/Masked Credentials:** API keys are stored in the user's local SQLite database and masked in the UI (`••••••••••••9iYY`).
+* **Zero Third-Party Telemetry:** No conversation records, document contents, or file indices are transmitted to developer servers.
+* **Transparent Processing Model:**
+  * **Local Models (Ollama / LM Studio):** 100% of reasoning, prompt processing, and RAG hybrid search runs completely offline on your own machine.
+  * **Cloud Models (Gemini, OpenAI, Anthropic, DeepSeek):** When you select a cloud provider and supply your own API key, request data and referenced files are dispatched directly over HTTPS only to your chosen provider's official API endpoints.
+* **Protected Credential Storage:** API keys are stored in the user's local SQLite database and strictly masked in the UI and HTTP API responses (`••••••••••••9iYY`).
 * **Session-Isolated WebSockets:** Real-time agent streaming events are isolated by session ID, preventing cross-window or cross-client data leakage.
+* **OS-Level Capability Broker & Sandbox Folders:** Filesystem operations are confined to explicitly authorized workspace directories (`allowed_paths`). High-risk operations (command execution, GUI automation) require human confirmation (Human-in-the-Loop).
 
 ---
 

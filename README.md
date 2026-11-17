@@ -71,6 +71,11 @@ Mayoritas AI saat ini hanya berupa kotak obrolan di peramban web (*web chatbot*)
 * **Hasil Langsung Dikirim ke HP:** Manajer Eksekutif akan membalas dengan kemajuan kerja bertahap (*live progress*) dan melampirkan berkas hasil kerja (dokumen `.docx`, rekap `.xlsx`, laporan `.pdf`, atau foto layar PC) langsung ke ruang obrolan Telegram Anda.
 * **Keamanan Akses Ketat:** Hanya akun Telegram dengan ID numerik yang terdaftar di *whitelist* dan telah diverifikasi menggunakan kode pairing 6-digit dari aplikasi desktop yang diizinkan memberi perintah.
 
+### 🖥️ 6. Penemuan Aplikasi Desktop, Izin OS & Keahlian Agen (Agent Skills)
+* **Deteksi Aplikasi Otomatis:** Memindai registri sistem operasi secara aman tanpa membutuhkan hak administrator untuk mengenali aplikasi yang terpasang (Office, Browser, Editor Teks) beserta adapter otomasi yang tersedia.
+* **Pusat Izin Sistem Operasi:** Melacak status izin native platform (Accessibility, Screen Recording, File ACLs) dan persetujuan pengguna (*consent*) secara independen dengan log audit.
+* **Format Standar Agent Skills (`SKILL.md`):** Mendukung pemasangan paket keahlian eksternal dengan karantina file, analisis keamanan kode statis, dan status *nonaktif secara default*.
+
 ---
 
 ## 🚀 Bagaimana AKSA Bekerja di PC Anda?
@@ -158,7 +163,7 @@ Aplikasi akan otomatis membuka antarmuka kerja di browser pada `http://localhost
 
 ### 4. Menjalankan Pengujian Otomatis
 ```bash
-# Pengujian Unit & Integrasi Backend (16 skenario pengujian)
+# Pengujian Unit & Integrasi Backend (23 skenario pengujian)
 uv run --project services/engine pytest services/engine/tests -v
 
 # Pemeriksaan Tipe TypeScript & Build Frontend
@@ -167,12 +172,16 @@ npm --prefix apps/desktop run build
 
 ---
 
-## 🔒 Keamanan & Privasi Lokal
+## 🔒 Keamanan, Privasi Lokal & Transparansi Model
 
 AKSA memegang teguh prinsip **Kedaulatan Data Lokal (*Local-First Privacy*)**:
-* **Tanpa Telemetri Tersembunyi:** Tidak ada data percakapan, dokumen, atau indeks berkas Anda yang dikirim ke server pihak ketiga mana pun.
-* **Penyimpanan Kredensial Terlindungi:** Kunci API disimpan di dalam database SQLite lokal pengguna dan disamarkan di antarmuka (`••••••••••••9iYY`).
+* **Bebas Telemetri Pihak Ketiga:** AKSA tidak memiliki pelacak (*tracking*) atau pengiriman telemetri tersembunyi ke server pengembang.
+* **Transparansi Pemrosesan AI:**
+  * **Model Lokal (Ollama / LM Studio):** 100% pemrosesan prompt, dokumen, dan basis data RAG berjalan sepenuhnya di komputer Anda secara luring (*offline*).
+  * **Model Cloud (Gemini, OpenAI, Anthropic, DeepSeek):** Jika Anda memilih model cloud dan memasukkan API key sendiri, data percakapan dan berkas terkait hanya dikirimkan secara langsung melalui HTTPS ke penyedia API resmi yang Anda pilih.
+* **Penyimpanan Kredensial Terlindungi:** Kunci API disimpan di dalam database SQLite lokal pengguna dan disamarkan di antarmuka serta respons HTTP (`••••••••••••9iYY`).
 * **Proteksi WebSocket Per-Sesi:** Aliran event eksekusi agen terisolasi secara ketat berdasarkan ID sesi kerja sehingga tidak terjadi kebocoran data antar tab atau client.
+* **Pusat Izin OS & Sandbox Folders:** Operasi file dibatasi pada folder kerja yang dipilih secara eksplisit (`allowed_paths`). Akses sensitif (eksekusi perintah, otomasi layar GUI) mewajibkan konfirmasi persetujuan pengguna (*Human-in-the-Loop*).
 
 ---
 

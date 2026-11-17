@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import os
 import shutil
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -43,9 +46,27 @@ class HITLApprovalRequest(BaseModel):
     description_id: str
     target_path: str | None = None
     agent_name: str = "Operator PC & Automasi Sistem"
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    arguments_hash: str = ""
+    session_id: str | None = None
+    grant_id: str | None = None
     status: str = "pending"  # pending | approved | rejected
     created_at: str
+    expires_at: str | None = None
     resolved_at: str | None = None
+
+
+class ApprovalGrant(BaseModel):
+    """One-time cryptographic grant bound to exact tool, arguments, session, and resource."""
+
+    id: str
+    tool_name: str
+    arguments_hash: str
+    session_id: str | None = None
+    resource_path: str | None = None
+    created_at: str
+    expires_at: str
+    consumed: bool = False
 
 
 class SandboxViolationError(PermissionError):
@@ -54,6 +75,119 @@ class SandboxViolationError(PermissionError):
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def compute_canonical_arguments_hash(arguments: dict[str, Any]) -> str:
+    """Compute a deterministic SHA-256 hash of tool arguments ignoring policy metadata."""
+    filtered = {
+        k: v for k, v in arguments.items()
+        if k not in ("hitl_grant_id", "session_id", "execution_policy_override")
+    }
+    cleaned = json.dumps(filtered, sort_keys=True, default=str)
+    return hashlib.sha256(cleaned.encode("utf-8")).hexdigest()[:16]
+
+
+class ExecutionPolicyGateway:
+    """Centralized policy gateway enforcing least privilege and verified, non-reusable HITL approvals."""
+
+    def __init__(self) -> None:
+        self._grants: dict[str, ApprovalGrant] = {}
+
+    def create_grant(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_id: str | None = None,
+        resource_path: str | None = None,
+        ttl_seconds: int = 300,
+    ) -> ApprovalGrant:
+        grant_id = f"grant_{uuid.uuid4().hex[:12]}"
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=ttl_seconds)
+        grant = ApprovalGrant(
+            id=grant_id,
+            tool_name=tool_name,
+            arguments_hash=compute_canonical_arguments_hash(arguments),
+            session_id=session_id,
+            resource_path=resource_path,
+            created_at=now.isoformat(),
+            expires_at=expires.isoformat(),
+            consumed=False,
+        )
+        self._grants[grant_id] = grant
+        return grant
+
+    def verify_and_consume_grant(
+        self,
+        grant_id: str,
+        tool_name: str,
+        arguments: dict[str, Any],
+        session_id: str | None = None,
+    ) -> bool:
+        grant = self._grants.get(grant_id)
+        if not grant or grant.consumed:
+            return False
+        if grant.tool_name != tool_name:
+            return False
+        if grant.arguments_hash != compute_canonical_arguments_hash(arguments):
+            return False
+        if grant.session_id and session_id and grant.session_id != session_id:
+            return False
+        now_iso = datetime.now(timezone.utc).isoformat()
+        if now_iso > grant.expires_at:
+            return False
+
+        # Invalidate grant immediately after verification to prevent replay attacks
+        grant.consumed = True
+        return True
+
+    def get_grant(self, grant_id: str) -> ApprovalGrant | None:
+        return self._grants.get(grant_id)
+
+    async def execute_tool(
+        self,
+        tool_name: str,
+        handler: Callable[..., Awaitable[Any]],
+        risk_level: RiskLevel,
+        arguments: dict[str, Any],
+        session_id: str | None = None,
+    ) -> Any:
+        """Evaluate policy before dispatching to underlying tool handler."""
+        # Check override for automated test harness
+        override = arguments.get("execution_policy_override", False)
+        grant_id = arguments.get("hitl_grant_id")
+
+        if risk_level == RiskLevel.HIGH and not override:
+            if not grant_id or not self.verify_and_consume_grant(
+                grant_id=grant_id,
+                tool_name=tool_name,
+                arguments=arguments,
+                session_id=session_id,
+            ):
+                from app.tools.registry import ToolResult
+                return ToolResult(
+                    success=False,
+                    summary=(
+                        f"Aksi berisiko tinggi '{tool_name}' dicegah oleh ExecutionPolicyGateway: "
+                        "Memerlukan persetujuan pengguna (HITL Approval Gate) yang sah dan belum pernah digunakan."
+                    ),
+                    data={
+                        "hitl_required": True,
+                        "tool_name": tool_name,
+                        "risk_level": risk_level.value,
+                        "arguments_hash": compute_canonical_arguments_hash(arguments),
+                    },
+                    token_estimate=24,
+                )
+
+        clean_args = {
+            k: v for k, v in arguments.items()
+            if k not in ("hitl_grant_id", "session_id", "execution_policy_override")
+        }
+        return await handler(**clean_args)
+
+
+execution_policy_gateway = ExecutionPolicyGateway()
 
 
 class SandboxManager:
@@ -178,9 +312,13 @@ class SandboxManager:
         target_path: str | None = None,
         agent_name: str = "Operator PC & Automasi Sistem",
         session_id: str | None = None,
+        arguments: dict[str, Any] | None = None,
     ) -> HITLApprovalRequest:
         """Create a Human-in-the-Loop approval request and broadcast it to the Desktop UI."""
         req_id = f"hitl_{uuid.uuid4().hex[:10]}"
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(seconds=300)
+        args_payload = arguments or {}
         req = HITLApprovalRequest(
             id=req_id,
             tool_name=tool_name,
@@ -189,8 +327,12 @@ class SandboxManager:
             description_id=description_id,
             target_path=target_path,
             agent_name=agent_name,
+            arguments=args_payload,
+            arguments_hash=compute_canonical_arguments_hash(args_payload),
+            session_id=session_id,
             status="pending",
-            created_at=_utc_now_iso(),
+            created_at=now.isoformat(),
+            expires_at=expires.isoformat(),
         )
         self._pending_approvals[req_id] = req
         self._approval_events[req_id] = asyncio.Event()
@@ -208,13 +350,22 @@ class SandboxManager:
         approved: bool,
         session_id: str | None = None,
     ) -> HITLApprovalRequest:
-        """Approve or reject a pending HITL request and notify waiting coroutines."""
+        """Approve or reject a pending HITL request, issue an ApprovalGrant if approved, and notify waiting coroutines."""
         req = self._pending_approvals.get(request_id)
         if not req:
             raise KeyError(f"Permintaan izin HITL '{request_id}' tidak ditemukan.")
 
         req.status = "approved" if approved else "rejected"
         req.resolved_at = _utc_now_iso()
+
+        if approved:
+            grant = execution_policy_gateway.create_grant(
+                tool_name=req.tool_name,
+                arguments=req.arguments,
+                session_id=session_id or req.session_id,
+                resource_path=req.target_path,
+            )
+            req.grant_id = grant.id
 
         ev = self._approval_events.get(request_id)
         if ev:

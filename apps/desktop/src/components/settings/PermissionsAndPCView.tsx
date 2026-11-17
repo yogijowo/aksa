@@ -1,16 +1,20 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   ShieldCheck,
-  MonitorCog,
   FolderLock,
   OctagonAlert,
   PlugZap,
-  Sparkles,
-  FileSpreadsheet,
-  FileText,
-  Presentation,
+  KeyRound,
+  CheckCircle2,
+  AlertCircle,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useAksaStore } from "@/stores/useAksaStore";
+import {
+  fetchSystemPermissionsRemote,
+  revokeSystemPermissionRemote,
+} from "@/services/engineClient";
+import type { CapabilityStatus } from "@/types/aksa";
 
 export const PermissionsAndPCView: React.FC = () => {
   const {
@@ -21,13 +25,35 @@ export const PermissionsAndPCView: React.FC = () => {
     requestSampleApproval,
     toggleMcpServer,
     toggleEmergencyStop,
-    sendUserPrompt,
-    setActiveNav,
   } = useAksaStore();
 
-  const handleQuickOfficeTask = async (prompt: string) => {
-    setActiveNav("ruang_kerja");
-    await sendUserPrompt(prompt);
+  const [capabilities, setCapabilities] = useState<CapabilityStatus[]>([]);
+
+  const loadCapabilities = async () => {
+    try {
+      const data = await fetchSystemPermissionsRemote();
+      if (data) setCapabilities(data);
+    } catch {
+      // Graceful fallback
+    } finally {
+      // Done loading
+    }
+  };
+
+  useEffect(() => {
+    loadCapabilities();
+  }, []);
+
+  const handleRevokeGrant = async (grantId: string) => {
+    try {
+      const ok = await revokeSystemPermissionRemote(grantId);
+      if (ok) {
+        toast.success("Izin kapabilitas berhasil dicabut.");
+        await loadCapabilities();
+      }
+    } catch {
+      toast.error("Gagal mencabut izin.");
+    }
   };
 
   return (
@@ -38,11 +64,10 @@ export const PermissionsAndPCView: React.FC = () => {
           <div>
             <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
               <ShieldCheck size={18} className="text-emerald-400" />
-              Izin Akses Folder & 3-Tier PC Execution Engine
+              Pusat Izin Sistem Operasi &amp; Sandbox AKSA
             </h2>
             <p className="text-xs text-zinc-400 mt-1">
-              Kelola Sandbox Folder Kerja, Auto-Backup (`.aksa_backup/`), server MCP, serta tombol
-              darurat kontrol layar Tier 3.
+              Evaluasi izin native OS (Accessibility, TCC, Windows ACL), persetujuan konsen AKSA, serta tombol darurat kontrol layar Tier 3.
             </p>
           </div>
 
@@ -66,6 +91,94 @@ export const PermissionsAndPCView: React.FC = () => {
                 ? "Aktifkan Kembali Tier 3 GUI"
                 : "Stop Darurat GUI (Ctrl+Shift+Q)"}
             </button>
+          </div>
+        </div>
+
+        {/* Section 0: Native OS Permission Broker Table */}
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-100">
+              <KeyRound size={15} className="text-[#D97757]" />
+              <span>Matriks Kapabilitas: Status Sistem Operasi vs Konsen AKSA</span>
+            </div>
+            <span className="text-[11px] text-zinc-400">
+              Pemisahan ketat izin platform OS dan persetujuan pengguna
+            </span>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-white/[0.08] text-[11px] text-zinc-400 font-semibold uppercase tracking-wider">
+                  <th className="pb-2.5">Kapabilitas</th>
+                  <th className="pb-2.5">Cakupan</th>
+                  <th className="pb-2.5">Status Platform OS</th>
+                  <th className="pb-2.5">Konsen AKSA</th>
+                  <th className="pb-2.5 text-right">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/[0.04]">
+                {capabilities.map((cap) => (
+                  <tr key={cap.capability_id} className="hover:bg-white/[0.02] transition-colors">
+                    <td className="py-3 pr-4">
+                      <div className="font-semibold text-zinc-100">{cap.display_name}</div>
+                      <div className="text-[11px] text-zinc-400 mt-0.5">{cap.description}</div>
+                    </td>
+                    <td className="py-3 pr-4 whitespace-nowrap">
+                      <span className="px-2 py-0.5 rounded text-[10px] bg-[#2A2A28] text-zinc-300 border border-white/5 font-mono">
+                        {cap.scope_type}
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 whitespace-nowrap">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold ${
+                          cap.os_status === "GRANTED"
+                            ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                            : cap.os_status === "NEEDS_USER_ACTION"
+                            ? "bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                            : cap.os_status === "DENIED"
+                            ? "bg-rose-500/15 text-rose-400 border border-rose-500/30"
+                            : "bg-zinc-800 text-zinc-400"
+                        }`}
+                      >
+                        {cap.os_status === "GRANTED" && <CheckCircle2 size={11} />}
+                        {cap.os_status === "NEEDS_USER_ACTION" && <AlertCircle size={11} />}
+                        <span>{cap.os_status}</span>
+                      </span>
+                    </td>
+                    <td className="py-3 pr-4 whitespace-nowrap">
+                      <span
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium ${
+                          cap.aksa_status === "granted"
+                            ? "bg-[#D97757]/15 text-[#D97757] border border-[#D97757]/30"
+                            : cap.aksa_status === "automatic_sandbox"
+                            ? "bg-zinc-800 text-zinc-300"
+                            : "bg-zinc-800/60 text-zinc-400"
+                        }`}
+                      >
+                        {cap.aksa_status === "granted"
+                          ? "Izin Diberikan"
+                          : cap.aksa_status === "automatic_sandbox"
+                          ? "Sandbox Otomatis"
+                          : "Perlu Persetujuan"}
+                      </span>
+                    </td>
+                    <td className="py-3 text-right whitespace-nowrap">
+                      {cap.grant_id ? (
+                        <button
+                          onClick={() => handleRevokeGrant(cap.grant_id!)}
+                          className="px-2.5 py-1 rounded bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 text-[10px] font-medium text-rose-300 transition-colors"
+                        >
+                          Cabut Izin
+                        </button>
+                      ) : (
+                        <span className="text-[11px] text-zinc-600">—</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
 
@@ -98,170 +211,108 @@ export const PermissionsAndPCView: React.FC = () => {
                       type="checkbox"
                       checked={ws.allow_read}
                       onChange={(e) =>
-                        updateWorkspacePermissions(ws.id, { allow_read: e.target.checked })
+                        void updateWorkspacePermissions(ws.id, { allow_read: e.target.checked })
                       }
-                      className="accent-indigo-500"
+                      className="accent-[#D97757]"
                     />
-                    Baca & RAG
+                    <span>Baca (Read)</span>
                   </label>
+
                   <label className="flex items-center gap-1.5 rounded-lg bg-[#21211F] border border-white/[0.07] px-3 py-1.5 text-[11px] text-zinc-200 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={ws.allow_write}
                       onChange={(e) =>
-                        updateWorkspacePermissions(ws.id, { allow_write: e.target.checked })
+                        void updateWorkspacePermissions(ws.id, { allow_write: e.target.checked })
                       }
-                      className="accent-indigo-500"
+                      className="accent-[#D97757]"
                     />
-                    Tulis + Auto-Backup
+                    <span>Tulis &amp; Backup</span>
                   </label>
-                  <label className="flex items-center gap-1.5 rounded-lg bg-[#21211F] border border-white/[0.07] px-3 py-1.5 text-[11px] text-amber-300 cursor-pointer">
+
+                  <label className="flex items-center gap-1.5 rounded-lg bg-[#21211F] border border-white/[0.07] px-3 py-1.5 text-[11px] text-zinc-200 cursor-pointer">
                     <input
                       type="checkbox"
                       checked={ws.allow_execute}
                       onChange={(e) =>
-                        updateWorkspacePermissions(ws.id, { allow_execute: e.target.checked })
+                        void updateWorkspacePermissions(ws.id, { allow_execute: e.target.checked })
                       }
-                      className="accent-amber-500"
+                      className="accent-[#D97757]"
                     />
-                    Eksekusi Skrip (uv)
+                    <span>Eksekusi Skrip (uv)</span>
                   </label>
                 </div>
               </div>
             ))}
+
+            {workspaces.length === 0 && (
+              <div className="text-center py-6 text-xs text-zinc-500">
+                Belum ada Folder Kerja yang didaftarkan. Pilih folder di bilah atas aplikasi.
+              </div>
+            )}
           </div>
         </div>
 
-        {/* Section 2: Tier 1 Direct Office Engine Quick Actions */}
-        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs font-semibold text-zinc-100">
-              <Sparkles size={15} className="text-emerald-400" />
-              <span>Tier 1 — Direct Programmatic Office Engine (Uji Coba Cepat)</span>
-            </div>
-            <span className="rounded-lg bg-emerald-500/15 border border-emerald-500/30 px-2.5 py-0.5 text-[11px] text-emerald-300">
-              Tanpa Ganggu Mouse/Layar
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <button
-              onClick={() =>
-                void handleQuickOfficeTask(
-                  "Buatkan file Excel rekap anggaran operasional lengkap dengan rumus SUM dan grafik batang."
-                )
-              }
-              className="rounded-xl bg-[#262624] hover:bg-indigo-600/15 border border-white/[0.07] hover:border-[#D97757]/60/40 p-3.5 text-left space-y-1 transition-all"
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold text-emerald-300">
-                <FileSpreadsheet size={15} /> Buat Workbook Excel (.xlsx)
-              </div>
-              <p className="text-[11px] text-zinc-400">
-                Format Rupiah otomatis, rumus `=SUM()`, dan grafik tertanam.
-              </p>
-            </button>
-
-            <button
-              onClick={() =>
-                void handleQuickOfficeTask(
-                  "Buatkan surat resmi penawaran kerja sama di Microsoft Word (.docx) lengkap dengan kop surat."
-                )
-              }
-              className="rounded-xl bg-[#262624] hover:bg-indigo-600/15 border border-white/[0.07] hover:border-[#D97757]/60/40 p-3.5 text-left space-y-1 transition-all"
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold text-sky-300">
-                <FileText size={15} /> Buat Surat Resmi Word (.docx)
-              </div>
-              <p className="text-[11px] text-zinc-400">
-                Preset surat bisnis Indonesia, heading, dan tabel rapi.
-              </p>
-            </button>
-
-            <button
-              onClick={() =>
-                void handleQuickOfficeTask(
-                  "Buatkan slide presentasi PowerPoint (.pptx) evaluasi kinerja kuartal untuk direksi."
-                )
-              }
-              className="rounded-xl bg-[#262624] hover:bg-indigo-600/15 border border-white/[0.07] hover:border-[#D97757]/60/40 p-3.5 text-left space-y-1 transition-all"
-            >
-              <div className="flex items-center gap-2 text-xs font-semibold text-amber-300">
-                <Presentation size={15} /> Buat Presentasi PPT (.pptx)
-              </div>
-              <p className="text-[11px] text-zinc-400">
-                Slide judul, poin bahasan, dua kolom, dan tabel ringkasan.
-              </p>
-            </button>
-          </div>
-        </div>
-
-        {/* Section 3: Tier 2 Model Context Protocol (MCP) Servers */}
+        {/* Section 2: Model Context Protocol (MCP) Server Registry */}
         <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 text-xs font-semibold text-zinc-100">
               <PlugZap size={15} className="text-[#D97757]" />
-              <span>Tier 2 — Integrasi Server Model Context Protocol (MCP) & OS Bridge</span>
+              <span>Integrasi Eksternal Model Context Protocol (MCP)</span>
             </div>
-            <span className="text-[11px] text-zinc-400">Win32 COM • AppleScript • uv Python</span>
+            <span className="text-[11px] text-zinc-400">Nonaktif secara default demi keamanan</span>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            {mcpServers.map((srv) => (
+            {mcpServers.map((server) => (
               <div
-                key={srv.id}
-                className="rounded-xl bg-[#262624] border border-white/[0.06] p-3.5 flex flex-col justify-between gap-3"
+                key={server.id}
+                className="rounded-xl bg-[#262624] border border-white/[0.06] p-4 flex flex-col justify-between space-y-3"
               >
                 <div className="space-y-1">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold text-zinc-100">{srv.name}</span>
-                    <input
-                      type="checkbox"
-                      checked={srv.enabled}
-                      onChange={(e) => void toggleMcpServer(srv.id, e.target.checked)}
-                      className="accent-indigo-500 cursor-pointer"
-                    />
-                  </div>
-                  <p className="text-[11px] text-zinc-400">{srv.description_id}</p>
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {srv.discovered_tools.map((t) => (
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold text-zinc-100">{server.name}</span>
                     <span
-                      key={t}
-                      className="rounded-md bg-[#21211F] px-2 py-0.5 text-[10px] font-mono text-zinc-200"
+                      className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${
+                        server.enabled
+                          ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                          : "bg-zinc-800 text-zinc-400"
+                      }`}
                     >
-                      {t}
+                      {server.enabled ? "Aktif" : "Nonaktif"}
                     </span>
-                  ))}
+                  </div>
+                  <p className="text-[11px] text-zinc-400 leading-relaxed">{server.description_id}</p>
+                </div>
+
+                <div className="space-y-2 pt-2 border-t border-white/[0.04]">
+                  <div className="flex flex-wrap gap-1">
+                    {server.discovered_tools.map((tool) => (
+                      <span
+                        key={tool}
+                        className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#21211F] text-zinc-300 border border-white/[0.05]"
+                      >
+                        {tool}
+                      </span>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => void toggleMcpServer(server.id, !server.enabled)}
+                    className={`w-full rounded-lg py-1.5 text-xs font-medium transition-colors ${
+                      server.enabled
+                        ? "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"
+                        : "bg-[#D97757] hover:bg-[#E89274] text-white"
+                    }`}
+                  >
+                    {server.enabled ? "Nonaktifkan Server" : "Aktifkan Server MCP"}
+                  </button>
                 </div>
               </div>
             ))}
           </div>
-        </div>
-
-        {/* Section 4: Tier 3 Visual Computer Use Status */}
-        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-4 flex items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="text-xs font-semibold text-zinc-100 flex items-center gap-2">
-              <MonitorCog size={15} className="text-[#D97757]" />
-              Tier 3 — Visual Computer Use (Tangkapan Layar `mss` + Accessibility Tree)
-            </div>
-            <p className="text-xs text-zinc-400">
-              Mengoperasikan aplikasi pihak ketiga menggunakan koordinat layar. Geser kursor ke
-              sudut layar mana pun (`Failsafe Corner Abort`) untuk membatalkan otomatis.
-            </p>
-          </div>
-          <span
-            className={`shrink-0 rounded-xl px-3 py-1 text-[11px] font-medium border ${
-              emergencyStopActive
-                ? "bg-rose-500/15 border-rose-500/30 text-rose-300"
-                : "bg-emerald-500/15 border-emerald-500/30 text-emerald-300"
-            }`}
-          >
-            {emergencyStopActive ? "Dihentikan Darurat" : "Siaga • Wajib Izin HITL"}
-          </span>
         </div>
       </div>
     </div>
   );
 };
-

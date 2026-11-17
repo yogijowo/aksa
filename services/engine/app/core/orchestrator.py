@@ -215,7 +215,31 @@ class HierarchicalOrchestrator:
                     target_ws_path = candidate
 
         if not target_ws_path:
-            target_ws_path = Path.cwd()
+            await ws_manager.broadcast_event(
+                "task_failed",
+                {
+                    "error": "Folder kerja belum dipilih. Silakan pilih dan izinkan folder di PC Anda sebelum memulai pekerjaan.",
+                },
+                session_id=session_id,
+            )
+            return {
+                "session_id": session_id or str(uuid.uuid4()),
+                "status": "error",
+                "message": "Folder kerja belum dipilih atau tidak diizinkan.",
+                "response": "Folder kerja belum dipilih. Silakan pilih atau daftarkan folder kerja di komputer Anda terlebih dahulu melalui menu Ruang Kerja sebelum meminta agen memproses tugas.",
+                "artifacts": [],
+                "token_usage": {"input_tokens": 0, "output_tokens": 0, "savings_percent": 0.0},
+            }
+
+        # Enforce sandbox registration
+        sandbox_manager.register_workspace(
+            WorkspacePolicy(
+                folder_path=str(target_ws_path),
+                allow_read=True,
+                allow_write=True,
+                allow_execute=False,
+            )
+        )
 
         ws_dir = target_ws_path
         real_files: list[dict[str, Any]] = []

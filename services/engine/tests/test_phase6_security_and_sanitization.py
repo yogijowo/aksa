@@ -76,11 +76,14 @@ async def test_websocket_session_isolation() -> None:
     # Client B (session_2) must NOT receive session_1 event
     assert ws_client_b.send_text.call_count == 0
 
+    # Client C (unscoped) must NOT receive private session_1 event (no cross-session leak)
+    assert ws_client_c.send_text.call_count == 0
+
     # Global event (session_id=None) must be delivered to all
     await manager.broadcast_event("global_notice", {"msg": "update"}, session_id=None)
     assert ws_client_a.send_text.call_count == 2
     assert ws_client_b.send_text.call_count == 1
-    assert ws_client_c.send_text.call_count == 2
+    assert ws_client_c.send_text.call_count == 1
 
 
 @pytest.mark.asyncio

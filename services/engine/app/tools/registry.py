@@ -71,15 +71,25 @@ class ToolRegistry:
         return self._tools.get(name)
 
     async def execute(self, name: str, **kwargs: Any) -> ToolResult:
-        """Execute a registered tool by name and return a structured ToolResult."""
+        """Execute a registered tool by name through the centralized ExecutionPolicyGateway."""
+        tool = self._tools.get(name)
         handler = self._handlers.get(name)
-        if not handler:
+        if not tool or not handler:
             return ToolResult(
                 success=False,
                 summary=f"Tool '{name}' tidak terdaftar di dalam ToolRegistry AKSA.",
                 token_estimate=12,
             )
-        return await handler(**kwargs)
+
+        from app.core.sandbox import execution_policy_gateway
+        session_id = kwargs.get("session_id")
+        return await execution_policy_gateway.execute_tool(
+            tool_name=name,
+            handler=handler,
+            risk_level=tool.risk_level,
+            arguments=kwargs,
+            session_id=session_id,
+        )
 
 
 tool_registry = ToolRegistry()

@@ -11,10 +11,10 @@
 
 | Field | Value |
 | :--- | :--- |
-| **Current Phase** | `Master Sanitization & Security Hardening (Phases 1–6) [COMPLETED]` |
-| **Overall Progress** | `100% (Complete Privacy Sanitization, WebSocket Session Isolation, API Key Masking & Verified Tests)` |
-| **Last Completed Task** | `Completed full repository sanitization (removed developer usernames, paths, government document PII/letterheads, untracked generated binaries), hardened WebSocket session isolation & handshake authentication, masked API keys in responses, fixed Computer Use honest simulated/executed status, and added 4 new security tests (16/16 tests passing).` |
-| **Next Immediate Action** | `Ready for End-to-End Verification & Production Packaging` |
+| **Current Phase** | `Desktop Intelligence, OS Permissions & Agent Skills (Phase 8) [COMPLETED]` |
+| **Overall Progress** | `100% (Complete Architecture, Security Gateway, App Discovery, OS Permissions, Agent Skills & 23/23 Verified Tests)` |
+| **Last Completed Task** | `Completed second-pass review roadmap: implemented Centralized ExecutionPolicyGateway with replay protection, native Application Discovery (Windows registry & macOS bundles), OS Permission Broker & Audit Ledger, ComputerActionType validation, standard Agent Skills (SKILL.md) manager with quarantine security scanner, disabled-by-default MCP client, desktop ApplicationsView & SkillsView UI, and 7 new test suites (23/23 pytest passing, 0 TypeScript errors).` |
+| **Next Immediate Action** | `Final End-to-End Release Tagging & Production Distribution` |
 | **Active Blockers** | `None` |
 
 ---
@@ -168,6 +168,48 @@
 
 ---
 
+### Phase 8: Desktop Intelligence, Application Discovery, Native OS Permissions & Agent Skills (COMPLETED)
+*Reference: [`AKSA-SECOND-PASS-REVIEW-AND-OS-INTEGRATION-SKILLS-ROADMAP.md`](./AKSA-SECOND-PASS-REVIEW-AND-OS-INTEGRATION-SKILLS-ROADMAP.md)*
+
+- [x] **8.1 Centralized Execution Policy Gateway & Security Hardening:**
+  - [x] **8.1.1** Implemented `ExecutionPolicyGateway` in `services/engine/app/core/sandbox.py` with argument hashing (`compute_canonical_arguments_hash`) and one-time consumption to prevent replay attacks.
+  - [x] **8.1.2** Routed all tool invocations through `tool_registry.execute` -> `execution_policy_gateway.execute_tool(...)`.
+  - [x] **8.1.3** Removed workspace auto-registration in `GET /workspaces` (strictly read-only endpoint).
+  - [x] **8.1.4** Removed `Path.cwd()` fallback in `HierarchicalOrchestrator`, strictly requiring user-selected workspace folders.
+  - [x] **8.1.5** Isolated WebSocket session broadcasting by removing empty-subscription leaks.
+  - [x] **8.1.6** Hardened Tauri default capabilities (removed `shell:allow-execute` and `shell:allow-spawn`) and applied strict Content Security Policy in `tauri.conf.json`.
+- [x] **8.2 Database Schema Extensions (`services/engine/app/db/models.py`):**
+  - [x] **8.2.1** Added 10 new SQLite tables: `installed_applications`, `application_adapters`, `os_permission_states`, `permission_grants`, `permission_audit_events`, `skill_sources`, `installed_skills`, `skill_versions`, `skill_capability_requests`, and `mcp_servers`.
+  - [x] **8.2.2** Implemented asynchronous CRUD methods in `DatabaseManager` for application discovery, permission tracking, capability grants, and skills lifecycle.
+- [x] **8.3 Native Desktop Application Discovery Engine (`services/engine/app/system/app_discovery.py`):**
+  - [x] **8.3.1** Implemented Windows application registry scanner (`winreg` across HKLM/HKCU 64-bit and 32-bit views) without administrator elevation.
+  - [x] **8.3.2** Implemented running process watcher via `tasklist /FO CSV` (Windows) and `ps -A` (macOS).
+  - [x] **8.3.3** Implemented macOS `/Applications` and `~/Applications` `.app` bundle scanner.
+  - [x] **8.3.4** Implemented safe application launcher (`launch_application`) with executable path resolution.
+  - [x] **8.3.5** Built Desktop Applications UI (`ApplicationsView.tsx` — search, status badges, adapter tags, and launch action).
+- [x] **8.4 Native OS Permission Broker & Audit Ledger (`services/engine/app/system/permission_broker.py`):**
+  - [x] **8.4.1** Implemented independent tracking of platform OS status vs AKSA user consent grants across 10 capabilities.
+  - [x] **8.4.2** Implemented grant revocation and detailed permission audit event logging (`permission_audit_events`).
+  - [x] **8.4.3** Upgraded Permission Center UI (`PermissionsAndPCView.tsx`) with live capability matrix and one-click grant revocation.
+- [x] **8.5 Computer Use Action Enum Validation (`services/engine/app/tools/computer_use/gui_agent.py`):**
+  - [x] **8.5.1** Implemented `ComputerActionType` enum pre-execution validation before calling input drivers.
+  - [x] **8.5.2** Ensured accurate reporting of `simulated`, `unsupported`, `blocked`, and `executed` states.
+- [x] **8.6 Portable Agent Skills Manager (`services/engine/app/skills/skill_manager.py`):**
+  - [x] **8.6.1** Implemented portable `SKILL.md` parser with YAML frontmatter.
+  - [x] **8.6.2** Implemented package archive quarantine validation with strict ZIP path traversal (`../`) defense.
+  - [x] **8.6.3** Implemented static security script scanner detecting suspicious shell commands, dynamic `eval`/`exec`, and secret theft.
+  - [x] **8.6.4** Seeded curated Indonesian office skills catalog installed in *disabled-by-default* state.
+  - [x] **8.6.5** Built Keahlian UI screen (`SkillsView.tsx` — curated catalog, installed skills, enable/disable toggle, and uninstall).
+- [x] **8.7 Real Model Context Protocol (MCP) Runtime (`services/engine/app/tools/mcp/mcp_client.py`):**
+  - [x] **8.7.1** Implemented JSON-RPC 2.0 stdio subprocess communication and schema inspection.
+  - [x] **8.7.2** Configured all third-party MCP servers as disabled by default.
+- [x] **8.8 Verification & Quality Assurance:**
+  - [x] **8.8.1** Added test suite `services/engine/tests/test_phase7_os_integration_and_skills.py` with 7 comprehensive tests.
+  - [x] **8.8.2** Verified 23 of 23 pytest test suites passing with 100% success.
+  - [x] **8.8.3** Verified clean frontend production bundle with `tsc --noEmit && vite build`.
+
+---
+
 ## 📝 Session Changelog
 
 - **2026-11-17:** Completed Phase 0 — Created full architectural blueprint (`docs/01` through `docs/08`), `AGENTS.md`, bilingual `README.md` / `README.en.md`, and initialized `PROGRESS.md` master tracker.
@@ -188,6 +230,8 @@
 - **2026-11-17:** Clean API Key Display & Jargon Elimination: enabled direct, unmasked API key display from SQLite with an Eye reveal toggle, removed redundant technical labels ("SQLite Lokal", "Tersimpan di SQLite"), and simplified settings interface to clean, executive-ready terminology.
 - **2026-11-17:** Completed Phase 7 Master Sanitization & Security Hardening (`AKSA-CLEANUP-AND-IMPROVEMENT-PLAN.md`): completely removed developer usernames (`lpsekudus`), local machine paths (`D:\projects\aksa`), and real government official names/NIP/letterheads from source code; implemented authentic dynamic PDF-to-Word extraction via PyMuPDF + python-docx; hardened WebSocket `/ws/stream` with handshake auth and session isolation (`ws_manager`); masked API key exposure in HTTP responses; fixed Computer Use to report honest simulated/unsupported status; untracked binary artifacts (`.xlsx`); added test suite `test_phase6_security_and_sanitization.py`; verified all 16 backend unit tests passing and frontend Vite build succeeding with zero errors.
 - **2026-11-17:** Brand Identity & Clean GitHub Release Synchronization: designed official geometric monogram logo (`assets/logo.svg`, `docs/assets/logo.svg`), updated high-resolution banners (`assets/banner.svg`, `docs/assets/banner.svg`) broadening capability scope to PC device applications and documents, aligned official acronym **AKSA** (*Asisten Kerja & Sistem Automasi*), and synchronized local clean orphan root commit with GitHub (`origin/main`) resolving the `refusing to merge unrelated histories` divergence. Working tree and remote are 100% up to date.
+- **2026-11-17:** Completed Phase 8 Desktop Intelligence, OS Permissions & Agent Skills Roadmap (`AKSA-SECOND-PASS-REVIEW-AND-OS-INTEGRATION-SKILLS-ROADMAP.md`): implemented centralized `ExecutionPolicyGateway` with argument hashing and replay attack prevention; removed workspace auto-registration and cwd fallback; isolated WebSocket sessions; restricted Tauri shell capabilities and defined strict CSP; implemented native Application Discovery (`app_discovery.py` via `winreg` and process watcher); implemented OS Permission Broker (`permission_broker.py`) tracking OS status vs AKSA user consent independently; hardened Computer Use with `ComputerActionType` enum validation; built portable Agent Skills Manager (`skill_manager.py`) with `SKILL.md` parser, archive quarantine path traversal protection, and static code scanner; implemented JSON-RPC 2.0 stdio MCP client (`mcp_client.py`) with disabled-by-default external servers; added `ApplicationsView.tsx` and `SkillsView.tsx` UI screens; added test suite `test_phase7_os_integration_and_skills.py`; verified all 23 backend tests passing with 100% success and frontend Vite build succeeding with 0 TypeScript errors.
+
 
 
 

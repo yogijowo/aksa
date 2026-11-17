@@ -61,8 +61,8 @@ class ConnectionManager:
             if session_id is None:
                 # Global event - send to all
                 recipients.append(conn)
-            elif session_id in subs or len(subs) == 0:
-                # Targeted session event: deliver to explicit subscriber or global listener
+            elif session_id in subs:
+                # Targeted session event: deliver strictly to explicit subscribers
                 recipients.append(conn)
 
         stale: list[WebSocket] = []

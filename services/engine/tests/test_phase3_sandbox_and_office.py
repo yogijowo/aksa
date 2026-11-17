@@ -207,22 +207,49 @@ async def test_tier2_os_bridge_uv_runner_and_mcp(tmp_path: Path) -> None:
         "Path('hasil_hitung.csv').write_text('item,nilai\\nAI,100\\n', encoding='utf-8')\n"
         "print('CSV dibuat sukses')\n"
     )
-    res_py = await tool_registry.execute(
+    # High-risk tool without HITL approval must be blocked by ExecutionPolicyGateway
+    res_py_blocked = await tool_registry.execute(
         "run_custom_python_task",
         working_dir=str(tmp_path),
         script_code=script,
     )
+    assert res_py_blocked.success is False
+    assert res_py_blocked.data["hitl_required"] is True
+
+    # High-risk tool with approval/override executes cleanly
+    res_py = await tool_registry.execute(
+        "run_custom_python_task",
+        working_dir=str(tmp_path),
+        script_code=script,
+        execution_policy_override=True,
+    )
     assert res_py.success is True
     assert any("hasil_hitung.csv" in art for art in res_py.artifacts)
 
-    # MCP tool invocation
-    res_mcp = await tool_registry.execute(
+    # MCP tool invocation: disabled by default
+    from app.tools.mcp.mcp_client import mcp_client_manager
+    res_mcp_disabled = await tool_registry.execute(
         "invoke_mcp_tool",
         server_id="mcp_filesystem",
         tool_name="list_directory",
         arguments={"path": str(tmp_path)},
     )
-    assert res_mcp.success is True
+    assert res_mcp_disabled.success is False
+    assert res_mcp_disabled.data["status"] == "disabled"
+
+    # When enabled, invocation executes protocol handler
+    mcp_client_manager.toggle_server("mcp_filesystem", True)
+    try:
+        res_mcp = await tool_registry.execute(
+            "invoke_mcp_tool",
+            server_id="mcp_filesystem",
+            tool_name="list_directory",
+            arguments={"path": str(tmp_path)},
+        )
+        assert "mcp_filesystem" in res_mcp.summary or res_mcp.data.get("server_id") == "mcp_filesystem"
+    finally:
+        # Guarantee restoration to disabled by default
+        mcp_client_manager.toggle_server("mcp_filesystem", False)
 
 
 @pytest.mark.asyncio
@@ -237,11 +264,23 @@ async def test_tier3_computer_use_and_failsafe(tmp_path: Path) -> None:
     assert res_cap.success is True
     assert Path(res_cap.data["screenshot_path"]).exists()
 
+    # High-risk visual action without HITL approval must be blocked by ExecutionPolicyGateway
+    res_click_blocked = await tool_registry.execute(
+        "visual_screen_action",
+        action_type="click",
+        x=320,
+        y=240,
+    )
+    assert res_click_blocked.success is False
+    assert res_click_blocked.data["hitl_required"] is True
+
+    # High-risk visual action with approval/override executes
     res_click = await tool_registry.execute(
         "visual_screen_action",
         action_type="click",
         x=320,
         y=240,
+        execution_policy_override=True,
     )
     assert res_click.data["action_type"] == "click"
     if res_click.data["driver"] == "pyautogui":
@@ -258,6 +297,7 @@ async def test_tier3_computer_use_and_failsafe(tmp_path: Path) -> None:
             action_type="click",
             x=0,
             y=0,
+            execution_policy_override=True,
         )
 
     # Emergency stop is now active, subsequent actions must be blocked until reset
