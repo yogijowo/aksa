@@ -4,216 +4,204 @@
   <img src="./assets/banner.svg" alt="AKSA - Asisten Kerja &amp; Sistem Automasi" width="100%">
 </a>
 
-# ⚡ AKSA
-### Asisten Kerja &amp; Sistem Automasi — AI Desktop Operating Assistant Indonesia
-*(Local-First AI Desktop Operating Assistant, App Intelligence, OS Permissions &amp; Remote Command Center)*
+# AKSA
+### Asisten Kerja &amp; Sistem Automasi — AI Desktop Operating Assistant
+*(Hierarchical Multi-Agent Orchestrator, Authorized PC App Control, 16+ Agent Skills, OS Permission Broker &amp; Enterprise Security Baseline)*
 
 <p align="center">
-  <a href="./README.en.md"><img src="https://img.shields.io/badge/🌐_Read_in-English-6366F1?style=for-the-badge" alt="English Documentation"></a>
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-10B981?style=for-the-badge" alt="Cross Platform">
-  <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-0EA5E9?style=for-the-badge" alt="Tauri v2 + React 19">
-  <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20uv-F59E0B?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Database-SQLite%20FTS5%20%2B%20LanceDB-8B5CF6?style=for-the-badge" alt="Hybrid RAG">
+  <a href="./README.en.md"><img src="https://img.shields.io/badge/Read_in-English-D97757?style=for-the-badge" alt="English Documentation"></a>
+  <img src="https://img.shields.io/badge/License-MIT-10B981?style=for-the-badge" alt="MIT License">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
+  <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
+  <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/Tests-33%2F33%20Verified-10B981?style=for-the-badge" alt="33/33 Verified Tests">
 </p>
 
 <p align="center">
-  <b>Asisten kecerdasan desktop (AI Desktop Operating Assistant) yang beroperasi langsung di PC Anda.</b><br>
-  Bukan sekadar AI agent pembaca folder — AKSA mendeteksi aplikasi perangkat yang terpasang, mengelola izin native sistem operasi secara transparan, memperluas kapabilitas melalui keahlian portabel (Agent Skills), mengolah dokumen perkantoran, dan dapat dikendalikan dari jarak jauh lewat Telegram smartphone Anda.
+  <b>Asisten kecerdasan desktop (AI Desktop Operating Assistant) yang beroperasi langsung di PC Anda dengan standar keamanan enterprise.</b><br>
+  AKSA menggabungkan tim agen bertingkat (Supervisor &amp; Sub-Agen Spesialis), deteksi &amp; otorisasi aplikasi PC mandiri, broker izin sistem operasi 2-lapis, katalog 16+ keahlian portabel (<code>SKILL.md</code>), pencarian dokumen hibrida lokal (RAG), brankas kredensial OS (Windows DPAPI / macOS Keychain), dan kendali jarak jauh melalui Telegram.
 </p>
 
-[Fitur Utama](#-fitur-utama) • [Arsitektur Desktop Intelligence](#-arsitektur-kecerdasan-desktop-aksa) • [Arsitektur Sistem](#️-arsitektur-sistem) • [Panduan Cepat](#-panduan-memulai-cepat-quickstart) • [Keamanan & Privasi](#-keamanan-privasi-lokal--transparansi-model) • [Dokumentasi Lengkap](#-dokumentasi-teknis--spesifikasi-arsitektur)
+[Fitur Utama](#-fitur-utama) • [Arsitektur Kecerdasan Desktop](#-arsitektur-kecerdasan-desktop-aksa) • [Keamanan & Privasi Enterprise](#-keamanan-enterprise-privasi-lokal--tata-kelola-data) • [Panduan Cepat](#-panduan-memulai-cepat-quickstart) • [Dokumentasi Lengkap](#-dokumentasi-teknis--tata-kelola)
 
 </div>
 
 ---
 
-## 🌟 Mengapa AKSA Berbeda?
+## Mengapa AKSA Berbeda?
 
-Mayoritas AI saat ini hanya berupa kotak obrolan di peramban web (*web chatbot*) yang terisolasi dari aplikasi dan berkas kerja Anda di komputer. Setiap kali ingin membuat laporan atau mengoperasikan program, Anda harus menyalin-menempel teks secara manual dan merapikan semuanya sendiri.
+Mayoritas asisten AI hanya berjalan sebagai ruang obrolan di peramban web yang terpisah dari perangkat lunak, struktur folder, dan alur kerja nyata di komputer Anda. Sebaliknya, agen otomasi yang memberikan akses penuh tanpa batas berisiko membocorkan dokumen rahasia atau mengeksekusi perintah destruktif tanpa izin.
 
-**AKSA (Asisten Kerja & Sistem Automasi)** dirancang sejak hari pertama sebagai **platform agen AI desktop lokal pertama di Indonesia** yang memiliki kendali dan akses kerja nyata ke dalam aplikasi serta folder yang Anda izinkan di komputer:
+**AKSA (Asisten Kerja & Sistem Automasi)** dirancang dengan prinsip **Security-by-Default** dan **Explicit User Consent**:
 
-1. **Automasi Aplikasi & Dokumen Kerja Nyata:** Tidak hanya memberi saran teks, AKSA mampu mengontrol aplikasi di perangkat Anda serta langsung menghasilkan file nyata seperti spreadsheet analitis (**Excel / `.xlsx`** lengkap dengan formula & grafik), dokumen formal (**Word / `.docx`** standar administrasi), presentasi visual (**PowerPoint / `.pptx`**), hingga berkas **PDF**.
-2. **Pencarian Dokumen Hibrida (RAG Lokal):** Membaca ribuan halaman dokumen PDF, arsip regulasi, dan data kantor Anda dalam hitungan detik secara 100% lokal tanpa biaya server eksternal.
-3. **Kendali Jarak Jauh via Telegram:** Sedang di perjalanan atau rapat di luar kantor? Cukup kirim pesan teks atau **pesan suara (Voice Note)** ke Bot Telegram pribadi Anda, AKSA di PC rumah/kantor akan langsung mengerjakannya dan mengirimkan file hasilnya kembali ke HP Anda.
-4. **Efisiensi Token Ekstrem:** Menghemat kuota dan biaya API hingga **80%** menggunakan arsitektur isolasi konteks sub-agen dan pemuatan keahlian malas (*lazy tool loading*).
-
----
-
-## ✨ Fitur Utama
-
-### 🕸️ 1. Kanvas Hierarki Agen Bertingkat (Visual Multi-Agent Builder)
-* **Struktur Tim Eksekutif:** Bangun tim kerja digital yang terdiri dari **Manajer Eksekutif (Supervisor)** dan **Sub-Agen Spesialis** (Administrasi Office, Riset Dokumen RAG, Operator PC & Layar) menggunakan kanvas interaktif *drag-and-drop* (`@xyflow/react`) atau tampilan bagan organisasi yang rapi.
-* **Kombinasi Bebas Model API Cloud & AI Lokal Gratis:**
-  * Pasang model unggulan **Cloud API** (Claude 3.7 Sonnet, Gemini 2.5 Pro, GPT-4o, DeepSeek V3) untuk Manajer Utama yang membutuhkan penalaran kompleks.
-  * Pasang model **100% Gratis & Lokal** via **Ollama** atau **LM Studio** (Qwen 2.5, Llama 3.3, DeepSeek R1) untuk sub-agen pembaca data rahasia agar data sensitif tidak pernah meninggalkan komputer Anda.
-
-### 💻 2. Mesin Automasi PC 3-Tier Berizin Terkontrol (Workspace Sandbox)
-* **Kotak Pasir Folder Aman (*Sandbox Path Jail*):** Agen hanya diizinkan membaca dan menulis di dalam folder PC yang Anda pilih (misalnya `D:\Kantor\Laporan_2026`). Akses di luar folder akan langsung diblokir secara otomatis di tingkat kernel engine.
-* **Gerbang Izin Persetujuan Manusia (*Human-in-the-Loop Gateway*):** Aksi sistem berisiko tinggi (menjalankan skrip, menghapus berkas, automasi layar) wajib disetujui pengguna melalui dialog konfirmasi desktop atau tombol Telegram `[✅ Izinkan]` / `[❌ Tolak]`.
-* **3 Lapisan Eksekusi PC:**
-  * **Tier 1 (Direct Office Engine):** Pembuatan dan penyuntingan file Office secara instan dan rapi di latar belakang menggunakan library native (`openpyxl`, `python-docx`, `python-pptx`, `pymupdf`).
-  * **Tier 2 (Native OS Bridge & uv Runner):** Interaksi langsung dengan jendela Office yang sedang terbuka (Windows COM / macOS AppleScript), eksekusi skrip Python mandiri berbasis `uv`, serta integrasi Model Context Protocol (MCP).
-  * **Tier 3 (Visual Computer Use):** Membaca tampilan layar, navigasi kursor mouse, dan ketikan keyboard untuk aplikasi lama yang tidak memiliki API, dilengkapi fitur darurat *Failsafe Corner Abort* dan hotkey `Ctrl+Shift+Q`.
-
-### ⚡ 3. Penghemat Token Cerdas (Efisiensi Biaya hingga 80%)
-* **Isolasi Konteks Sub-Agen (*Context Isolation*):** Sub-agen memproses dokumen tebal dan draf mentah di ruang kerja terisolasi. Hanya ringkasan terstruktur dan berkas hasil akhir yang diserahkan ke Manajer Eksekutif.
-* **Lazy Tool Loading:** Agen hanya disuntikkan skema *tools* yang relevan dengan spesialisasinya, mencegah jendela konteks penuh oleh instruksi fungsi yang tidak terpakai.
-* **Pemadatan Riwayat Otomatis (*Rolling Compaction*):** Percakapan panjang dipadatkan secara berkala tanpa kehilangan poin-poin keputusan penting.
-
-### 📚 4. Basis Pengetahuan Hibrida RAG Lokal (Zero Server Setup)
-* **Pencarian Makna + Kata Kunci Eksak:** Menggabungkan **LanceDB** (*Vector Semantic Search*) dan **SQLite FTS5** (*BM25 Exact Search*) untuk menemukan nomor surat, NIK, kode nota dinas, atau kata kunci regulasi secara presisi.
-* **Pemantau Berkas Otomatis (*Watchdog Folder Monitor*):** Setiap file PDF, Word, Excel, atau teks baru yang Anda masukkan ke folder kerja langsung diindeks secara inkremental menggunakan sidik jari SHA-256 tanpa perlu menekan tombol sinkronisasi manual.
-
-### 📱 5. Pusat Kendali Jarak Jauh Telegram (Remote Command Center)
-* **Kendalikan PC dari Smartphone:** Kirim pesan teks perintah kerja, unggah berkas acuan, atau kirim **Pesan Suara (Voice Note)** dalam Bahasa Indonesia dari mana saja.
-* **Hasil Langsung Dikirim ke HP:** Manajer Eksekutif akan membalas dengan kemajuan kerja bertahap (*live progress*) dan melampirkan berkas hasil kerja (dokumen `.docx`, rekap `.xlsx`, laporan `.pdf`, atau foto layar PC) langsung ke ruang obrolan Telegram Anda.
-* **Keamanan Akses Ketat:** Hanya akun Telegram dengan ID numerik yang terdaftar di *whitelist* dan telah diverifikasi menggunakan kode pairing 6-digit dari aplikasi desktop yang diizinkan memberi perintah.
-
-### 🖥️ 6. Penemuan Aplikasi Desktop, Izin OS & Keahlian Agen (Agent Skills)
-* **Deteksi Aplikasi Otomatis:** Memindai registri sistem operasi secara aman tanpa membutuhkan hak administrator untuk mengenali aplikasi yang terpasang (Office, Browser, Editor Teks) beserta adapter otomasi yang tersedia.
-* **Pusat Izin Sistem Operasi:** Melacak status izin native platform (Accessibility, Screen Recording, File ACLs) dan persetujuan pengguna (*consent*) secara independen dengan log audit.
-* **Format Standar Agent Skills (`SKILL.md`):** Mendukung pemasangan paket keahlian eksternal dengan karantina file, analisis keamanan kode statis, dan status *nonaktif secara default*.
+1. **Ekosistem Terpadu (Model + Aplikasi PC + Skills -> Tim Agen):** Anda dapat memilih model AI terbaru per agen, menghubungkan aplikasi PC yang terinstall (*Connect / Disconnect* kapan saja bahkan saat aplikasi tertutup), memasang *Agent Skills* dalam 1 klik, lalu menetapkan izin akses aplikasi & keahlian tersebut secara spesifik ke masing-masing anggota **Tim Agen**.
+2. **Automasi Dokumen & Aplikasi Perangkat Nyata:** Menghasilkan dan memodifikasi berkas kerja asli seperti spreadsheet **Excel (`.xlsx`)** lengkap dengan formula & grafik, dokumen **Word (`.docx`)** berstandar naskah dinas/kontrak, presentasi **PowerPoint (`.pptx`)**, laporan **PDF**, hingga duplikasi PDF-ke-Word dinamis.
+3. **Kedaulatan Privasi tanpa Fallback Cloud Diam-Diam:** Mode `local_only` dan model lokal (**Ollama** / **LM Studio**) dijamin 100% tidak pernah membocorkan atau mengalihkan (*fallback*) data ke penyedia cloud dalam kondisi apa pun.
+4. **Efisiensi Token hingga 80%:** Menggunakan *Sub-Agent Context Isolation* dan *Lazy Tool Loading* sehingga jendela konteks Manajer Eksekutif tetap ramping dan hemat biaya API.
 
 ---
 
-## 🚀 Arsitektur Kecerdasan Desktop AKSA
+## Fitur Utama
 
-AKSA menerapkan arsitektur bertingkat (*layered architecture*) yang memisahkan antara pemahaman perintah, penemuan aplikasi, perizinan OS, ekstensi keahlian, dan lapisan eksekusi lokal:
+### 1. Kanvas Hierarki Tim Agen & Konfigurasi Hak Akses Granular
+* **Visual Multi-Agent Builder (`@xyflow/react`):** Kelola struktur organisasi agen yang terdiri dari **Manajer Eksekutif (Supervisor)** dan **Sub-Agen Spesialis** (*Spesialis Administrasi & Office*, *Peneliti Dokumen & RAG*, *Operator PC & Automasi Sistem*) melalui tampilan Kanvas Visual maupun Daftar Organisasi.
+* **3 Sub-Tab Hak Akses Alat (*Lazy Tool Loading*) per Agen:**
+  * **Aplikasi PC Terhubung:** Centang aplikasi PC mana saja (yang telah diizinkan di menu *Aplikasi PC*) yang boleh diakses oleh agen tersebut.
+  * **Keahlian Terpasang (*Skills*):** Tugaskan keahlian spesifik dari katalog yang telah dipasang ke agen terkait.
+  * **Alat Inti Sistem:** Atur kapabilitas dasar (*Otomasi Dokumen*, *Basis Pengetahuan RAG*, *Python uv Runner*, *Computer Use*, *MCP*).
+* **Dukungan Penuh Model AI Terbaru (Cloud & Lokal Gratis):**
+  * **Google Gemini:** `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`, `gemini-1.5-pro`
+  * **Anthropic Claude:** `claude-3-7-sonnet-latest`, `claude-3-5-sonnet-latest`, `claude-3-5-haiku-latest`, `claude-3-opus-latest`
+  * **OpenAI:** `gpt-4.5-preview`, `o3-mini`, `o1`, `gpt-4o`, `gpt-4o-mini`
+  * **DeepSeek:** `deepseek-chat` (DeepSeek-V3 671B), `deepseek-reasoner` (DeepSeek-R1)
+  * **Groq Cloud (LPU Kilat):** `llama-3.3-70b-versatile`, `deepseek-r1-distill-llama-70b`, `llama-3.1-8b-instant`, `qwen-2.5-32b`
+  * **OpenRouter:** `anthropic/claude-3.7-sonnet`, `google/gemini-2.5-pro`, `deepseek/deepseek-r1`, `openrouter/auto`
+  * **Ollama & LM Studio (100% Lokal & Gratis):** `qwen2.5:7b`, `qwen2.5-coder:7b`, `llama3.3:70b`, `llama3.2:3b`, `deepseek-r1:8b`, `phi4:14b`, `mistral:7b`
 
-```text
-                  +-------------------------------------------------------------+
-                  |                     PENGGUNA / USER                         |
-                  |           (Desktop UI / Telegram Smartphone)                |
-                  +------------------------------+------------------------------+
-                                                 |
-                                                 v
-                  +-------------------------------------------------------------+
-                  |                   AKSA AI ORCHESTRATOR                      |
-                  |        (Memahami Perintah, Memilih Aplikasi & Tools)        |
-                  +------------------------------+------------------------------+
-                                                 |
-                                                 v
-         +-----------------------+---------------+---------------+-----------------------+
-         |                       |                               |                       |
-         v                       v                               v                       v
-+-----------------+     +-----------------+             +-----------------+     +-----------------+
-| APP INTELLIGENCE|     | OS PERMISSION   |             | EXTERNAL SKILL  |     | INTEGRATION     |
-| (Deteksi App    |     | BROKER          |             | MANAGER         |     | MANAGER         |
-| Terpasang &     |     | (Izin Native    |             | (Agent Skills   |     | (MCP Client &   |
-| Sedang Berjalan)|     | Windows/macOS)  |             | SKILL.md Aman)  |     | Adapter Native) |
-+--------+--------+     +--------+--------+             +--------+--------+     +--------+--------+
-         |                       |                               |                       |
-         +-----------------------+---------------+---------------+-----------------------+
-                                                 |
-                                                 v
-                  +-------------------------------------------------------------+
-                  |                  NATIVE OS EXECUTION LAYER                  |
-                  |    Windows / macOS · Akses Sesuai Izin · Audit · Emergency  |
-                  +------------------------------+------------------------------+
-                                                 |
-                                                 v
-                  +-------------------------------------------------------------+
-                  |                    WORKSPACE SANDBOX PC                     |
-                  |      Folder Kerja Diizinkan Pengguna (Path Jail & Backup)   |
-                  +-------------------------------------------------------------+
+### 2. Intelijensi Aplikasi PC & Otorisasi Mandiri (`App Intelligence`)
+* **Deteksi Aplikasi Terinstall yang Jujur:** Memindai registri Windows (`HKLM` / `HKCU`) dan direktori aplikasi macOS tanpa hak administrator, menyaring paket runtime/update sistem, dan memverifikasi keberadaan lokasi berkas (`launch_status: launchable | not_launchable`) tanpa menggunakan daftar aplikasi palsu.
+* **Klasifikasi Kategori Integrasi Otomatis:** Mengelompokkan software ke dalam kategori *Otomasi Dokumen Office*, *Navigasi & Analisis Web*, *Penyunting Kode & Teks*, *Komunikasi & Produktivitas*, serta *Alat Sistem & Utilitas*.
+* **Tombol Hubungkan & Putuskan Akses Mandiri:** Berikan atau cabut izin akses AKSA ke aplikasi tertentu (`Diizinkan / Terhubung` vs `Belum Diizinkan`) kapan saja secara langsung, **meskipun aplikasi tersebut sedang tidak dibuka/berjalan di latar belakang**.
+
+### 3. Manajer Keahlian Eksternal (`SKILL.md` & 16+ Katalog Populer)
+* **16 Katalog Keahlian Siap Pasang (1-Klik):** Tersedia secara default dalam status *Belum Terinstall* agar pengguna bebas memilih keahlian yang dibutuhkan:
+  1. *Analisis Rekap Bulanan Excel* (`excel-monthly-report`)
+  2. *Pemodelan Finansial & Valuasi Excel* (`excel-financial-modeler`)
+  3. *Penyusun Kontrak & Perjanjian MoU* (`word-legal-contract`)
+  4. *Tata Naskah Dinas & Surat Resmi RI* (`official-indonesian-correspondence`)
+  5. *Ekstraktor Tabel Dokumen PDF* (`pdf-table-extractor`)
+  6. *Analisis Data Eksploratif (EDA) & Visualisasi Python* (`python-data-analyst`)
+  7. *Asisten Riset Regulasi & Web Terverifikasi* (`browser-research-assistant`)
+  8. *Tinjauan Mutu Kode Git & Audit Standar* (`git-code-reviewer`)
+  9. *Analisis & Optimasi Kueri SQL Relasional* (`sql-query-optimizer`)
+  10. *Kalkulator PPh 21 (TER) & Simulasi Pajak Indonesia* (`indonesian-tax-calculator`)
+  11. *Notula Rapat Eksekutif & Matriks Tindak Lanjut* (`meeting-minutes-generator`)
+  12. *Arsitek Presentasi & Slide Pitching* (`powerpoint-pitch-deck`)
+  13. *Telaah Jurnal Ilmiah & Sitasi APA/IEEE* (`academic-paper-summarizer`)
+  14. *Rekonsiliasi Transaksi Bank & Audit Saldo CSV* (`csv-reconciliation-engine`)
+  15. *Audit Konfigurasi Keamanan & Header HTTP* (`security-audit-scanner`)
+  16. *Diagnostik Kesehatan OS & Utilisasi Sistem* (`system-admin-diagnostics`)
+* **Karantina & Pemeriksaan Statis Ketat:** Menolak arsip dengan *path traversal* (`../`), *symbolic link*, duplikasi/tabrakan nama berkas (*case collision*), *zip bomb* (>25 MB atau rasio >50:1), file biner berbahaya (`.exe`, `.dll`, `.bat`), pencurian environment variable rahasia, maupun indikasi *prompt injection*. Setiap keahlian dipasang dalam kondisi **NONAKTIF secara default** dan seluruh izinnya otomatis dicabut saat di-uninstall.
+
+### 4. Broker Izin Sistem Operasi 2-Lapis & Mesin Eksekusi 3-Tier
+* **Pemisahan Status Izin OS vs Konsen AKSA:** Melacak `OSPermissionState` (`GRANTED`, `DENIED`, `NEEDS_USER_ACTION`, `UNSUPPORTED`) secara terpisah dari `AKSAConsentState` (`GRANTED_SCOPED`, `NOT_GRANTED`, `REVOKED`, `EXPIRED`) lengkap dengan buku besar audit (*Audit Ledger*).
+* **3 Lapisan Automasi PC:**
+  * **Tier 1 (Direct Office & Filesystem Engine):** Pembuatan dan modifikasi dokumen `.xlsx`, `.docx`, `.pptx`, dan `.pdf` di dalam sandbox dengan pencadangan otomatis ke `.aksa_backup/`.
+  * **Tier 2 (OS Bridge, Isolated `uv` Python Runner & MCP Client):** Eksekusi skrip Python terisolasi dan klien JSON-RPC 2.0 Model Context Protocol (MCP) yang seluruh server eksternalnya nonaktif secara default dan environment subprocess-nya disterilkan dari kunci API.
+  * **Tier 3 (Platform Computer Use Adapters):** Adapter terpisah `WindowsComputerUseAdapter` dan `MacOSComputerUseAdapter` dengan validasi enum aksi ketat, pemblokiran otomatis jendela sensitif (*password manager*, `1Password`, `Bitwarden`, `KeePass`, `Windows Security`, `Keychain Access`), verifikasi *precondition/postcondition*, *Failsafe Corner Abort*, dan tombol darurat `Ctrl+Shift+Q`.
+
+### 5. Basis Pengetahuan Hibrida RAG Lokal & Pusat Kendali Telegram
+* **Hybrid Search (LanceDB + SQLite FTS5 RRF):** Menggabungkan pencarian vektor semantik dan pencarian kata kunci eksak BM25 dengan pemantau folder otomatis berbasis hash SHA-256.
+* **Telegram Remote Command Center:** Kendalikan agen dari smartphone menggunakan pesan teks, lampiran dokumen, atau *Voice Note* Bahasa Indonesia, diamankan dengan kode pairing 6-digit dan *whitelist* ID numerik pengguna.
+
+---
+
+## Arsitektur Kecerdasan Desktop AKSA
+
+```mermaid
+flowchart TD
+    UI["React 19 Desktop UI (Warm Obsidian Theme)"] --> TH["Tauri v2 Rust Native Host (Dynamic Port & 256-bit Handshake)"]
+    TH --> API["Local FastAPI Gateway (127.0.0.1 · Host/Origin Guard)"]
+    API --> ORCH["AKSA AI Orchestrator & Multi-Agent Team"]
+
+    ORCH --> PG["Execution Policy Gateway (R0–R4 Risk & Bound One-Time Grants)"]
+    ORCH --> PRIV["Privacy Policy & Data Disclosure Gate (PUBLIC / INTERNAL / CONFIDENTIAL / RESTRICTED)"]
+
+    PG --> APP["App Intelligence (Registry/Bundle Discovery & Connect/Disconnect)"]
+    PG --> PERM["OS Permission Broker (OS State + Scoped AKSA Consent)"]
+    PG --> SKILL["External Skill Manager (SKILL.md + aksa.skill.yaml Quarantine)"]
+    PG --> MCP["Integration Manager (Isolated MCP Client & Office/OS Adapters)"]
+
+    PRIV --> LOCAL["Local AI (Ollama / LM Studio — Zero Cloud Fallback)"]
+    PRIV -->|Explicit Consent Only| CLOUD["Cloud APIs (Gemini 2.5 / Claude 3.7 / GPT-4.5 / DeepSeek R1)"]
+
+    APP & PERM & SKILL & MCP --> EXEC["Native OS Execution Layer & Sandbox Path Jail"]
+    EXEC --> VAULT["OS Credential Vault (Windows DPAPI / macOS Keychain)"]
+    EXEC --> AUDIT["Redacted Audit Ledger & Support Bundle Diagnostics"]
 ```
 
-### Pemisahan Peran & Tanggung Jawab Keamanan:
-1. **AKSA AI Orchestrator:** Menerima instruksi pengguna, menyusun rencana eksekusi, memilih agen spesialis, dan menentukan alat yang relevan.
-2. **App Intelligence:** Memindai registri Windows dan bundle macOS untuk mendeteksi program terpasang beserta adapter yang tersedia tanpa hak administrator.
-3. **OS Permission Broker:** Meminta dan memverifikasi izin native platform (Accessibility, Screen Recording, File ACLs) secara terpisah dari konsen internal AKSA.
-4. **External Skill Manager:** Memasang paket instruksi `SKILL.md` terkurasi dengan isolasi karantina arsip dan status nonaktif secara default.
-5. **Integration Manager:** Menghubungkan server Model Context Protocol (MCP) dan antarmuka aplikasi native (Office COM, AppleScript).
-6. **Native OS Execution Layer:** Menjalankan eksekusi terverifikasi di bawah pembatasan folder `allowed_paths`, audit logging, dan tombol *Emergency Stop*.
+---
+
+## Keamanan Enterprise, Privasi Lokal & Tata Kelola Data
+
+AKSA memenuhi standar keamanan dalam [AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md](./AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md):
+
+| Kontrol Keamanan | Implementasi Teknis |
+|---|---|
+| **OS Credential Vault** | Kunci API dienkripsi melalui **Windows DPAPI (`CryptProtectData`)** / **macOS Keychain** / **Sealed HMAC-SHA256 Vault**. Tabel SQLite `credentials_metadata` hanya menyimpan `credential_ref` dan pratinjau tersamar (`AIza••••••••9iYY`). |
+| **Zero Local-to-Cloud Fallback** | Saat menggunakan model lokal (`Ollama` / `LM Studio`) atau mode `local_only`, sistem dijamin tidak pernah mengalihkan request ke penyedia cloud meskipun server lokal sedang mati. |
+| **Data Disclosure Gate** | Tidak ada lampiran PDF otomatis dari folder kerja. Data berklasifikasi `RESTRICTED` diblokir dari cloud; lampiran dokumen wajib melalui persetujuan eksplisit pengguna. |
+| **Bound One-Time Approvals** | Persetujuan berisiko tinggi (`R3`/`R4`) diikat secara kriptografis ke hash argumen `SHA-256`, `session_id`, `workspace_id`, `tool_version`, dan waktu kedaluwarsa, serta hanya dapat dikonsumsi satu kali (anti-replay). Semua field override publik (`execution_policy_override`, `skip_approval`, `is_admin`) ditolak secara aktif. |
+| **Sandbox Path Jail & Revoke-All** | Resolusi kanonis `os.path.realpath`, pemblokiran path jaringan UNC (`\\server\share`) dan NTFS Alternate Data Streams (`:`), pelestarian izin *read-only*, serta pencabutan akses seluruh workspace satu klik (`POST /api/v1/workspaces/revoke-all`). |
+| **Redacted Observability** | Seluruh log terstruktur dan *Support Diagnostic Bundle* (`GET /api/v1/system/diagnostics/support-bundle`) secara otomatis menyensor kunci API, token Bearer, kata sandi, dan isi dokumen. |
 
 ---
 
-## 🏗️ Arsitektur Sistem
-
-AKSA dibangun menggunakan pola **Hybrid Native Shell (Tauri v2) + Python FastAPI Sidecar**:
-
-* **Frontend Desktop Shell (`apps/desktop`):** Dibangun dengan **Tauri v2 (Rust)**, **React 19**, **TypeScript**, dan **Tailwind CSS v4**. Memberikan waktu peluncuran instan, penggunaan memori RAM sangat rendah (~40–80 MB), tampilan tray sistem, dan estetika premium yang terinspirasi dari *Linear* dan *Claude Desktop*.
-* **Core Sidecar Engine (`services/engine`):** Berjalan secara lokal di port `127.0.0.1:43120` menggunakan Python 3.12+ yang dikelola oleh `uv`. Mengendalikan siklus hidup multi-agen, router LiteLLM, hybrid search LanceDB + SQLite FTS5, dan bot Telegram asynchronous (`aiogram` v3).
-
----
-
-## 💻 Panduan Memulai Cepat (Quickstart)
+## Panduan Memulai Cepat (Quickstart)
 
 ### 1. Prasyarat Sistem
-Pastikan perangkat Anda telah terpasang:
-* **Node.js:** Versi 20.x atau 22.x LTS ([Unduh](https://nodejs.org/))
+* **Node.js:** Versi 20.x atau 22.x LTS ([nodejs.org](https://nodejs.org/))
 * **Python:** Versi 3.12+ beserta [uv](https://docs.astral.sh/uv/)
-* **Rust:** Versi stabil terbaru ([rustup.rs](https://rustup.rs/)) — *wajib jika ingin mengompilasi binary native Tauri*
-* **Ollama (Opsional):** Jika ingin menjalankan AI lokal gratis ([ollama.ai](https://ollama.ai/))
+* **Rust (Opsional):** Diperlukan hanya jika ingin mengompilasi jendela native `.exe` / `.dmg` melalui Tauri (`winget install Rustlang.Rustup` atau [rustup.rs](https://rustup.rs/)).
+* **Ollama (Opsional):** Untuk menjalankan model AI lokal gratis 100% offline ([ollama.com](https://ollama.com/)).
 
 ### 2. Klon Repositori & Instalasi
 ```bash
-# Klon repositori
 git clone https://github.com/yogijowo/aksa.git
 cd aksa
 
 # Pasang dependensi frontend
 npm --prefix apps/desktop install
 
-# Siapkan virtual environment Python dengan uv
+# Siapkan virtual environment Python di services/engine/.venv
 uv venv services/engine/.venv
 uv pip install -r services/engine/pyproject.toml --project services/engine
 ```
 
-### 3. Menjalankan di Mode Pengembang (Satu Perintah)
-Gunakan skrip pengembang otomatis lintas platform:
+### 3. Menjalankan Aplikasi (Satu Perintah)
+Peluncur lintas platform (`scripts/dev.js`) otomatis mendeteksi Python di dalam `.venv` lokal proyek:
 
 ```bash
-# Jalankan Desktop Web & Backend Sidecar secara bersamaan
-python scripts/dev.py
+# Mode Cepat (Web Browser UI di http://localhost:1420 + FastAPI Engine di port 43120 — Tanpa Butuh Rust)
+npm run dev
 
-# Atau jalankan langsung sebagai Jendela Native Desktop Tauri v2
-python scripts/dev.py --tauri
+# Mode Jendela Aplikasi Desktop Native Tauri v2 (Membutuhkan Rust / Cargo)
+npm run dev:tauri
 ```
-Aplikasi akan otomatis membuka antarmuka kerja di browser pada `http://localhost:5173` atau membuka jendela desktop native.
 
-### 4. Menjalankan Pengujian Otomatis
+### 4. Menjalankan Suite Pengujian & Verifikasi Build
 ```bash
-# Pengujian Unit & Integrasi Backend (23 skenario pengujian)
-uv run --project services/engine pytest services/engine/tests -v
+# Jalankan 33 skenario pengujian unit, integrasi, dan regresi keamanan P0/P1/P2
+npm run test:backend
 
-# Pemeriksaan Tipe TypeScript & Build Frontend
-npm --prefix apps/desktop run build
+# Verifikasi kompilasi ketat TypeScript (tsc --noEmit) & bundle produksi Vite
+npm run test:frontend
 ```
 
 ---
 
-## 🔒 Keamanan, Privasi Lokal & Transparansi Model
+## Dokumentasi Teknis & Tata Kelola
 
-AKSA memegang teguh prinsip **Kedaulatan Data Lokal (*Local-First Privacy*)**:
-* **Bebas Telemetri Pihak Ketiga:** AKSA tidak memiliki pelacak (*tracking*) atau pengiriman telemetri tersembunyi ke server pengembang.
-* **Transparansi Pemrosesan AI:**
-  * **Model Lokal (Ollama / LM Studio):** 100% pemrosesan prompt, dokumen, dan basis data RAG berjalan sepenuhnya di komputer Anda secara luring (*offline*).
-  * **Model Cloud (Gemini, OpenAI, Anthropic, DeepSeek):** Jika Anda memilih model cloud dan memasukkan API key sendiri, data percakapan dan berkas terkait hanya dikirimkan secara langsung melalui HTTPS ke penyedia API resmi yang Anda pilih.
-* **Penyimpanan Kredensial Terlindungi:** Kunci API disimpan di dalam database SQLite lokal pengguna dan disamarkan di antarmuka serta respons HTTP (`••••••••••••9iYY`).
-* **Proteksi WebSocket Per-Sesi:** Aliran event eksekusi agen terisolasi secara ketat berdasarkan ID sesi kerja sehingga tidak terjadi kebocoran data antar tab atau client.
-* **Pusat Izin OS & Sandbox Folders:** Operasi file dibatasi pada folder kerja yang dipilih secara eksplisit (`allowed_paths`). Akses sensitif (eksekusi perintah, otomasi layar GUI) mewajibkan konfirmasi persetujuan pengguna (*Human-in-the-Loop*).
+### Dokumen Tata Kelola & Keamanan Utama
+* [**`AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md`**](./AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md) — Spesifikasi induk kesiapan enterprise, baseline keamanan, dan *release gates*.
+* [**`SECURITY.md`**](./SECURITY.md) — Model ancaman (*threat model*), batas kepercayaan, klasifikasi risiko `R0`–`R4`, dan prosedur pelaporan celah keamanan.
+* [**`PRIVACY.md`**](./PRIVACY.md) — Kebijakan privasi *local-first*, `ProviderMode`, `DataClassification`, dan inventaris penyimpanan data lokal.
+* [**`SUPPORT.md`**](./SUPPORT.md) — Panduan pemecahan masalah operasional (14 skenario kegagalan), kode error standar, dan cara mengekspor *Support Bundle* yang telah disensor.
+* [**`CHANGELOG.md`**](./CHANGELOG.md) • [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) • [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) • [**`PROGRESS.md`**](./PROGRESS.md)
 
----
-
-## 📚 Dokumentasi Teknis & Spesifikasi Arsitektur
-
-Bagi pengembang, kontributor, dan agen AI coding, seluruh spesifikasi arsitektur mendalam tersedia di direktori [`docs/`](./docs/):
-
-* 🤖 [**`AGENTS.md`**](./AGENTS.md) — Aturan wajib pengkodean, standar dwibahasa, dan layout repositori.
-* 🏛️ [**`docs/01-ARCHITECTURE.md`**](./docs/01-ARCHITECTURE.md) — Spesifikasi interaksi IPC Tauri v2, siklus hidup sidecar, dan protokol WebSocket.
-* 🧠 [**`docs/02-MULTI-AGENT-AND-TOKEN-EFFICIENCY.md`**](./docs/02-MULTI-AGENT-AND-TOKEN-EFFICIENCY.md) — Algoritma perutean multi-agen dan 5 teknik penghematan token.
-* 💻 [**`docs/03-PC-AUTOMATION-AND-OFFICE-ENGINE.md`**](./docs/03-PC-AUTOMATION-AND-OFFICE-ENGINE.md) — Arsitektur 3-Tier PC Action Engine dan Human-in-the-Loop Gateway.
-* 📚 [**`docs/04-RAG-AND-MEMORY-SYSTEM.md`**](./docs/04-RAG-AND-MEMORY-SYSTEM.md) — Desain mesin pencarian hibrida LanceDB + SQLite FTS5 RRF.
-* 📱 [**`docs/05-TELEGRAM-GATEWAY.md`**](./docs/05-TELEGRAM-GATEWAY.md) — Protokol gateway Telegram, whitelist, dan penanganan suara.
-* 🎨 [**`docs/06-UI-UX-DESIGN-SYSTEM.md`**](./docs/06-UI-UX-DESIGN-SYSTEM.md) — Standar estetika Claude Desktop / Linear dan glosarium UI Bahasa Indonesia.
-* 🗄️ [**`docs/07-DATABASE-AND-API-SCHEMA.md`**](./docs/07-DATABASE-AND-API-SCHEMA.md) — Skema tabel SQLite dan kontrak REST/WebSocket endpoint.
-* 🗺️ [**`docs/08-ROADMAP-AND-PHASES.md`**](./docs/08-ROADMAP-AND-PHASES.md) — Peta jalan fitur dan rekam jejak implementasi.
+### Spesifikasi Arsitektur Domain (`docs/`)
+* [**`AGENTS.md`**](./AGENTS.md) — Instruksi induk standar pengkodean, lokalisasi Bahasa Indonesia, dan struktur monorepo.
+* [**`docs/01-ARCHITECTURE.md`**](./docs/01-ARCHITECTURE.md) — Arsitektur Tauri v2 + Python FastAPI Sidecar & IPC.
+* [**`docs/02-MULTI-AGENT-AND-TOKEN-EFFICIENCY.md`**](./docs/02-MULTI-AGENT-AND-TOKEN-EFFICIENCY.md) — Orkestrasi hierarkis & efisiensi token.
+* [**`docs/03-PC-AUTOMATION-AND-OFFICE-ENGINE.md`**](./docs/03-PC-AUTOMATION-AND-OFFICE-ENGINE.md) — Mesin automasi 3-Tier & Sandbox.
+* [**`docs/04-RAG-AND-MEMORY-SYSTEM.md`**](./docs/04-RAG-AND-MEMORY-SYSTEM.md) — Mesin pencarian hibrida LanceDB + SQLite FTS5.
+* [**`docs/05-TELEGRAM-GATEWAY.md`**](./docs/05-TELEGRAM-GATEWAY.md) — Spesifikasi gateway pusat kendali Telegram.
+* [**`docs/06-UI-UX-DESIGN-SYSTEM.md`**](./docs/06-UI-UX-DESIGN-SYSTEM.md) — Sistem desain Warm Obsidian Claude Desktop & glosarium UI Indonesia.
+* [**`docs/07-DATABASE-AND-API-SCHEMA.md`**](./docs/07-DATABASE-AND-API-SCHEMA.md) — Skema database SQLite, migrasi, dan kontrak REST/WebSocket.
+* [**`docs/08-ROADMAP-AND-PHASES.md`**](./docs/08-ROADMAP-AND-PHASES.md) — Peta jalan pengembangan bertahap.
 
 ---
 
-## 📄 Lisensi
+## Lisensi
 
-AKSA didistribusikan di bawah lisensi resmi **[MIT License](./LICENSE)**. Anda bebas menggunakan, memodifikasi, dan mengembangkan perangkat lunak ini secara terbuka.
+Didistribusikan di bawah lisensi **[MIT License](./LICENSE)**.

@@ -4,214 +4,97 @@
   <img src="./assets/banner.svg" alt="AKSA - Asisten Kerja &amp; Sistem Automasi" width="100%">
 </a>
 
-# ⚡ AKSA
-### AI Desktop Operating Assistant & Autonomous Multi-Agent Platform
-*(Asisten Kerja &amp; Sistem Automasi — Local-First App Intelligence, OS Permissions &amp; Agent Skills)*
+# AKSA
+### Asisten Kerja &amp; Sistem Automasi — AI Desktop Operating Assistant
+*(Hierarchical Multi-Agent Orchestrator, Authorized PC App Control, 16+ Agent Skills, OS Permission Broker &amp; Enterprise Security Baseline)*
 
 <p align="center">
-  <a href="./README.md"><img src="https://img.shields.io/badge/📄_Baca_dalam-Bahasa_Indonesia-F43F5E?style=for-the-badge" alt="Indonesian Documentation"></a>
-  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="MIT License">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-10B981?style=for-the-badge" alt="Cross Platform">
-  <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-0EA5E9?style=for-the-badge" alt="Tauri v2 + React 19">
-  <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20uv-F59E0B?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Database-SQLite%20FTS5%20%2B%20LanceDB-8B5CF6?style=for-the-badge" alt="Hybrid RAG">
+  <a href="./README.md"><img src="https://img.shields.io/badge/Baca_dalam-Bahasa_Indonesia-D97757?style=for-the-badge" alt="Indonesian Documentation"></a>
+  <img src="https://img.shields.io/badge/License-MIT-10B981?style=for-the-badge" alt="MIT License">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
+  <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
+  <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
+  <img src="https://img.shields.io/badge/Tests-33%2F33%20Verified-10B981?style=for-the-badge" alt="33/33 Verified Tests">
 </p>
 
 <p align="center">
-  <b>Your private AI Desktop Operating Assistant running directly on your PC.</b><br>
-  Far more than a folder-reading chatbot — AKSA discovers installed desktop applications, transparently brokers native OS permissions, extends capabilities through portable Agent Skills, automates complex workflows, and takes commands remotely via Telegram on your smartphone.
+  <b>A local-first AI Desktop Operating Assistant built with an enterprise security baseline.</b><br>
+  AKSA unifies a hierarchical multi-agent team (Supervisor &amp; Specialist Sub-Agents), honest PC application discovery with independent Connect/Disconnect authorization, a 2-layer OS Permission Broker, 16+ portable Agent Skills (<code>SKILL.md</code>), local hybrid RAG, an OS Credential Vault (Windows DPAPI / macOS Keychain), and a Telegram remote command center.
 </p>
 
-[Key Features](#-key-features) • [Desktop Intelligence Architecture](#-aksa-desktop-intelligence-architecture) • [System Architecture](#️-system-architecture) • [Quickstart Guide](#-quickstart-guide) • [Security & Privacy](#-local-first-security-privacy--model-transparency) • [Engineering Docs](#-engineering-docs--architectural-specs)
+[Key Features](#-key-features) • [Desktop Intelligence Architecture](#-aksa-desktop-intelligence-architecture) • [Enterprise Security & Privacy](#-enterprise-security-local-privacy--data-governance) • [Quickstart](#-quickstart) • [Documentation](#-technical--governance-documentation)
 
 </div>
 
 ---
 
-## 🌟 Why AKSA?
+## Key Features
 
-Most AI tools today are web chatbots isolated from your local desktop applications and files. When you need to create an official document, run a system routine, or analyze complex data across applications, you end up manually copy-pasting data, re-formatting paragraphs, and managing files yourself.
+### 1. Visual Multi-Agent Hierarchy & Granular Access Assignment
+* **Interactive Hierarchy Canvas (`@xyflow/react`):** Design digital teams led by an **Executive Supervisor** and specialized sub-agents (*Office & Admin Specialist*, *RAG Document Researcher*, *PC & Automation Operator*) in either Visual Node Canvas or Organization List view.
+* **3 Sub-Tabs for Lazy Tool Loading per Agent:**
+  * **Authorized PC Applications:** Assign specific connected desktop applications to individual agents.
+  * **Installed Agent Skills:** Assign specific `SKILL.md` capabilities installed from the repository catalog.
+  * **Core System Tools:** Configure access to *Office Automation*, *Local Hybrid RAG*, *Isolated Python (`uv`) Runner*, *Computer Use*, and *MCP*.
+* **Latest Official Cloud & Free Local AI Models:**
+  * **Google Gemini:** `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-2.0-flash`, `gemini-1.5-pro`
+  * **Anthropic Claude:** `claude-3-7-sonnet-latest`, `claude-3-5-sonnet-latest`, `claude-3-5-haiku-latest`, `claude-3-opus-latest`
+  * **OpenAI:** `gpt-4.5-preview`, `o3-mini`, `o1`, `gpt-4o`, `gpt-4o-mini`
+  * **DeepSeek:** `deepseek-chat` (DeepSeek-V3 671B), `deepseek-reasoner` (DeepSeek-R1)
+  * **Groq Cloud (LPU):** `llama-3.3-70b-versatile`, `deepseek-r1-distill-llama-70b`, `llama-3.1-8b-instant`, `qwen-2.5-32b`
+  * **OpenRouter:** `anthropic/claude-3.7-sonnet`, `google/gemini-2.5-pro`, `deepseek/deepseek-r1`, `openrouter/auto`
+  * **Ollama & LM Studio (100% Free & Local):** `qwen2.5:7b`, `qwen2.5-coder:7b`, `llama3.3:70b`, `llama3.2:3b`, `deepseek-r1:8b`, `phi4:14b`, `mistral:7b`
 
-**AKSA (Asisten Kerja & Sistem Automasi)** was built from day one as a **local-first autonomous desktop application platform** with real execution capabilities across authorized applications and folders on your computer:
+### 2. PC App Intelligence & Independent Connect/Disconnect Control
+* **Honest Native Discovery:** Scans Windows Registry (`HKLM`/`HKCU`) and macOS application bundles without administrator privileges, filtering out system redistributables/updates and verifying on-disk `InstallLocation` (`launch_status: launchable | not_launchable`) with zero fake fallback entries.
+* **Domain Integration Categories:** Automatically classifies software into *Office Document Automation*, *Web Navigation & Analysis*, *Code & Text Editors*, *Communication & Productivity*, and *System Utilities*.
+* **Offline/Online Connect & Disconnect Actions:** Authorize or revoke AKSA access to any installed application at any time—even when the application is not currently running.
 
-1. **PC Application & Document Automation:** Beyond conversational suggestions, AKSA interacts with local software and generates complete production files: **Microsoft Excel (`.xlsx` with dynamic formulas and charts)**, **Microsoft Word (`.docx` with executive templates)**, **PowerPoint (`.pptx`)**, and **PDF** reports.
-2. **Zero-Setup Local Hybrid RAG:** Instantly searches thousands of PDF pages, policies, and spreadsheets with semantic understanding and exact keyword matching—100% locally with zero external database servers.
-3. **Remote Control via Telegram:** Commuting or away from your desk? Send a text or **voice note** to your private Telegram Bot. AKSA runs the task on your PC and uploads the finished document directly back to your phone.
-4. **Extreme Token Efficiency:** Saves up to **80%** in API costs using sub-agent context isolation, lazy tool loading, and rolling compaction.
+### 3. External Skill Manager (`SKILL.md` & 16+ Curated Repository Skills)
+* **16 Ready-to-Install Skills (Uninstalled by Default):** One-click installation for *Excel Financial Modeler*, *Excel Monthly Report*, *Word Legal Contract & MoU*, *Indonesian Official Correspondence*, *PDF Table Extractor*, *Python Exploratory Data Analyst*, *Browser Research Assistant*, *Git Code Reviewer*, *SQL Query Optimizer*, *Indonesian Tax Calculator (PPh 21/TER)*, *Executive Meeting Minutes*, *PowerPoint Pitch Deck*, *Academic Paper Summarizer*, *CSV Bank Reconciliation*, *Security Audit Scanner*, and *System Admin Diagnostics*.
+* **Strict Quarantine & Static Analysis:** Blocks `../` path traversal, symbolic links, case-colliding paths, zip bombs (>25 MB or >50:1 compression ratio), binary executables, environment credential scraping, and `SKILL.md` prompt injection. Skills install in a **DISABLED-by-default** state and automatically revoke all grants upon uninstallation.
 
----
-
-## ✨ Key Features
-
-### 🕸️ 1. Visual Hierarchical Multi-Agent Builder
-* **Executive Team Structure:** Design your digital workforce featuring a **Manager/Supervisor Agent** coordinating specialized sub-agents (Office Specialist, RAG Document Researcher, PC & Screen Operator) via an interactive node canvas (`@xyflow/react`) or structured organization chart.
-* **Per-Agent Model Assignment (Cloud APIs + 100% Free Local AI):**
-  * Assign frontier **Cloud Models** (Claude 3.7 Sonnet, Gemini 2.5 Pro, GPT-4o, DeepSeek V3) to the Manager Agent for strategic reasoning.
-  * Assign **100% Free & Private Local Models** via **Ollama** or **LM Studio** (Qwen 2.5, Llama 3.3, DeepSeek R1) to sub-agents for confidential document analysis, ensuring sensitive records never leave your machine.
-
-### 💻 2. 3-Tier PC & Office Action Engine with Workspace Sandbox
-* **Workspace Sandbox Path Jail:** Agents can only access and modify files inside user-authorized folders (e.g. `D:\Work\Reports_2026`). Attempts to traverse outside are automatically blocked at the engine layer.
-* **Human-in-the-Loop (HITL) Permission Gate:** High-risk system actions (script execution, file deletion, visual computer use) require explicit user approval via a desktop modal or interactive Telegram buttons (`[✅ Allow]` / `[❌ Deny]`).
-* **3-Tier Execution Layers:**
-  * **Tier 1 (Direct Office Engine):** Programmatic file creation using native libraries (`openpyxl`, `python-docx`, `python-pptx`, `pymupdf`).
-  * **Tier 2 (Native OS Bridge & uv Runner):** Real-time interaction with open Office windows (Windows COM / macOS AppleScript), isolated Python script execution via `uv`, and Model Context Protocol (MCP) clients.
-  * **Tier 3 (Visual Computer Use):** Screen inspection, mouse navigation, and keyboard typing for legacy software without APIs, equipped with Failsafe Corner Abort and emergency hotkey `Ctrl+Shift+Q`.
-
-### ⚡ 3. Intelligent Token Optimization (Up to 80% Cost Reduction)
-* **Sub-Agent Context Isolation:** Sub-agents analyze bulky documents and scratchpads in isolated sessions, returning only concise executive summaries and generated file paths to the Manager Agent.
-* **Lazy Tool Loading:** Injects only the tool definitions required for an agent's active domain, keeping context windows lightweight.
-* **Rolling Compaction:** Automatically condenses long conversation turns while retaining critical facts and project decisions.
-
-### 📚 4. Zero-Setup Local Hybrid RAG
-* **Semantic Vector + BM25 Exact Keyword Search:** Combines **LanceDB** (semantic vectors) and **SQLite FTS5** (exact matching for reference numbers, codes, and IDs) using Reciprocal Rank Fusion (RRF).
-* **Watchdog Folder Monitor:** Detects new or modified PDFs, spreadsheets, and Word documents in authorized folders, incrementally re-indexing them in the background using SHA-256 hashing.
-
-### 📱 5. Telegram Remote Command Center
-* **Control Your PC from Anywhere:** Send work instructions, upload reference documents, or speak naturally with **Voice Notes** from your smartphone.
-* **Instant File Delivery:** Receives live step-by-step progress updates and finished files (`.docx`, `.xlsx`, `.pdf`, screenshots) directly in your Telegram chat.
-* **Strict Whitelist & Pairing Security:** Only authorized Telegram user IDs verified with a 6-digit desktop pairing code can interact with the bot.
-
-### 🖥️ 6. Native Desktop Discovery, OS Permissions & Portable Agent Skills
-* **Zero-Elevation Application Inventory:** Safely discovers installed desktop applications (Office suites, browsers, IDEs) and automation adapters without requiring administrative privileges.
-* **OS-Level Permission Broker:** Independently tracks native operating system permissions (Accessibility, Screen Recording, filesystem ACLs) versus AKSA user consent grants with audit event logs.
-* **Standard Agent Skills (`SKILL.md`):** Extends agent workflows using the standard portable format with quarantine extraction validation, static code scanning, and disabled-by-default activation.
+### 4. Enterprise Security Baseline (`ExecutionPolicyGateway` & `CredentialVault`)
+* **OS Credential Vault:** API keys are encrypted via **Windows DPAPI (`CryptProtectData`)** / **macOS Keychain** / **Sealed HMAC-SHA256 Vault**. SQLite `credentials_metadata` stores only `credential_ref` and masked previews—never plaintext secrets.
+* **Zero Local-to-Cloud Fallback:** Requests assigned to local models (`Ollama` / `LM Studio`) or running under `local_only` mode never fall back to cloud providers under any condition.
+* **Data Disclosure Gate & Classification:** Enforces `PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, and `RESTRICTED` data classification tiers and prevents automatic PDF attachments without explicit user consent.
+* **Bound One-Time Approvals (`R0`–`R4`):** High-risk operations require one-time cryptographic `ApprovalGrant`s bound to canonical SHA-256 argument hashes, session ID, workspace ID, tool version, and expiration. Public override fields (`execution_policy_override`, `skip_approval`, `is_admin`) are actively rejected.
 
 ---
 
-## 🚀 AKSA Desktop Intelligence Architecture
+## Quickstart
 
-AKSA implements a modular, layered desktop architecture separating user intent comprehension, application discovery, OS permission brokering, external skills extensibility, and sandboxed native execution:
-
-```text
-                  +-------------------------------------------------------------+
-                  |                     USER / OPERATOR                         |
-                  |           (Desktop UI / Telegram Smartphone)                |
-                  +------------------------------+------------------------------+
-                                                 |
-                                                 v
-                  +-------------------------------------------------------------+
-                  |                   AKSA AI ORCHESTRATOR                      |
-                  |      (Comprehends Intent, Selects Apps, Skills & Tools)     |
-                  +------------------------------+------------------------------+
-                                                 |
-                                                 v
-         +-----------------------+---------------+---------------+-----------------------+
-         |                       |                               |                       |
-         v                       v                               v                       v
-+-----------------+     +-----------------+             +-----------------+     +-----------------+
-| APP INTELLIGENCE|     | OS PERMISSION   |             | EXTERNAL SKILL  |     | INTEGRATION     |
-| (Discovers      |     | BROKER          |             | MANAGER         |     | MANAGER         |
-| Installed &     |     | (Native Windows |             | (Standard       |     | (MCP Client &   |
-| Running Apps)   |     | & macOS Auth)   |             | SKILL.md Sandbox|     | Native Adapters)|
-+--------+--------+     +--------+--------+             +--------+--------+     +--------+--------+
-         |                       |                               |                       |
-         +-----------------------+---------------+---------------+-----------------------+
-                                                 |
-                                                 v
-                  +-------------------------------------------------------------+
-                  |                  NATIVE OS EXECUTION LAYER                  |
-                  |     Windows / macOS · Least Privilege · Audit · E-Stop      |
-                  +------------------------------+------------------------------+
-                                                 |
-                                                 v
-                  +-------------------------------------------------------------+
-                  |                    WORKSPACE SANDBOX PC                     |
-                  |      User-Authorized Workspace Folders (Path Jail & Backup) |
-                  +-------------------------------------------------------------+
-```
-
-### Layer Responsibilities & Security Separation:
-1. **AKSA AI Orchestrator:** Interprets user instructions, formulates phased execution plans, delegates to domain specialist sub-agents, and dynamically resolves necessary tools.
-2. **App Intelligence:** Scans Windows registry (HKLM/HKCU) and macOS `.app` bundles to discover installed software and available automation adapters without administrator elevation.
-3. **OS Permission Broker:** Independently tracks native operating system permissions (Accessibility, Screen Recording, File ACLs) versus AKSA internal user consent grants.
-4. **External Skill Manager:** Installs portable `SKILL.md` instruction packages with archive quarantine validation, static security scanning, and disabled-by-default initialization.
-5. **Integration Manager:** Manages standard Model Context Protocol (MCP) server lifecycles and native desktop application bridges (Office COM, AppleScript).
-6. **Native OS Execution Layer:** Executes authorized operations strictly confined to `allowed_paths`, logs tamper-proof audit trails, and provides a hardware emergency stop (`Ctrl+Shift+Q`).
-
----
-
-## 🏗️ System Architecture
-
-AKSA combines a **Native Desktop Shell (Tauri v2)** with an **Asynchronous Python FastAPI Sidecar**:
-
-* **Desktop Frontend (`apps/desktop`):** Built with **Tauri v2 (Rust)**, **React 19**, **TypeScript**, and **Tailwind CSS v4**. Delivers instant startup, ultra-low RAM footprint (~40–80 MB), system tray support, and a distraction-free aesthetic inspired by *Linear* and *Claude Desktop*.
-* **Core Sidecar Engine (`services/engine`):** Runs locally on `127.0.0.1:43120` using Python 3.12+ managed by `uv`. Orchestrates multi-agent execution graphs, LiteLLM router, LanceDB + SQLite FTS5 search, and asynchronous Telegram bot services (`aiogram` v3).
-
----
-
-## 💻 Quickstart Guide
-
-### 1. Prerequisites
-Ensure your machine has:
-* **Node.js:** v20.x or v22.x LTS ([Download](https://nodejs.org/))
-* **Python:** v3.12+ with [uv](https://docs.astral.sh/uv/)
-* **Rust:** Latest stable toolchain ([rustup.rs](https://rustup.rs/)) — *required for compiling native Tauri binaries*
-* **Ollama (Optional):** For 100% free local models ([ollama.ai](https://ollama.ai/))
-
-### 2. Clone Repository & Install
 ```bash
-# Clone the repository
 git clone https://github.com/yogijowo/aksa.git
 cd aksa
 
 # Install frontend dependencies
 npm --prefix apps/desktop install
 
-# Set up Python virtual environment with uv
+# Create Python virtual environment in services/engine/.venv
 uv venv services/engine/.venv
 uv pip install -r services/engine/pyproject.toml --project services/engine
-```
 
-### 3. Run in Development Mode (One Command)
-```bash
-# Launch Desktop Web & Backend Sidecar concurrently
-python scripts/dev.py
+# Run Browser Dev Mode (Vite UI at http://localhost:1420 + FastAPI Engine at 43120 — No Rust required)
+npm run dev
 
-# Or launch as a Native Tauri v2 Desktop Window
-python scripts/dev.py --tauri
-```
-The application will automatically launch on `http://localhost:5173` or open a native desktop application window.
+# Or run Native Tauri v2 Desktop Window (Requires Rust / Cargo)
+npm run dev:tauri
 
-### 4. Run Automated Test Suite
-```bash
-# Backend Unit & Integration Tests (23 comprehensive test suites)
-uv run --project services/engine pytest services/engine/tests -v
+# Run all 33 backend unit, integration & security regression tests
+npm run test:backend
 
-# Frontend TypeScript Check & Production Build
-npm --prefix apps/desktop run build
+# Run TypeScript typecheck & Vite production bundle
+npm run test:frontend
 ```
 
 ---
 
-## 🔒 Local-First Security, Privacy & Model Transparency
+## Technical & Governance Documentation
 
-AKSA is architected on strict **Local-First Data Sovereignty**:
-* **Zero Third-Party Telemetry:** No conversation records, document contents, or file indices are transmitted to developer servers.
-* **Transparent Processing Model:**
-  * **Local Models (Ollama / LM Studio):** 100% of reasoning, prompt processing, and RAG hybrid search runs completely offline on your own machine.
-  * **Cloud Models (Gemini, OpenAI, Anthropic, DeepSeek):** When you select a cloud provider and supply your own API key, request data and referenced files are dispatched directly over HTTPS only to your chosen provider's official API endpoints.
-* **Protected Credential Storage:** API keys are stored in the user's local SQLite database and strictly masked in the UI and HTTP API responses (`••••••••••••9iYY`).
-* **Session-Isolated WebSockets:** Real-time agent streaming events are isolated by session ID, preventing cross-window or cross-client data leakage.
-* **OS-Level Capability Broker & Sandbox Folders:** Filesystem operations are confined to explicitly authorized workspace directories (`allowed_paths`). High-risk operations (command execution, GUI automation) require human confirmation (Human-in-the-Loop).
+* [**`AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md`**](./AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md)
+* [**`SECURITY.md`**](./SECURITY.md) • [**`PRIVACY.md`**](./PRIVACY.md) • [**`SUPPORT.md`**](./SUPPORT.md) • [**`CHANGELOG.md`**](./CHANGELOG.md) • [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) • [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) • [**`PROGRESS.md`**](./PROGRESS.md)
 
----
+## License
 
-## 📚 Engineering Docs & Architectural Specs
-
-Comprehensive engineering blueprints and guidelines for contributors and AI agents are maintained in [`AGENTS.md`](./AGENTS.md) and the [`docs/`](./docs/) directory:
-
-* 🤖 [**`AGENTS.md`**](./AGENTS.md) — Coding conventions, bilingual rules, and monorepo structure.
-* 🏛️ [**`docs/01-ARCHITECTURE.md`**](./docs/01-ARCHITECTURE.md) — Tauri v2 IPC protocols, sidecar lifecycle, and bundling specs.
-* 🧠 [**`docs/02-MULTI-AGENT-AND-TOKEN-EFFICIENCY.md`**](./docs/02-MULTI-AGENT-AND-TOKEN-EFFICIENCY.md) — Hierarchical orchestration and the 5 token optimization algorithms.
-* 💻 [**`docs/03-PC-AUTOMATION-AND-OFFICE-ENGINE.md`**](./docs/03-PC-AUTOMATION-AND-OFFICE-ENGINE.md) — 3-Tier PC Action Engine and Human-in-the-Loop sandbox.
-* 📚 [**`docs/04-RAG-AND-MEMORY-SYSTEM.md`**](./docs/04-RAG-AND-MEMORY-SYSTEM.md) — Hybrid LanceDB + SQLite FTS5 RRF search engine.
-* 📱 [**`docs/05-TELEGRAM-GATEWAY.md`**](./docs/05-TELEGRAM-GATEWAY.md) — Telegram remote gateway, pairing protocols, and voice transcription.
-* 🎨 [**`docs/06-UI-UX-DESIGN-SYSTEM.md`**](./docs/06-UI-UX-DESIGN-SYSTEM.md) — Claude Desktop / Linear aesthetic guidelines and UI glossary.
-* 🗄️ [**`docs/07-DATABASE-AND-API-SCHEMA.md`**](./docs/07-DATABASE-AND-API-SCHEMA.md) — SQLite schema and REST/WebSocket API contracts.
-* 🗺️ [**`docs/08-ROADMAP-AND-PHASES.md`**](./docs/08-ROADMAP-AND-PHASES.md) — Engineering roadmap and milestone tracking.
-
----
-
-## 📄 License
-
-AKSA is distributed under the **[MIT License](./LICENSE)**. Free for personal, commercial, and open-source use.
+Distributed under the **[MIT License](./LICENSE)**.
