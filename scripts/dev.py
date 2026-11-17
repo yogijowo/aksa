@@ -59,7 +59,28 @@ def main() -> int:
 
     cargo_bin = Path.home() / ".cargo" / "bin"
     if cargo_bin.exists() and str(cargo_bin) not in os.environ.get("PATH", ""):
-        os.environ["PATH"] = f"{cargo_bin}:{os.environ.get('PATH', '')}"
+        os.environ["PATH"] = f"{cargo_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+
+    if use_tauri:
+        import shutil
+        has_cargo = shutil.which("cargo") is not None or (cargo_bin / ("cargo.exe" if sys.platform == "win32" else "cargo")).exists()
+        if not has_cargo:
+            print("\n" + "=" * 65)
+            print("  [PERINGATAN] Rust Compiler ('cargo') Belum Terpasang di PC Ini")
+            print("=" * 65)
+            print("Perintah 'dev:tauri' membutuhkan Rust Toolchain untuk menjalankan")
+            print("jendela aplikasi desktop native Windows (.exe berbasis WebView2).")
+            print("\n💡 Pilihan yang dapat Anda lakukan:")
+            print("  1. Jalankan AKSA dalam mode Web Browser (Cepat & Tanpa Butuh Rust):")
+            print("     > npm run dev")
+            print("     (Frontend Vite & Python Backend Engine langsung siap di http://localhost:1420)")
+            print("\n  2. Jika ingin menjalankan mode Jendela Native (.exe):")
+            print("     Pasang Rust Toolchain via PowerShell:")
+            print("     > winget install Rustlang.Rustup")
+            print("     (atau unduh dari https://rustup.rs)")
+            print("     Setelah instalasi selesai, buka ulang terminal dan jalankan kembali: npm run dev:tauri")
+            print("=" * 65 + "\n")
+            return 1
 
     engine_py = _get_engine_python()
     engine_cmd = [
