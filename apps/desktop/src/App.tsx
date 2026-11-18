@@ -1,12 +1,18 @@
-import React, { useEffect } from "react";
+import React, { useEffect, Suspense } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { ArtifactDrawer } from "@/components/layout/ArtifactDrawer";
 import { WorkspaceChatView } from "@/components/workspace/WorkspaceChatView";
 import { HITLApprovalModal } from "@/components/workspace/HITLApprovalModal";
-import { AgentHierarchyView } from "@/components/agents/AgentHierarchyView";
-import { FeatureSectionsView } from "@/components/settings/FeatureSectionsView";
 import { useAksaStore } from "@/stores/useAksaStore";
+
+// Code splitting (P3-2): lazy load large modules (React Flow canvas & Feature panels)
+const AgentHierarchyView = React.lazy(() =>
+  import("@/components/agents/AgentHierarchyView").then((m) => ({ default: m.AgentHierarchyView }))
+);
+const FeatureSectionsView = React.lazy(() =>
+  import("@/components/settings/FeatureSectionsView").then((m) => ({ default: m.FeatureSectionsView }))
+);
 
 export const App: React.FC = () => {
   const { activeNav, syncWithBackendEngine, toggleEmergencyStop } = useAksaStore();
@@ -39,10 +45,12 @@ export const App: React.FC = () => {
         <TopHeader />
 
         <div className="flex-1 flex min-h-0 overflow-hidden">
-          {/* Pane 2: Active Workspace / Agent Hierarchy / RAG / Telegram View */}
-          {activeNav === "ruang_kerja" && <WorkspaceChatView />}
-          {activeNav === "tim_agen" && <AgentHierarchyView />}
-          {activeNav !== "ruang_kerja" && activeNav !== "tim_agen" && <FeatureSectionsView />}
+          {/* Pane 2: Active Workspace / Agent Hierarchy / RAG / Telegram View with Suspense */}
+          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-sm text-[#8E8D8A]">Memuat modul...</div>}>
+            {activeNav === "ruang_kerja" && <WorkspaceChatView />}
+            {activeNav === "tim_agen" && <AgentHierarchyView />}
+            {activeNav !== "ruang_kerja" && activeNav !== "tim_agen" && <FeatureSectionsView />}
+          </Suspense>
 
           {/* Pane 3: Slide-Over File Artifact Inspector Drawer */}
           <ArtifactDrawer />

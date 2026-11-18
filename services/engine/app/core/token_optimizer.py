@@ -253,11 +253,13 @@ class TokenOptimizer:
     def compact_subagent_handback(
         cls,
         raw_subagent_output: str,
-        Simulated_document_tokens_processed: int = 4200,
-        lazy_tool_tokens_saved: int = 2800,
+        measured_scratchpad_tokens: int = 0,
+        lazy_tool_tokens_saved: int = 0,
         supervisor_model_id: str = "gemini-2.5-pro",
+        simulated_document_tokens_processed: int | None = None,
+        Simulated_document_tokens_processed: int | None = None,
     ) -> tuple[str, SubAgentIsolationMetrics]:
-        """Distill a sub-agent's raw output into a compact handback summary and compute savings."""
+        """Distill a sub-agent's raw output into a compact handback summary and compute real measured savings."""
         lines = [line.strip() for line in raw_subagent_output.strip().splitlines() if line.strip()]
         if len(raw_subagent_output) > 900:
             compact_summary = "\n".join(lines[:8]) + "\n...(Diringkas otomatis oleh Isolasi Konteks AKSA)"
@@ -265,7 +267,13 @@ class TokenOptimizer:
             compact_summary = raw_subagent_output.strip()
 
         summary_tokens = cls.estimate_tokens(compact_summary)
-        raw_tokens = Simulated_document_tokens_processed + cls.estimate_tokens(raw_subagent_output)
+        sim_val = simulated_document_tokens_processed if simulated_document_tokens_processed is not None else Simulated_document_tokens_processed
+        effective_scratchpad = (
+            sim_val
+            if sim_val is not None
+            else (measured_scratchpad_tokens or cls.estimate_tokens(raw_subagent_output))
+        )
+        raw_tokens = effective_scratchpad
         isolated_saved = max(0, raw_tokens - summary_tokens)
         total_saved = isolated_saved + lazy_tool_tokens_saved
 

@@ -439,14 +439,14 @@ class HierarchicalOrchestrator:
                                     "summary": res.summary,
                                 })
 
+            step_tokens = completion["input_tokens"] + completion["output_tokens"]
             handback_summary, metrics = token_optimizer.compact_subagent_handback(
                 raw_subagent_output=completion["content"],
-                Simulated_document_tokens_processed=3800 if "rag_search" in sub.get("tool_categories", []) else 1800,
+                measured_scratchpad_tokens=step_tokens,
                 lazy_tool_tokens_saved=lazy_saved,
                 supervisor_model_id=supervisor["model_id"],
             )
 
-            step_tokens = completion["input_tokens"] + completion["output_tokens"]
             total_tokens_used += step_tokens
             total_tokens_saved += metrics.total_tokens_saved
 

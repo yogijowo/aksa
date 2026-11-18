@@ -9,11 +9,6 @@ from typing import Any
 import aiosqlite
 import httpx
 
-try:
-    import litellm
-except ImportError:  # pragma: no cover
-    litellm = None  # type: ignore[assignment]
-
 from app.config import settings
 from app.core.credential_vault import CredentialVault, mask_secret
 from app.core.privacy_gate import DataClassification, ProviderMode, privacy_policy_gate

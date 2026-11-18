@@ -51,6 +51,7 @@ jobs:
         working-directory: apps/desktop
         run: |
           npm ci
+          npm audit --omit=dev
 
       - name: TypeScript typecheck & Vite production build
         working-directory: apps/desktop

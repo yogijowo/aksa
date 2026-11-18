@@ -1057,6 +1057,34 @@ class DatabaseManager:
             await db.commit()
             return cursor.rowcount > 0
 
+    async def get_setting(self, key: str, default: Any = None) -> Any:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT value_json FROM app_settings WHERE key = ?", (key,))
+            row = await cursor.fetchone()
+            if row:
+                try:
+                    return json.loads(row["value_json"])
+                except Exception:
+                    return row["value_json"]
+            return default
+
+    async def set_setting(self, key: str, value: Any) -> None:
+        val_json = json.dumps(value) if not isinstance(value, str) else value
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                """
+                INSERT INTO app_settings (key, value_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    updated_at = excluded.updated_at
+                """,
+                (key, val_json, now),
+            )
+            await db.commit()
+
 
 db_manager = DatabaseManager()
 

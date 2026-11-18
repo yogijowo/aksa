@@ -10,13 +10,14 @@ import sys
 from typing import AsyncIterator
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.routes import api_router
 from app.api.ws import ws_router
 from app.config import settings
+from app.core.observability import observability_manager
 from app.db.models import db_manager
 from app.db.seed import seed_default_indonesian_team
 
@@ -132,6 +133,33 @@ def create_app() -> FastAPI:
                     },
                 )
         return await call_next(request)
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={
+                "code": f"HTTP_{exc.status_code}",
+                "detail": str(exc.detail),
+            },
+        )
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        req_id = request.headers.get("X-Request-ID") or f"req_{secrets.token_hex(4)}"
+        observability_manager.record_event(
+            event_type="UNHANDLED_EXCEPTION",
+            severity="ERROR",
+            details={"path": str(request.url.path), "request_id": req_id, "error": str(exc)},
+        )
+        return JSONResponse(
+            status_code=500,
+            content={
+                "code": "INTERNAL_SERVER_ERROR",
+                "detail": "Terjadi kesalahan internal pada sistem AKSA. Silakan coba beberapa saat lagi.",
+                "request_id": req_id,
+            },
+        )
 
     app.include_router(api_router)
     app.include_router(ws_router)

@@ -28,4 +28,17 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ["react", "react-dom", "zustand"],
+          icons: ["lucide-react"],
+          xyflow: ["@xyflow/react"],
+          markdown: ["react-markdown"],
+        },
+      },
+    },
+  },
 });

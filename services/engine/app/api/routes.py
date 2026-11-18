@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import asyncio
 import hashlib
 import hmac
 import os
@@ -33,6 +34,35 @@ api_router = APIRouter(prefix="/api/v1")
 
 llm_router = UnifiedLLMRouter(db=db_manager)
 orchestrator = HierarchicalOrchestrator(db=db_manager, llm_router=llm_router)
+
+GLOBAL_ORCHESTRATION_SEMAPHORE = asyncio.Semaphore(3)
+_session_locks: dict[str, asyncio.Lock] = {}
+_active_tasks: dict[str, asyncio.Task] = {}
+
+
+async def _check_daily_token_budget() -> tuple[bool, int, int]:
+    """Check if today's token usage has exceeded daily budget (P2-3)."""
+    budget_setting = await db_manager.get_setting("daily_token_budget", 500_000)
+    try:
+        daily_budget = int(budget_setting)
+    except (TypeError, ValueError):
+        daily_budget = 500_000
+
+    if daily_budget <= 0:
+        return True, 0, 0
+
+    async with aiosqlite.connect(db_manager.db_path) as conn:
+        cursor = await conn.execute(
+            """
+            SELECT COALESCE(SUM(input_tokens + output_tokens), 0)
+            FROM token_usage_logs
+            WHERE date(created_at) = date('now')
+            """
+        )
+        row = await cursor.fetchone()
+        used_today = int(row[0]) if row else 0
+
+    return used_today < daily_budget, used_today, daily_budget
 
 
 class CreateAgentRequest(BaseModel):
@@ -173,7 +203,34 @@ async def test_model_connection(req: TestModelRequest) -> dict[str, Any]:
 
 @api_router.post("/orchestrate/execute")
 async def execute_hierarchical_task(req: ExecuteTaskRequest) -> dict[str, Any]:
-    """Execute a user instruction across the hierarchical Supervisor -> Sub-Agent team."""
+    """Execute a user instruction with per-session concurrency guard, global limit, and daily budget enforcement (P2-3)."""
+    # 1. Daily Token Budget Guard
+    allowed, used_today, daily_budget = await _check_daily_token_budget()
+    if not allowed:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Batas kuota token harian telah tercapai ({used_today:,}/{daily_budget:,} token). Harap atur ulang batas kuota di menu Pengaturan.",
+        )
+
+    # 2. Per-Session Concurrency Lock (max 1 active task per session)
+    sess_id = req.session_id or "default_session"
+    if sess_id not in _session_locks:
+        _session_locks[sess_id] = asyncio.Lock()
+    session_lock = _session_locks[sess_id]
+
+    if session_lock.locked():
+        raise HTTPException(
+            status_code=429,
+            detail=f"Sesi '{sess_id}' sedang menjalankan tugas lain. Harap tunggu hingga selesai atau batalkan tugas sebelumnya.",
+        )
+
+    # 3. Global Concurrency Semaphore (max 3 concurrent tasks system-wide)
+    if GLOBAL_ORCHESTRATION_SEMAPHORE.locked():
+        raise HTTPException(
+            status_code=429,
+            detail="Kapasitas eksekusi orkestrasi sedang penuh (maksimal 3 tugas bersamaan). Silakan coba lagi beberapa saat.",
+        )
+
     resolved_path: str | None = None
     if req.workspace_id:
         workspaces = await db_manager.list_workspaces()
@@ -191,14 +248,40 @@ async def execute_hierarchical_task(req: ExecuteTaskRequest) -> dict[str, Any]:
             )
         resolved_path = str(p)
 
-    result = await orchestrator.execute_hierarchical_task(
-        prompt=req.prompt,
-        team_id=req.team_id,
-        workspace_id=req.workspace_id,
-        workspace_path=resolved_path,
-        session_id=req.session_id,
-    )
-    return result
+    async with session_lock:
+        async with GLOBAL_ORCHESTRATION_SEMAPHORE:
+            curr_task = asyncio.current_task()
+            if curr_task:
+                _active_tasks[sess_id] = curr_task
+            try:
+                result = await orchestrator.execute_hierarchical_task(
+                    prompt=req.prompt,
+                    team_id=req.team_id,
+                    workspace_id=req.workspace_id,
+                    workspace_path=resolved_path,
+                    session_id=sess_id,
+                )
+                return result
+            except asyncio.CancelledError:
+                return {
+                    "reply": "Tugas orkestrasi berhasil dibatalkan atas permintaan pengguna.",
+                    "cancelled": True,
+                    "artifacts": [],
+                    "steps": [],
+                }
+            finally:
+                _active_tasks.pop(sess_id, None)
+
+
+@api_router.post("/orchestrate/cancel")
+@api_router.post("/orchestrate/cancel/{session_id}")
+async def cancel_orchestration_task(session_id: str = "default_session") -> dict[str, Any]:
+    """Cancel an ongoing orchestration task for a session (P2-3)."""
+    task = _active_tasks.get(session_id)
+    if task and not task.done():
+        task.cancel()
+        return {"status": "cancelled", "session_id": session_id, "detail": "Tugas orkestrasi berhasil dibatalkan."}
+    return {"status": "not_running", "session_id": session_id, "detail": "Tidak ada tugas aktif di sesi ini."}
 
 
 @api_router.get("/tokens/analytics")
@@ -1127,6 +1210,35 @@ async def purge_agent_bundle(agent_id: str) -> dict[str, Any]:
     """Permanently delete an agent's memory, profile, and learned skills."""
     purged = agent_isolation_policy.purge_agent_data(agent_id)
     return {"agent_id": agent_id, "purged": purged}
+
+
+class AppSettingPayload(BaseModel):
+    key: str
+    value: Any
+
+
+@api_router.get("/system/settings")
+async def get_system_settings() -> dict[str, Any]:
+    """Retrieve all system settings from SQLite app_settings as single source of truth (P2-5)."""
+    async with aiosqlite.connect(db_manager.db_path) as conn:
+        conn.row_factory = aiosqlite.Row
+        cursor = await conn.execute("SELECT key, value_json, updated_at FROM app_settings")
+        rows = await cursor.fetchall()
+        settings_dict: dict[str, Any] = {}
+        for r in rows:
+            try:
+                settings_dict[r["key"]] = json.loads(r["value_json"])
+            except Exception:
+                settings_dict[r["key"]] = r["value_json"]
+        return {"settings": settings_dict}
+
+
+@api_router.post("/system/settings")
+async def save_system_setting(payload: AppSettingPayload) -> dict[str, Any]:
+    """Persist a system setting into SQLite app_settings (P2-5)."""
+    await db_manager.set_setting(payload.key, payload.value)
+    return {"status": "saved", "key": payload.key, "value": payload.value}
+
 
 
 
