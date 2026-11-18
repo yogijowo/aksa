@@ -839,27 +839,60 @@ class HierarchicalOrchestrator:
             session_id=session_id,
         )
 
-        # Record episodic task & evaluate candidate skills under isolated agent storage
+        # Record episodic task & evaluate candidate skills under isolated agent storage (AKSA-AGENT-002, AKSA-AGENT-003)
         try:
             from app.core.agent_learning import AgentMemoryService, SkillCandidateExtractor
             sup_agent_id = supervisor.get("id") or "supervisor"
             tools_called = [s.get("action_label", "") for s in execution_steps]
-            mem_svc = AgentMemoryService(sup_agent_id)
+
+            # Compute genuine task success reflecting actual tool outcomes
+            actual_success = (
+                not tool_failed
+                and not is_ambiguous_duplication
+                and not any(s.get("status") == "failed" for s in execution_steps)
+            )
+
             task_uid = f"task_{uuid.uuid4().hex[:8]}"
-            mem_svc.record_episodic_task(
+
+            # 1. Record in isolated storage for each executing sub-agent
+            for sub in sub_agents_to_run:
+                sub_id = sub.get("id") or sub.get("name")
+                if sub_id and sub_id != sup_agent_id:
+                    mem_sub = AgentMemoryService(sub_id)
+                    mem_sub.record_episodic_task(
+                        task_id=f"{task_uid}_{sub_id[:6]}",
+                        session_id=session_id or "default",
+                        intent=prompt[:150],
+                        summary=f"[{sub.get('name')}] " + final_reply[:200],
+                        tools_used=tools_called,
+                        success=actual_success,
+                    )
+                    if actual_success:
+                        ext_sub = SkillCandidateExtractor(sub_id)
+                        ext_sub.evaluate_task_for_learning(
+                            task_id=f"{task_uid}_{sub_id[:6]}",
+                            intent=prompt,
+                            tools_used=tools_called,
+                            success=actual_success,
+                            user_explicit_teach="jadikan skill" in prompt.lower() or "pelajari ini" in prompt.lower(),
+                        )
+
+            # 2. Record in supervisor isolated memory
+            mem_sup = AgentMemoryService(sup_agent_id)
+            mem_sup.record_episodic_task(
                 task_id=task_uid,
                 session_id=session_id or "default",
                 intent=prompt[:150],
                 summary=final_reply[:200],
                 tools_used=tools_called,
-                success=True,
+                success=actual_success,
             )
             extractor = SkillCandidateExtractor(sup_agent_id)
             extractor.evaluate_task_for_learning(
                 task_id=task_uid,
                 intent=prompt,
                 tools_used=tools_called,
-                success=True,
+                success=actual_success,
                 user_explicit_teach="jadikan skill" in prompt.lower() or "pelajari ini" in prompt.lower(),
             )
         except Exception:

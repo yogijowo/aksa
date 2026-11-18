@@ -1,8 +1,8 @@
 pub mod sidecar;
 
 use sidecar::{
-    get_engine_connection_info, get_engine_lifecycle_state, update_engine_lifecycle_state,
-    LifecycleState, SidecarState,
+    get_engine_connection_info, get_engine_lifecycle_state, sync_engine_port,
+    update_engine_lifecycle_state, LifecycleState, SidecarState,
 };
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
@@ -19,7 +19,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_engine_connection_info,
             get_engine_lifecycle_state,
-            update_engine_lifecycle_state
+            update_engine_lifecycle_state,
+            sync_engine_port
         ])
         .setup(|app| {
             let state = app.state::<SidecarState>();

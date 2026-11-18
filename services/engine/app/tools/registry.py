@@ -99,11 +99,21 @@ class ToolRegistry:
             )
 
         from app.core.sandbox import execution_policy_gateway
+
+        effective_risk = tool.risk_level
+        if name == "invoke_mcp_tool":
+            from app.tools.mcp.mcp_client import classify_mcp_tool_risk, mcp_client_manager
+            server_id = kwargs.get("server_id", "")
+            tool_name = kwargs.get("tool_name", "")
+            server = mcp_client_manager.get_server(server_id)
+            schema = server.tool_schemas.get(tool_name) if server else None
+            effective_risk = classify_mcp_tool_risk(server, tool_name, schema)
+
         session_id = kwargs.get("session_id")
         return await execution_policy_gateway.execute_tool(
             tool_name=name,
             handler=handler,
-            risk_level=tool.risk_level,
+            risk_level=effective_risk,
             arguments=kwargs,
             session_id=session_id,
         )

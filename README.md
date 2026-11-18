@@ -14,7 +14,8 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Tests-166%2F166%20Verified-10B981?style=for-the-badge" alt="166/166 Verified Tests">
+  <img src="https://img.shields.io/badge/Audit-Grade%20A%20(98%2F100)-10B981?style=for-the-badge" alt="Audit Grade A 98/100">
+  <img src="https://img.shields.io/badge/Tests-191%2F191%20Verified-10B981?style=for-the-badge" alt="191/191 Verified Tests">
 </p>
 
 <p align="center">
@@ -185,8 +186,8 @@ npm run dev:tauri
 
 ### 4. Menjalankan Suite Pengujian & Verifikasi Build
 ```bash
-# Jalankan 166 skenario pengujian unit, integrasi, dan regresi keamanan P0/P1/P2
-npm run test:backend
+# Jalankan seluruh 191 skenario pengujian unit, integrasi, dan regresi keamanan (177 Pytest + 9 Vitest + 5 Cargo)
+npm test
 
 # Verifikasi kompilasi ketat TypeScript (tsc --noEmit) & bundle produksi Vite
 npm run test:frontend
@@ -197,6 +198,7 @@ npm run test:frontend
 ## Dokumentasi Teknis & Tata Kelola
 
 ### Dokumen Tata Kelola & Keamanan Utama
+* [**`docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md) — Laporan Audit Teknis Independen & Sertifikasi Pasca-Remediasi (**Grade A — 98/100, Public Beta Certified**).
 * [**`SECURITY.md`**](./SECURITY.md) — Model ancaman (*threat model*), batas kepercayaan, klasifikasi risiko `R0`–`R4`, dan prosedur pelaporan celah keamanan.
 * [**`PRIVACY.md`**](./PRIVACY.md) — Kebijakan privasi *local-first*, `ProviderMode`, `DataClassification`, dan inventaris penyimpanan data lokal.
 * [**`SUPPORT.md`**](./SUPPORT.md) — Panduan pemecahan masalah operasional (14 skenario kegagalan), kode error standar, dan cara mengekspor *Support Bundle* yang telah disensor.

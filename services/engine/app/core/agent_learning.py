@@ -224,18 +224,41 @@ class SkillCandidateExtractor:
         if not user_explicit_teach and occurrences < self.MIN_OCCURRENCES:
             return None
 
-        # Formulate candidate skill
+        # Formulate concrete, tool-specific procedural steps (AKSA-AGENT-001)
         safe_name = "-".join(sorted(tools_used)[:2]) or "workflow"
         skill_id = f"cand-{safe_name}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 
-        steps = [
-            f"1. Validasi input dan parameter untuk alur {intent[:50]}",
-            "2. Jalankan eksekusi alat secara berurutan sesuai kebijakan workspace",
-            "3. Verifikasi hasil akhir dan laporkan output kepada pengguna",
-        ]
+        steps: list[str] = []
+        step_num = 1
+        steps.append(f"{step_num}. Inisialisasi dan verifikasi parameter input untuk sasaran: '{intent.strip()[:100]}'")
+        step_num += 1
+
+        for tool in tools_used:
+            t_clean = tool.strip()
+            if not t_clean:
+                continue
+            t_lower = t_clean.lower()
+            if "excel" in t_lower or "xlsx" in t_lower:
+                steps.append(f"{step_num}. Muat dataset tabel dan terapkan kalkulasi formula numerik via {t_clean}")
+            elif "word" in t_lower or "docx" in t_lower:
+                steps.append(f"{step_num}. Susun draf struktur dokumen resmi dengan paragraf dan tabel via {t_clean}")
+            elif "ppt" in t_lower or "slide" in t_lower:
+                steps.append(f"{step_num}. Rancang tata letak visual slide presentasi eksekutif via {t_clean}")
+            elif "pdf" in t_lower:
+                steps.append(f"{step_num}. Ekstrak teks atau render dokumen keluaran format PDF via {t_clean}")
+            elif "rag" in t_lower or "search" in t_lower:
+                steps.append(f"{step_num}. Cari konteks dokumen relevan pada basis pengetahuan lokal via {t_clean}")
+            else:
+                steps.append(f"{step_num}. Eksekusi operasi alat terspesialisasi '{t_clean}' pada authorized workspace")
+            step_num += 1
+
+        steps.append(f"{step_num}. Verifikasi integritas artefak keluaran, periksa batasan sandbox, dan laporkan ringkasan ke pengguna.")
+
         validations = [
-            "Output file harus berada di dalam authorized workspace",
-            "Tidak boleh ada data rahasia atau PII yang tersimpan di catatan publik",
+            "Seluruh berkas hasil kerja harus berada di dalam authorized workspace (allowed_paths)",
+            "Tidak boleh ada data kredensial mentah, kunci API, atau PII yang tersimpan tanpa redaksi",
+            f"Setiap pemanggilan alat harus menghasilkan status sukses dengan perkiraan konsumsi token yang efisien",
+            f"Alur kerja harus dapat direproduksi secara deterministik untuk agen '{self.agent_id}'",
         ]
 
         candidate = CandidateSkill(
@@ -387,8 +410,10 @@ class SkillVersionService:
         skill_md_file = cand_dir / "SKILL.md"
         skill_content = skill_md_file.read_text(encoding="utf-8")
 
-        # Determine target directory
-        safe_name = skill_id.replace("cand-", "").split("-")[0] or "learned-skill"
+        # Determine target directory (preserve multi-token skill names before final timestamp suffix)
+        cand_suffix_stripped = skill_id.replace("cand-", "")
+        parts = cand_suffix_stripped.rsplit("-", 1)
+        safe_name = parts[0] if parts and parts[0] else (cand_suffix_stripped or "learned-skill")
         if promote_to_shared:
             target_dir = (
                 agent_directory_service.root_dir / "shared" / "skills" / safe_name / version
@@ -398,7 +423,14 @@ class SkillVersionService:
                 self.agent_id, f"skills/learned/{safe_name}/{version}"
             )
 
-        target_dir.mkdir(parents=True, exist_ok=True)
+        # Enforce strict immutable versioning (AKSA-SKILL-001)
+        if target_dir.exists():
+            raise FileExistsError(
+                f"Versi keahlian '{version}' untuk '{safe_name}' sudah ada dan bersifat immutable. "
+                "Gunakan nomor versi baru (misal: 1.0.1 atau 1.1.0) untuk memperbarui keahlian."
+            )
+
+        target_dir.mkdir(parents=True, exist_ok=False)
         (target_dir / "SKILL.md").write_text(skill_content, encoding="utf-8")
 
         # Provenance metadata

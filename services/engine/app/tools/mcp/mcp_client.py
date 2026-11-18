@@ -35,39 +35,128 @@ SUPPORTED_MCP_PROTOCOL_VERSIONS = {"2024-11-05", "2024-10-07", "0.1.0"}
 MAX_PAYLOAD_SIZE = 10 * 1024 * 1024  # 10 MB maximum payload limit
 
 
+MCP_HIGH_RISK_KEYWORDS = {
+    "write", "delete", "remove", "drop", "create", "modify", "update",
+    "execute", "run", "click", "navigate", "submit", "fill", "type",
+    "send", "post", "put", "patch", "upload", "download", "insert",
+    "truncate", "alter", "copy", "move", "rename", "kill", "terminate",
+}
+
+MCP_TOOL_REQUIRED_PERMISSIONS: dict[str, list[str]] = {
+    "write_file": ["filesystem.workspace.write"],
+    "delete_file": ["filesystem.workspace.write"],
+    "create_directory": ["filesystem.workspace.write"],
+    "move_file": ["filesystem.workspace.write"],
+    "read_file": ["filesystem.workspace.read"],
+    "list_directory": ["filesystem.workspace.read"],
+    "get_file_info": ["filesystem.workspace.read"],
+    "playwright_navigate": ["application.automation"],
+    "playwright_click": ["application.automation"],
+    "playwright_fill": ["application.automation"],
+    "playwright_screenshot": ["screen.capture"],
+    "read_query": ["filesystem.workspace.read"],
+    "write_query": ["filesystem.workspace.write"],
+    "list_tables": ["filesystem.workspace.read"],
+    "describe_table": ["filesystem.workspace.read"],
+}
+
+
+def classify_mcp_tool_risk(
+    server: MCPServerConfig | None,
+    tool_name: str,
+    schema: dict[str, Any] | None = None,
+) -> RiskLevel:
+    """Classify risk level dynamically per MCP tool and operation (AKSA-SEC-001)."""
+    name_lower = tool_name.lower().replace("-", "_")
+    tokens = set(name_lower.split("_"))
+    if any(k in tokens or k in name_lower for k in MCP_HIGH_RISK_KEYWORDS):
+        return RiskLevel.HIGH
+    if server:
+        server_perms = set(server.permissions)
+        if "filesystem.workspace.write" in server_perms and any(w in name_lower for w in ("write", "save", "edit", "append")):
+            return RiskLevel.HIGH
+        if "application.automation" in server_perms and any(a in name_lower for a in ("click", "nav", "type", "submit", "eval", "press")):
+            return RiskLevel.HIGH
+    return RiskLevel.LOW
+
+
+def check_mcp_server_permissions(server: MCPServerConfig, tool_name: str) -> tuple[bool, str | None]:
+    """Verify that the MCP server declares the required permissions for the given tool (AKSA-SEC-001)."""
+    needed = MCP_TOOL_REQUIRED_PERMISSIONS.get(tool_name)
+    if not needed:
+        name_lower = tool_name.lower()
+        if any(w in name_lower for w in ("write", "delete", "create", "modify")):
+            needed = ["filesystem.workspace.write"]
+        elif any(r in name_lower for r in ("read", "list", "view", "inspect", "get")):
+            needed = ["filesystem.workspace.read"]
+        elif any(c in name_lower for c in ("click", "navigate", "fill", "type", "press")):
+            needed = ["application.automation"]
+
+    if needed:
+        server_perms = set(server.permissions)
+        missing = [p for p in needed if p not in server_perms]
+        if missing:
+            return False, f"Server MCP '{server.name}' tidak memiliki izin '{', '.join(missing)}' yang diperlukan untuk tool '{tool_name}'."
+    return True, None
+
+
 def validate_arguments_against_schema(schema: dict[str, Any] | None, arguments: dict[str, Any] | None) -> tuple[bool, str | None]:
-    """Validate tool input arguments against MCP JSON schema (P1-02)."""
+    """Validate tool input arguments against full MCP JSON schema (AKSA-MCP-002)."""
     if not schema or not isinstance(schema, dict):
         return True, None
     args = arguments or {}
     if not isinstance(args, dict):
         return False, "Argumen harus berupa objek dictionary."
 
-    # Required parameters check
-    required = schema.get("required", [])
-    if isinstance(required, list):
-        for req_field in required:
-            if req_field not in args:
-                return False, f"Parameter wajib '{req_field}' tidak disediakan."
+    try:
+        import jsonschema
+        jsonschema.validate(instance=args, schema=schema)
+        return True, None
+    except jsonschema.ValidationError as exc:
+        if exc.validator == "required":
+            missing_prop = exc.message.split("'")[1] if "'" in exc.message else exc.message
+            return False, f"Parameter wajib '{missing_prop}' tidak disediakan."
+        elif exc.validator == "type":
+            field_name = exc.path[-1] if exc.path else "arg"
+            return False, f"Tipe parameter '{field_name}' tidak valid. Diharapkan '{exc.validator_value}', diterima '{type(exc.instance).__name__}'."
+        else:
+            field_path = ".".join(str(p) for p in exc.path) if exc.path else "root"
+            return False, f"Validasi parameter gagal pada field '{field_path}': {exc.message}"
+    except jsonschema.SchemaError as exc:
+        return False, f"Definisi JSON Schema pada server MCP tidak valid: {exc.message}"
+    except Exception as exc:
+        required = schema.get("required", [])
+        if isinstance(required, list):
+            for req_field in required:
+                if req_field not in args:
+                    return False, f"Parameter wajib '{req_field}' tidak disediakan."
+        return False, f"Kesalahan validasi schema: {exc}"
 
-    # Property types check
-    properties = schema.get("properties", {})
-    if isinstance(properties, dict):
-        type_checks = {
-            "string": lambda v: isinstance(v, str),
-            "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
-            "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
-            "boolean": lambda v: isinstance(v, bool),
-            "array": lambda v: isinstance(v, list),
-            "object": lambda v: isinstance(v, dict),
-        }
-        for key, val in args.items():
-            if key in properties and isinstance(properties[key], dict):
-                prop_type = properties[key].get("type")
-                if prop_type in type_checks and not type_checks[prop_type](val):
-                    return False, f"Tipe parameter '{key}' tidak valid. Diharapkan '{prop_type}', diterima '{type(val).__name__}'."
 
-    return True, None
+async def _read_jsonrpc_response(
+    reader: asyncio.StreamReader,
+    target_id: int,
+    timeout: float,
+) -> dict[str, Any]:
+    """Read stdout lines sequentially until a matching JSON-RPC id is received (AKSA-MCP-001)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            raise TimeoutError(f"Timeout menunggu respons JSON-RPC id={target_id}")
+        line_bytes = await asyncio.wait_for(reader.readline(), timeout=remaining)
+        if not line_bytes:
+            raise RuntimeError(f"Stream output server MCP terputus sebelum id={target_id} diterima")
+        line = line_bytes.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+            if isinstance(parsed, dict) and parsed.get("id") == target_id:
+                return parsed
+        except json.JSONDecodeError:
+            continue
 
 
 def build_isolated_mcp_env(extra_allowlist: list[str] | None = None) -> dict[str, str]:
@@ -201,7 +290,7 @@ class MCPClientManager:
         }
 
     async def discover_tools(self, server_id: str, timeout: float = 8.0) -> list[dict[str, Any]]:
-        """Perform MCP initialize handshake, validate protocol, and retrieve tools/list."""
+        """Perform MCP initialize handshake, validate protocol, and retrieve tools/list sequentially (AKSA-MCP-001)."""
         server = self._servers.get(server_id)
         if not server:
             raise KeyError(f"Server MCP '{server_id}' tidak ditemukan.")
@@ -213,15 +302,15 @@ class MCPClientManager:
         if server_id in self._mock_handlers:
             resp = self._mock_handlers[server_id]("tools/list", None)
             tools = resp.get("tools", [])
-            server.discovered_tools = [t["name"] for t in tools if "name" in t]
-            server.tool_schemas = {t["name"]: t.get("inputSchema", {}) for t in tools if "name" in t}
+            server.discovered_tools = [t["name"] for t in tools if isinstance(t, dict) and "name" in t]
+            server.tool_schemas = {t["name"]: t.get("inputSchema", {}) for t in tools if isinstance(t, dict) and "name" in t}
             return tools
 
         cmd_bin = shutil.which(server.command)
         if not cmd_bin:
             raise FileNotFoundError(f"Executable '{server.command}' tidak ditemukan.")
 
-        # Execute stdio handshake and tools/list
+        # Sequential stdio handshake and tools/list (AKSA-MCP-001)
         init_req = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -237,9 +326,6 @@ class MCPClientManager:
 
         args = [cmd_bin] + server.args
         safe_env = build_isolated_mcp_env(server.environment_allowlist)
-        payload = (
-            json.dumps(init_req) + "\n" + json.dumps(notif_req) + "\n" + json.dumps(list_req) + "\n"
-        )
 
         proc = await asyncio.create_subprocess_exec(
             *args,
@@ -250,32 +336,49 @@ class MCPClientManager:
         )
 
         try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(input=payload.encode("utf-8")),
-                timeout=timeout,
-            )
-        except asyncio.TimeoutError:
+            assert proc.stdin is not None and proc.stdout is not None
+
+            # Step 1: Send initialize request
+            proc.stdin.write((json.dumps(init_req) + "\n").encode("utf-8"))
+            await proc.stdin.drain()
+
+            # Step 2: Read and validate initialize response
+            init_resp = await _read_jsonrpc_response(proc.stdout, target_id=1, timeout=timeout / 2)
+            if "error" in init_resp:
+                raise RuntimeError(f"MCP Handshake error: {init_resp['error']}")
+            proto = init_resp.get("result", {}).get("protocolVersion")
+            if proto and proto not in SUPPORTED_MCP_PROTOCOL_VERSIONS:
+                raise ValueError(f"Versi protokol MCP '{proto}' tidak didukung oleh AKSA.")
+
+            # Step 3: Send notifications/initialized
+            proc.stdin.write((json.dumps(notif_req) + "\n").encode("utf-8"))
+            await proc.stdin.drain()
+
+            # Step 4: Send tools/list request
+            proc.stdin.write((json.dumps(list_req) + "\n").encode("utf-8"))
+            await proc.stdin.drain()
+
+            # Step 5: Read and validate tools/list response
+            list_resp = await _read_jsonrpc_response(proc.stdout, target_id=2, timeout=timeout / 2)
+            if "error" in list_resp:
+                raise RuntimeError(f"MCP tools/list error: {list_resp['error']}")
+
+            discovered = list_resp.get("result", {}).get("tools", [])
+            server.discovered_tools = [t["name"] for t in discovered if isinstance(t, dict) and "name" in t]
+            server.tool_schemas = {t["name"]: t.get("inputSchema", {}) for t in discovered if isinstance(t, dict) and "name" in t}
+            return discovered
+        except (asyncio.TimeoutError, TimeoutError):
             try:
                 proc.kill()
             except Exception:
                 pass
             raise TimeoutError(f"Timeout saat inisialisasi server MCP '{server.name}'.")
-
-        discovered: list[dict[str, Any]] = []
-        for line in stdout.decode("utf-8", errors="replace").splitlines():
-            try:
-                msg = json.loads(line)
-                if msg.get("id") == 1 and "error" in msg:
-                    raise RuntimeError(f"MCP Handshake error: {msg['error']}")
-                if msg.get("id") == 2 and "result" in msg:
-                    discovered = msg["result"].get("tools", [])
-                    server.discovered_tools = [t["name"] for t in discovered if "name" in t]
-                    server.tool_schemas = {t["name"]: t.get("inputSchema", {}) for t in discovered if "name" in t}
-                    break
-            except json.JSONDecodeError:
-                continue
-
-        return discovered
+        finally:
+            if proc.returncode is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
 
     async def invoke_mcp_tool(
         self,
@@ -284,7 +387,7 @@ class MCPClientManager:
         arguments: dict[str, Any] | None = None,
         timeout: float = 10.0,
     ) -> ToolResult:
-        """Invoke a tool on an enabled MCP server via JSON-RPC 2.0 with complete lifecycle validation (P1.3)."""
+        """Invoke a tool on an enabled MCP server via JSON-RPC 2.0 with dynamic risk, permissions and HITL verification (AKSA-SEC-001, AKSA-MCP-001)."""
         server = self._servers.get(server_id)
         if not server:
             return ToolResult(
@@ -312,7 +415,17 @@ class MCPClientManager:
                 token_estimate=14,
             )
 
-        # 2. Check if tool exists in discovered tools
+        # 2. Check server declared permissions (AKSA-SEC-001)
+        perm_ok, perm_err = check_mcp_server_permissions(server, tool_name)
+        if not perm_ok:
+            return ToolResult(
+                success=False,
+                summary=perm_err or f"Izin ditolak untuk tool MCP '{tool_name}'.",
+                data={"server_id": server.id, "status": "permission_denied", "error": perm_err},
+                token_estimate=18,
+            )
+
+        # 3. Check if tool exists in discovered tools
         if server.discovered_tools and tool_name not in server.discovered_tools:
             return ToolResult(
                 success=False,
@@ -321,7 +434,7 @@ class MCPClientManager:
                 token_estimate=18,
             )
 
-        # 3. Schema validation against tool parameters (P1-02)
+        # 4. Schema validation against tool parameters (AKSA-MCP-002)
         schema = server.tool_schemas.get(tool_name)
         if schema:
             valid, schema_err = validate_arguments_against_schema(schema, arguments)
@@ -333,7 +446,55 @@ class MCPClientManager:
                     token_estimate=18,
                 )
 
-        # 4. Check mock test handler
+        # 5. Dynamic risk evaluation and HITL enforcement (AKSA-SEC-001)
+        tool_risk = classify_mcp_tool_risk(server, tool_name, schema)
+        if tool_risk in (RiskLevel.HIGH, RiskLevel.R3_EXTERNAL_SIDE_EFFECT, RiskLevel.R4_DESTRUCTIVE_PRIVILEGED):
+            from app.core.sandbox import execution_policy_gateway
+            grant_id = (arguments or {}).get("hitl_grant_id")
+            session_id = (arguments or {}).get("session_id")
+            workspace_id = (arguments or {}).get("workspace_id")
+
+            is_valid_grant = False
+            if grant_id:
+                # 1. Direct tool grant
+                is_valid_grant = execution_policy_gateway.verify_and_consume_grant(
+                    grant_id=grant_id,
+                    tool_name=f"mcp:{server.id}:{tool_name}",
+                    arguments=arguments or {},
+                    session_id=session_id,
+                    workspace_id=workspace_id,
+                )
+                if not is_valid_grant:
+                    # 2. Wrapper grant
+                    is_valid_grant = execution_policy_gateway.verify_and_consume_grant(
+                        grant_id=grant_id,
+                        tool_name="invoke_mcp_tool",
+                        arguments={
+                            "server_id": server_id,
+                            "tool_name": tool_name,
+                            "arguments": arguments,
+                        },
+                        session_id=session_id,
+                        workspace_id=workspace_id,
+                    )
+            if not is_valid_grant:
+                return ToolResult(
+                    success=False,
+                    summary=(
+                        f"Aksi berisiko tinggi MCP '{server.name}:{tool_name}' dicegah oleh ExecutionPolicyGateway: "
+                        "Memerlukan persetujuan pengguna (HITL Approval Gate) yang sah, terikat pada argumen, dan belum pernah digunakan."
+                    ),
+                    data={
+                        "hitl_required": True,
+                        "server_id": server.id,
+                        "tool_name": tool_name,
+                        "risk_level": tool_risk.value,
+                        "status": "hitl_approval_required",
+                    },
+                    token_estimate=24,
+                )
+
+        # 6. Check mock test handler
         if server_id in self._mock_handlers:
             try:
                 res = self._mock_handlers[server_id](tool_name, arguments)
@@ -405,73 +566,49 @@ class MCPClientManager:
                 stderr=asyncio.subprocess.PIPE,
                 env=safe_env,
             )
+            assert process.stdin is not None and process.stdout is not None
 
-            payload_str = (
-                json.dumps(init_request)
-                + "\n"
-                + json.dumps(initialized_notification)
-                + "\n"
-                + json.dumps(call_request)
-                + "\n"
-            )
+            # Step 1: Send initialize request
+            process.stdin.write((json.dumps(init_request) + "\n").encode("utf-8"))
+            await process.stdin.drain()
 
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=payload_str.encode("utf-8")),
-                timeout=timeout,
-            )
-
-            response_lines = stdout.decode("utf-8", errors="replace").splitlines()
-            result_data = None
-            rpc_error = None
-            handshake_ok = False
-
-            for line in response_lines:
-                try:
-                    data = json.loads(line)
-                    if data.get("id") == 1:
-                        if "error" in data:
-                            return ToolResult(
-                                success=False,
-                                summary=f"Handshake inisialisasi server MCP '{server.name}' ditolak.",
-                                data={"server_id": server.id, "status": "handshake_rejected", "error": data["error"]},
-                                token_estimate=20,
-                            )
-                        # Validate protocol version
-                        proto = data.get("result", {}).get("protocolVersion")
-                        if proto and proto not in SUPPORTED_MCP_PROTOCOL_VERSIONS:
-                            return ToolResult(
-                                success=False,
-                                summary=f"Versi protokol MCP server '{proto}' tidak didukung oleh AKSA.",
-                                data={"server_id": server.id, "status": "unsupported_protocol_version", "protocol": proto},
-                                token_estimate=20,
-                            )
-                        handshake_ok = True
-
-                    if data.get("id") == 2:
-                        if "error" in data:
-                            rpc_error = data["error"]
-                        else:
-                            result_data = data.get("result")
-                        break
-                except Exception:
-                    continue
-
-            if rpc_error is not None:
+            # Step 2: Read initialize response
+            init_resp = await _read_jsonrpc_response(process.stdout, target_id=1, timeout=timeout / 2)
+            if "error" in init_resp:
                 return ToolResult(
                     success=False,
-                    summary=f"Server MCP '{server.name}' mengembalikan error protokol pada tool '{tool_name}'.",
-                    data={"server_id": server.id, "status": "rpc_error", "error": rpc_error},
-                    token_estimate=24,
+                    summary=f"Handshake inisialisasi server MCP '{server.name}' ditolak: {init_resp['error']}",
+                    data={"server_id": server.id, "status": "handshake_rejected", "error": init_resp["error"]},
+                    token_estimate=20,
                 )
-
-            if not handshake_ok:
+            proto = init_resp.get("result", {}).get("protocolVersion")
+            if proto and proto not in SUPPORTED_MCP_PROTOCOL_VERSIONS:
                 return ToolResult(
                     success=False,
-                    summary=f"Handshake inisialisasi server MCP '{server.name}' belum tervalidasi atau tidak lengkap (P1-02).",
-                    data={"server_id": server.id, "status": "handshake_failed"},
+                    summary=f"Versi protokol MCP server '{proto}' tidak didukung oleh AKSA.",
+                    data={"server_id": server.id, "status": "unsupported_protocol_version", "protocol": proto},
                     token_estimate=20,
                 )
 
+            # Step 3: Send notifications/initialized
+            process.stdin.write((json.dumps(initialized_notification) + "\n").encode("utf-8"))
+            await process.stdin.drain()
+
+            # Step 4: Send tools/call request
+            process.stdin.write((json.dumps(call_request) + "\n").encode("utf-8"))
+            await process.stdin.drain()
+
+            # Step 5: Read tools/call response
+            call_resp = await _read_jsonrpc_response(process.stdout, target_id=2, timeout=timeout / 2)
+            if "error" in call_resp:
+                return ToolResult(
+                    success=False,
+                    summary=f"Server MCP '{server.name}' mengembalikan error protokol pada tool '{tool_name}'.",
+                    data={"server_id": server.id, "status": "rpc_error", "error": call_resp["error"]},
+                    token_estimate=24,
+                )
+
+            result_data = call_resp.get("result")
             if result_data is not None:
                 data_dict = result_data if isinstance(result_data, dict) else {"result": result_data}
                 data_dict["server_id"] = server.id
@@ -486,15 +623,11 @@ class MCPClientManager:
                 return ToolResult(
                     success=False,
                     summary=f"Server MCP '{server.name}' tidak mengembalikan respons JSON-RPC yang valid untuk '{tool_name}'.",
-                    data={
-                        "server_id": server.id,
-                        "status": "invalid_protocol_response",
-                        "raw_output": stdout.decode("utf-8", errors="replace")[:400],
-                    },
+                    data={"server_id": server.id, "status": "invalid_protocol_response"},
                     token_estimate=24,
                 )
 
-        except asyncio.TimeoutError:
+        except (asyncio.TimeoutError, TimeoutError):
             if process:
                 try:
                     process.kill()

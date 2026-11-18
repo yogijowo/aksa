@@ -287,7 +287,8 @@ def smoke_test_sidecar(
         cwd = None
     else:
         # Test using python interpreter running app.main
-        python_exe = sys.executable
+        venv_py = engine_dir / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+        python_exe = str(venv_py) if venv_py.exists() else sys.executable
         cmd_version = [python_exe, "-m", "app.main", "--version"]
         cmd_smoke = [python_exe, "-m", "app.main", "--smoke-test"]
         cwd = str(engine_dir)

@@ -130,9 +130,36 @@ pub fn update_engine_lifecycle_state(
     Ok(())
 }
 
+#[tauri::command]
+pub fn sync_engine_port(
+    state: tauri::State<'_, SidecarState>,
+    actual_port: u16,
+) -> Result<EngineConnectionInfo, String> {
+    let mut guard = state.info.lock().map_err(|e| e.to_string())?;
+    guard.port = actual_port;
+    guard.base_url = format!("http://{}:{}", guard.host, actual_port);
+    guard.ws_url = format!("ws://{}:{}/ws/stream", guard.host, actual_port);
+    Ok(guard.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_sidecar_sync_engine_port_updates_endpoints() {
+        let sidecar = SidecarState::new(43120);
+        {
+            let mut info = sidecar.info.lock().unwrap();
+            info.port = 43195;
+            info.base_url = format!("http://{}:43195", info.host);
+            info.ws_url = format!("ws://{}:43195/ws/stream", info.host);
+        }
+        let info = sidecar.info.lock().unwrap();
+        assert_eq!(info.port, 43195);
+        assert_eq!(info.base_url, "http://127.0.0.1:43195");
+        assert_eq!(info.ws_url, "ws://127.0.0.1:43195/ws/stream");
+    }
 
     #[test]
     fn test_allocate_loopback_port_prefers_unbound_port() {

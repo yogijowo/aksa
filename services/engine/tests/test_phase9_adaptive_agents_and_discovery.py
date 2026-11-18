@@ -35,9 +35,11 @@ from app.skills.skill_manager import CURATED_SKILL_CATALOG, agent_skills_manager
 def temp_aksa_root():
     tmp = tempfile.mkdtemp(prefix="aksa_root_test_")
     root_path = Path(tmp)
-    svc = AgentDirectoryService(root_path)
-    svc.ensure_root_structure()
-    yield svc
+    from app.core.agent_directory import agent_directory_service
+    old_root = agent_directory_service.root_dir
+    agent_directory_service.set_root_dir(root_path)
+    yield agent_directory_service
+    agent_directory_service.set_root_dir(old_root)
     shutil.rmtree(tmp, ignore_errors=True)
 
 

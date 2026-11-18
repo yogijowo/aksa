@@ -7,8 +7,9 @@
     "dev": "node scripts/dev.js",
     "dev:tauri": "node scripts/dev.js --tauri",
     "build": "npm --prefix apps/desktop run build",
+    "test": "npm run test:backend && npm run test:frontend",
     "test:backend": "node scripts/dev.js --test",
-    "test:frontend": "npm --prefix apps/desktop run build"
+    "test:frontend": "npm --prefix apps/desktop run test"
   }
 }
 

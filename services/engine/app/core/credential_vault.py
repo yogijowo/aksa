@@ -269,7 +269,7 @@ class CredentialVault:
                 pass
 
     def _store_in_keyring(self, credential_ref: str, secret: str) -> bool:
-        if self._force_keyring_failure:
+        if self._force_keyring_failure or settings.testing:
             return False
         try:
             keyring.set_password(SERVICE_NAME, credential_ref, secret)
@@ -278,7 +278,7 @@ class CredentialVault:
             return False
 
     def _get_from_keyring(self, credential_ref: str) -> str | None:
-        if self._force_keyring_failure:
+        if self._force_keyring_failure or settings.testing:
             return None
         try:
             return keyring.get_password(SERVICE_NAME, credential_ref)
@@ -286,7 +286,7 @@ class CredentialVault:
             return None
 
     def _delete_from_keyring(self, credential_ref: str) -> bool:
-        if self._force_keyring_failure:
+        if self._force_keyring_failure or settings.testing:
             return False
         try:
             keyring.delete_password(SERVICE_NAME, credential_ref)
