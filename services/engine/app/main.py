@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import argparse
 from contextlib import asynccontextmanager
+import os
+import secrets
+import sys
 from typing import AsyncIterator
 
 import uvicorn
@@ -45,6 +48,9 @@ def create_app() -> FastAPI:
         description="Local Autonomous Multi-Agent, RAG, Office Automation & Telegram Engine",
         version="1.0.0",
         lifespan=lifespan,
+        docs_url="/docs" if settings.dev_mode else None,
+        redoc_url=None,
+        openapi_url="/openapi.json" if settings.dev_mode else None,
     )
 
     app.add_middleware(
@@ -94,15 +100,15 @@ def create_app() -> FastAPI:
             except ValueError:
                 pass
 
-        if request.method == "OPTIONS" or request.url.path in ("/api/v1/health", "/docs", "/openapi.json"):
+        if request.method == "OPTIONS" or request.url.path == "/api/v1/health":
             return await call_next(request)
 
-        # 4. Token authentication
+        # 4. Token authentication (constant-time comparison)
         if not settings.dev_mode:
             raw_auth = request.headers.get("Authorization", "")
             bearer_token = raw_auth.split(" ", 1)[1].strip() if raw_auth.startswith("Bearer ") else ""
             token = request.headers.get("X-AKSA-Auth-Token") or bearer_token
-            if not token or token != settings.auth_token:
+            if not token or not secrets.compare_digest(token, settings.auth_token):
                 return JSONResponse(
                     status_code=401,
                     content={
@@ -124,17 +130,40 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="AKSA Python FastAPI Sidecar Engine")
     parser.add_argument("--host", default="127.0.0.1", help="Bind loopback host address")
     parser.add_argument("--port", type=int, default=43120, help="Bind localhost port")
-    parser.add_argument("--auth-token", default="dev-aksa-local-token", help="Per-session security token")
-    parser.add_argument("--production", action="store_true", help="Enforce strict token authentication")
+    parser.add_argument("--auth-token", default=None, help="Per-session security token")
+    parser.add_argument("--dev", action="store_true", help="Run in local development mode (requires AKSA_DEV_MODE=1)")
+    parser.add_argument("--production", action="store_true", help="Explicitly enforce production mode")
     args = parser.parse_args()
 
     if args.host not in ("127.0.0.1", "::1", "localhost"):
         raise ValueError(f"Pelanggaran Keamanan: Sidecar hanya boleh bind ke loopback, bukan '{args.host}'.")
 
+    # Invert default: production mode is default. Dev mode requires explicit --dev AND AKSA_DEV_MODE=1 (P0-3)
+    is_explicit_dev = args.dev and (os.environ.get("AKSA_DEV_MODE", "").lower() in ("1", "true", "yes"))
+    settings.dev_mode = is_explicit_dev and not args.production
+
+    resolved_token = args.auth_token or os.environ.get("AKSA_AUTH_TOKEN", "").strip()
+    if not settings.dev_mode:
+        if not resolved_token or resolved_token == "dev-aksa-local-token":
+            sys.stderr.write(
+                "FATAL: AKSA Engine tidak dapat dijalankan dalam mode produksi tanpa token autentikasi valid.\n"
+                "Sediakan token aman melalui environment variable AKSA_AUTH_TOKEN atau argumen --auth-token,\n"
+                "atau gunakan flag --dev bersama AKSA_DEV_MODE=1 untuk mode pengembangan lokal.\n"
+            )
+            sys.exit(1)
+        settings.auth_token = resolved_token
+    else:
+        settings.auth_token = resolved_token or "dev-aksa-local-token"
+        sys.stderr.write(
+            "\n"
+            "*******************************************************************************\n"
+            "* PERINGATAN KEAMANAN: AKSA ENGINE BERJALAN DALAM MODE PENGEMBANGAN (DEV_MODE)  *\n"
+            "* JANGAN DIGUNAKAN DI LINGKUNGAN PRODUKSI. AUTENTIKASI LOKAL AKTIF.           *\n"
+            "*******************************************************************************\n\n"
+        )
+
     settings.host = args.host
     settings.port = args.port
-    settings.auth_token = args.auth_token
-    settings.dev_mode = not args.production
 
     uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
 

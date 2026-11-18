@@ -8,12 +8,11 @@ import type {
   MCPServerItem,
   WorkspaceFolder,
 } from "@/types/aksa";
-
-const DEFAULT_BASE_URL = "http://127.0.0.1:43120";
+import { apiFetch } from "./engineConnection";
 
 export async function fetchEngineHealth(): Promise<EngineHealth> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/health`);
+    const res = await apiFetch("/api/v1/health");
     if (!res.ok) throw new Error("Health check failed");
     const data = await res.json();
     const isOllamaOnline = Boolean(data.ollama?.online);
@@ -46,7 +45,7 @@ export async function fetchTokenAnalytics(): Promise<{
   total_calls: number;
 } | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/tokens/analytics`);
+    const res = await apiFetch("/api/v1/tokens/analytics");
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -56,7 +55,7 @@ export async function fetchTokenAnalytics(): Promise<{
 
 export async function fetchConfiguredProviders(): Promise<Record<string, boolean> | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/models/providers`);
+    const res = await apiFetch("/api/v1/models/providers");
     if (!res.ok) return null;
     const data = await res.json();
     const map: Record<string, boolean> = {};
@@ -77,7 +76,7 @@ export async function fetchProviderDetails(): Promise<{
   providers: any[];
 } | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/models/providers`);
+    const res = await apiFetch("/api/v1/models/providers");
     if (!res.ok) return null;
     const data = await res.json();
     const configured: Record<string, boolean> = {};
@@ -98,7 +97,7 @@ export async function fetchProviderDetails(): Promise<{
 
 export async function fetchAgentTeams(): Promise<AgentTeam[] | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/teams`);
+    const res = await apiFetch("/api/v1/teams");
     if (!res.ok) return null;
     const data = await res.json();
     return data.teams ?? null;
@@ -109,7 +108,7 @@ export async function fetchAgentTeams(): Promise<AgentTeam[] | null> {
 
 export async function fetchWorkspaces(): Promise<WorkspaceFolder[] | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/workspaces`);
+    const res = await apiFetch("/api/v1/workspaces");
     if (!res.ok) return null;
     const data = await res.json();
     return data.workspaces ?? null;
@@ -123,7 +122,7 @@ export async function saveAgentUpdate(
   updates: Partial<AgentNodeConfig>
 ): Promise<AgentNodeConfig | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${agentId}`, {
+    const res = await apiFetch(`/api/v1/agents/${agentId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updates),
@@ -138,7 +137,7 @@ export async function saveAgentUpdate(
 
 export async function deleteAgentRemote(agentId: string): Promise<boolean> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${agentId}`, {
+    const res = await apiFetch(`/api/v1/agents/${agentId}`, {
       method: "DELETE",
     });
     return res.ok;
@@ -149,7 +148,7 @@ export async function deleteAgentRemote(agentId: string): Promise<boolean> {
 
 export async function saveProviderApiKey(provider: string, apiKey: string): Promise<boolean> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/models/keys`, {
+    const res = await apiFetch("/api/v1/models/keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ provider, api_key: apiKey }),
@@ -165,7 +164,7 @@ export async function testModelConnectionRemote(params: {
   model_id: string;
 }): Promise<{ ok: boolean; reply?: string; simulated?: boolean; error?: string }> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/models/test`, {
+    const res = await apiFetch("/api/v1/models/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
@@ -189,7 +188,7 @@ export async function createWorkspaceRemote(workspace: {
   allow_execute?: boolean;
 }): Promise<WorkspaceFolder | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/workspaces`, {
+    const res = await apiFetch("/api/v1/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(workspace),
@@ -204,7 +203,7 @@ export async function createWorkspaceRemote(workspace: {
 
 export async function deleteWorkspaceRemote(workspaceId: string): Promise<boolean> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/workspaces/${workspaceId}`, {
+    const res = await apiFetch(`/api/v1/workspaces/${workspaceId}`, {
       method: "DELETE",
     });
     return res.ok;
@@ -215,7 +214,7 @@ export async function deleteWorkspaceRemote(workspaceId: string): Promise<boolea
 
 export async function openFileInDefaultApp(filePath: string): Promise<boolean> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/open-path`, {
+    const res = await apiFetch("/api/v1/system/open-path", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: filePath }),
@@ -240,7 +239,7 @@ export async function executeTaskOnEngine(params: {
   tokens_saved: number;
 } | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/orchestrate/execute`, {
+    const res = await apiFetch("/api/v1/orchestrate/execute", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
@@ -254,7 +253,7 @@ export async function executeTaskOnEngine(params: {
 
 export async function fetchHITLApprovals(): Promise<HITLApprovalItem[] | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/sandbox/approvals`);
+    const res = await apiFetch("/api/v1/sandbox/approvals");
     if (!res.ok) return null;
     const data = await res.json();
     return data.approvals ?? null;
@@ -268,8 +267,8 @@ export async function resolveHITLApprovalRemote(
   approved: boolean
 ): Promise<HITLApprovalItem | null> {
   try {
-    const res = await fetch(
-      `${DEFAULT_BASE_URL}/api/v1/sandbox/approvals/${requestId}/resolve`,
+    const res = await apiFetch(
+      `/api/v1/sandbox/approvals/${requestId}/resolve`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -292,7 +291,7 @@ export async function createHITLApprovalRemote(params: {
   target_path?: string;
 }): Promise<HITLApprovalItem | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/sandbox/approvals`, {
+    const res = await apiFetch("/api/v1/sandbox/approvals", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(params),
@@ -307,7 +306,7 @@ export async function createHITLApprovalRemote(params: {
 
 export async function fetchMCPServers(): Promise<MCPServerItem[] | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/mcp/servers`);
+    const res = await apiFetch("/api/v1/mcp/servers");
     if (!res.ok) return null;
     const data = await res.json();
     return data.servers ?? null;
@@ -321,8 +320,8 @@ export async function toggleMCPServerRemote(
   enabled: boolean
 ): Promise<MCPServerItem | null> {
   try {
-    const res = await fetch(
-      `${DEFAULT_BASE_URL}/api/v1/mcp/servers/${serverId}/toggle`,
+    const res = await apiFetch(
+      `/api/v1/mcp/servers/${serverId}/toggle`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -342,7 +341,7 @@ export async function setEmergencyStopRemote(active: boolean): Promise<boolean> 
     const endpoint = active
       ? "/api/v1/computer-use/emergency-stop"
       : "/api/v1/computer-use/reset";
-    const res = await fetch(`${DEFAULT_BASE_URL}${endpoint}`, {
+    const res = await apiFetch(endpoint, {
       method: "POST",
     });
     return res.ok;
@@ -354,9 +353,9 @@ export async function setEmergencyStopRemote(active: boolean): Promise<boolean> 
 export async function fetchRAGDocuments(workspaceId?: string): Promise<any[] | null> {
   try {
     const url = workspaceId
-      ? `${DEFAULT_BASE_URL}/api/v1/rag/documents?workspace_id=${workspaceId}`
-      : `${DEFAULT_BASE_URL}/api/v1/rag/documents`;
-    const res = await fetch(url);
+      ? `/api/v1/rag/documents?workspace_id=${workspaceId}`
+      : "/api/v1/rag/documents";
+    const res = await apiFetch(url);
     if (!res.ok) return null;
     const data = await res.json();
     return data.documents ?? null;
@@ -370,7 +369,7 @@ export async function indexWorkspaceFolderRemote(
   folderPath: string
 ): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/rag/index-folder`, {
+    const res = await apiFetch("/api/v1/rag/index-folder", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ workspace_id: workspaceId, folder_path: folderPath }),
@@ -384,7 +383,7 @@ export async function indexWorkspaceFolderRemote(
 
 export async function searchRAGRemote(query: string, workspaceId?: string): Promise<any[] | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/rag/search`, {
+    const res = await apiFetch("/api/v1/rag/search", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, workspace_id: workspaceId }),
@@ -400,9 +399,9 @@ export async function searchRAGRemote(query: string, workspaceId?: string): Prom
 export async function fetchMemoriesRemote(query?: string): Promise<any[] | null> {
   try {
     const url = query
-      ? `${DEFAULT_BASE_URL}/api/v1/memories?query=${encodeURIComponent(query)}`
-      : `${DEFAULT_BASE_URL}/api/v1/memories`;
-    const res = await fetch(url);
+      ? `/api/v1/memories?query=${encodeURIComponent(query)}`
+      : "/api/v1/memories";
+    const res = await apiFetch(url);
     if (!res.ok) return null;
     const data = await res.json();
     return data.memories ?? null;
@@ -413,7 +412,7 @@ export async function fetchMemoriesRemote(query?: string): Promise<any[] | null>
 
 export async function saveMemoryRemote(fact: string, category: string = "preferensi_pengguna"): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/memories`, {
+    const res = await apiFetch("/api/v1/memories", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ fact, category }),
@@ -428,7 +427,7 @@ export async function saveMemoryRemote(fact: string, category: string = "prefere
 
 export async function fetchTelegramStatus(): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/telegram/status`);
+    const res = await apiFetch("/api/v1/telegram/status");
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -438,7 +437,7 @@ export async function fetchTelegramStatus(): Promise<any | null> {
 
 export async function configureTelegramRemote(botToken: string): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/telegram/configure`, {
+    const res = await apiFetch("/api/v1/telegram/configure", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ bot_token: botToken }),
@@ -452,7 +451,7 @@ export async function configureTelegramRemote(botToken: string): Promise<any | n
 
 export async function regenerateTelegramCodeRemote(): Promise<string | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/telegram/regenerate-code`, {
+    const res = await apiFetch("/api/v1/telegram/regenerate-code", {
       method: "POST",
     });
     if (!res.ok) return null;
@@ -466,7 +465,7 @@ export async function regenerateTelegramCodeRemote(): Promise<string | null> {
 // --- Desktop Applications API ---
 export async function fetchDesktopAppsRemote(): Promise<any[] | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/apps`);
+    const res = await apiFetch("/api/v1/system/apps");
     if (!res.ok) return null;
     const data = await res.json();
     return data.apps ?? [];
@@ -477,7 +476,7 @@ export async function fetchDesktopAppsRemote(): Promise<any[] | null> {
 
 export async function refreshDesktopAppsRemote(): Promise<any[] | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/apps/refresh`, { method: "POST" });
+    const res = await apiFetch("/api/v1/system/apps/refresh", { method: "POST" });
     if (!res.ok) return null;
     const data = await res.json();
     return data.apps ?? [];
@@ -488,7 +487,7 @@ export async function refreshDesktopAppsRemote(): Promise<any[] | null> {
 
 export async function launchDesktopAppRemote(appId: string, documentPath?: string): Promise<{ success: boolean; message: string }> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/apps/${encodeURIComponent(appId)}/launch`, {
+    const res = await apiFetch(`/api/v1/system/apps/${encodeURIComponent(appId)}/launch`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ document_path: documentPath }),
@@ -504,7 +503,7 @@ export async function toggleDesktopAppConnectionRemote(
   isConnected: boolean
 ): Promise<{ success: boolean; app?: any; is_connected?: boolean; message?: string } | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/apps/${encodeURIComponent(appId)}/toggle-connection`, {
+    const res = await apiFetch(`/api/v1/system/apps/${encodeURIComponent(appId)}/toggle-connection`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_connected: isConnected }),
@@ -520,9 +519,9 @@ export async function toggleDesktopAppConnectionRemote(
 export async function fetchSystemPermissionsRemote(workspaceFolder?: string): Promise<any[] | null> {
   try {
     const url = workspaceFolder
-      ? `${DEFAULT_BASE_URL}/api/v1/system/permissions?workspace_folder=${encodeURIComponent(workspaceFolder)}`
-      : `${DEFAULT_BASE_URL}/api/v1/system/permissions`;
-    const res = await fetch(url);
+      ? `/api/v1/system/permissions?workspace_folder=${encodeURIComponent(workspaceFolder)}`
+      : "/api/v1/system/permissions";
+    const res = await apiFetch(url);
     if (!res.ok) return null;
     const data = await res.json();
     return data.capabilities ?? [];
@@ -533,7 +532,7 @@ export async function fetchSystemPermissionsRemote(workspaceFolder?: string): Pr
 
 export async function requestSystemPermissionRemote(capabilityId: string, resourceScope: string = "workspace"): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/permissions/request`, {
+    const res = await apiFetch("/api/v1/system/permissions/request", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ capability_id: capabilityId, resource_scope: resourceScope }),
@@ -546,7 +545,7 @@ export async function requestSystemPermissionRemote(capabilityId: string, resour
 
 export async function revokeSystemPermissionRemote(grantId: string): Promise<boolean> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/permissions/${encodeURIComponent(grantId)}`, {
+    const res = await apiFetch(`/api/v1/system/permissions/${encodeURIComponent(grantId)}`, {
       method: "DELETE",
     });
     return res.ok;
@@ -558,7 +557,7 @@ export async function revokeSystemPermissionRemote(grantId: string): Promise<boo
 // --- Agent Skills Manager API ---
 export async function fetchSkillsRemote(): Promise<{ installed_skills: any[]; curated_catalog: any[] } | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/skills`);
+    const res = await apiFetch("/api/v1/skills");
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -568,7 +567,7 @@ export async function fetchSkillsRemote(): Promise<{ installed_skills: any[]; cu
 
 export async function installCuratedSkillRemote(skillId: string): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/skills/install-curated`, {
+    const res = await apiFetch("/api/v1/skills/install-curated", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ skill_id: skillId }),
@@ -582,7 +581,7 @@ export async function installCuratedSkillRemote(skillId: string): Promise<any | 
 
 export async function toggleSkillStatusRemote(skillId: string, enabled: boolean): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/skills/${encodeURIComponent(skillId)}/toggle`, {
+    const res = await apiFetch(`/api/v1/skills/${encodeURIComponent(skillId)}/toggle`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled }),
@@ -596,7 +595,7 @@ export async function toggleSkillStatusRemote(skillId: string, enabled: boolean)
 
 export async function deleteSkillRemote(skillId: string): Promise<boolean> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/skills/${encodeURIComponent(skillId)}`, {
+    const res = await apiFetch(`/api/v1/skills/${encodeURIComponent(skillId)}`, {
       method: "DELETE",
     });
     return res.ok;
@@ -608,7 +607,7 @@ export async function deleteSkillRemote(skillId: string): Promise<boolean> {
 // --- Root Directory, Agent Learning & Dynamic Models API ---
 export async function fetchRootDirStatusRemote(): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/root-dir`);
+    const res = await apiFetch("/api/v1/system/root-dir");
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -618,7 +617,7 @@ export async function fetchRootDirStatusRemote(): Promise<any | null> {
 
 export async function setRootDirRemote(rootPath: string): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/system/root-dir`, {
+    const res = await apiFetch("/api/v1/system/root-dir", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ root_path: rootPath }),
@@ -632,7 +631,7 @@ export async function setRootDirRemote(rootPath: string): Promise<any | null> {
 
 export async function fetchDiscoveredModelsRemote(): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/models/discovered`);
+    const res = await apiFetch("/api/v1/models/discovered");
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -643,9 +642,9 @@ export async function fetchDiscoveredModelsRemote(): Promise<any | null> {
 export async function refreshDiscoveredModelsRemote(providerId?: string): Promise<any | null> {
   try {
     const url = providerId
-      ? `${DEFAULT_BASE_URL}/api/v1/models/providers/${encodeURIComponent(providerId)}/refresh`
-      : `${DEFAULT_BASE_URL}/api/v1/models/refresh`;
-    const res = await fetch(url, { method: "POST" });
+      ? `/api/v1/models/providers/${encodeURIComponent(providerId)}/refresh`
+      : "/api/v1/models/refresh";
+    const res = await apiFetch(url, { method: "POST" });
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -655,7 +654,7 @@ export async function refreshDiscoveredModelsRemote(providerId?: string): Promis
 
 export async function fetchAgentMetricsRemote(agentId: string): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${encodeURIComponent(agentId)}/metrics`);
+    const res = await apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/metrics`);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -665,7 +664,7 @@ export async function fetchAgentMetricsRemote(agentId: string): Promise<any | nu
 
 export async function fetchAgentMemoryRemote(agentId: string): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${encodeURIComponent(agentId)}/memory`);
+    const res = await apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/memory`);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -675,7 +674,7 @@ export async function fetchAgentMemoryRemote(agentId: string): Promise<any | nul
 
 export async function fetchAgentCandidateSkillsRemote(agentId: string): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${encodeURIComponent(agentId)}/skills/candidates`);
+    const res = await apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/skills/candidates`);
     if (!res.ok) return null;
     return await res.json();
   } catch {
@@ -690,7 +689,7 @@ export async function promoteCandidateSkillRemote(
   promoteToShared: boolean = false
 ): Promise<any | null> {
   try {
-    const res = await fetch(`${DEFAULT_BASE_URL}/api/v1/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}/promote`, {
+    const res = await apiFetch(`/api/v1/agents/${encodeURIComponent(agentId)}/skills/${encodeURIComponent(skillId)}/promote`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ version, promote_to_shared: promoteToShared }),

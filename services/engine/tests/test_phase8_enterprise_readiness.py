@@ -27,6 +27,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app.api.ws import ConnectionManager
+from app.config import settings
 from app.core.llm_router import UnifiedLLMRouter
 from app.core.observability import observability_manager, redact_sensitive_text
 from app.core.orchestrator import HierarchicalOrchestrator
@@ -305,7 +306,8 @@ async def test_p1_websocket_cross_session_hijack_and_host_origin_protection() ->
 
     # HTTP Host & Origin spoofing tests
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    auth_headers = {"X-AKSA-Auth-Token": settings.auth_token}
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth_headers) as client:
         resp_bad_host = await client.get("/api/v1/teams", headers={"Host": "evil.attacker.com"})
         assert resp_bad_host.status_code == 403
         assert resp_bad_host.json()["code"] == "FORBIDDEN_HOST"
@@ -422,7 +424,8 @@ async def test_p2_observability_redaction_and_support_bundle() -> None:
     )
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    auth_headers = {"X-AKSA-Auth-Token": settings.auth_token}
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth_headers) as client:
         resp = await client.get("/api/v1/system/diagnostics/support-bundle")
         assert resp.status_code == 200
         bundle = resp.json()["support_bundle"]

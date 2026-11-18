@@ -447,7 +447,11 @@ class UnifiedLLMRouter:
                 clean_model = "gemini-flash-latest"
 
             for candidate_model in [clean_model, "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash"]:
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent?key={api_key}"
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent"
+                headers = {
+                    "x-goog-api-key": api_key,
+                    "Content-Type": "application/json",
+                }
                 system_text = "\n".join(m["content"] for m in messages if m["role"] == "system")
                 user_contents = []
                 for m in messages:
@@ -477,7 +481,7 @@ class UnifiedLLMRouter:
 
                 try:
                     async with httpx.AsyncClient(timeout=30.0) as client:
-                        resp = await client.post(url, json=payload)
+                        resp = await client.post(url, json=payload, headers=headers)
                         if resp.status_code == 200:
                             data = resp.json()
                             candidates = data.get("candidates", [])

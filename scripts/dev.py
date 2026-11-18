@@ -112,11 +112,12 @@ def main() -> int:
     procs: list[subprocess.Popen[str]] = []
 
     try:
+        auth_token = os.environ.get("AKSA_AUTH_TOKEN", "dev-aksa-local-token")
         engine_env = {
             **os.environ,
             "PYTHONUNBUFFERED": "1",
             "AKSA_DEV_MODE": "1",
-            "AKSA_AUTH_TOKEN": os.environ.get("AKSA_AUTH_TOKEN", "dev-aksa-local-token"),
+            "AKSA_AUTH_TOKEN": auth_token,
         }
         engine_proc = subprocess.Popen(
             engine_cmd,
@@ -129,6 +130,12 @@ def main() -> int:
         )
         procs.append(engine_proc)
 
+        desktop_env = {
+            **os.environ,
+            "VITE_AKSA_HOST": "127.0.0.1",
+            "VITE_AKSA_PORT": "43120",
+            "VITE_AKSA_TOKEN": auth_token,
+        }
         desktop_proc = subprocess.Popen(
             desktop_cmd,
             cwd=str(DESKTOP_DIR),
@@ -136,6 +143,7 @@ def main() -> int:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=desktop_env,
         )
         procs.append(desktop_proc)
 

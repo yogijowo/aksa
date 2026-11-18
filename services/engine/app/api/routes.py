@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.core.llm_router import UnifiedLLMRouter
+from app.core.observability import observability_manager
 from app.core.orchestrator import HierarchicalOrchestrator
 from app.core.sandbox import RiskLevel, SandboxViolationError, WorkspacePolicy, sandbox_manager
 from app.db.models import db_manager
@@ -297,35 +298,147 @@ class OpenPathRequest(BaseModel):
     path: str
 
 
+SAFE_OPEN_EXTENSIONS = {
+    ".docx",
+    ".xlsx",
+    ".pptx",
+    ".pdf",
+    ".txt",
+    ".csv",
+    ".md",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".json",
+}
+
+
 @api_router.post("/system/open-path")
 async def open_system_path(req: OpenPathRequest) -> dict[str, Any]:
-    """Open a file or directory in the operating system's native application (Word, Excel, Finder, Explorer)."""
-    target = Path(req.path).expanduser().resolve()
-    if not target.exists():
-        # Fallback check against known workspaces
-        workspaces = await db_manager.list_workspaces()
+    """Open a file or directory in the operating system's native application (Word, Excel, Finder, Explorer).
+
+    Enforces strict workspace sandbox jail, extension whitelist, app bundle rejection,
+    and structured audit logging (P0-1).
+    """
+    raw_path = (req.path or "").strip()
+    if not raw_path:
+        raise HTTPException(status_code=400, detail="Path tidak boleh kosong.")
+
+    # 1. Reject UNC or network paths immediately
+    if raw_path.startswith("\\\\") or raw_path.startswith("//"):
+        observability_manager.log_event(
+            level="WARNING",
+            component="SYSTEM_OPEN_PATH",
+            message=f"Percobaan akses UNC path ditolak: {raw_path}",
+            error_code="UNC_PATH_FORBIDDEN",
+        )
+        raise HTTPException(status_code=403, detail="Akses path jaringan UNC ditolak.")
+
+    # 2. Sync DB workspaces to sandbox_manager
+    workspaces = await db_manager.list_workspaces()
+    for ws in workspaces:
+        sandbox_manager.register_workspace(
+            WorkspacePolicy(
+                folder_path=ws["folder_path"],
+                allow_read=bool(ws.get("allow_read", True)),
+                allow_write=bool(ws.get("allow_write", True)),
+                allow_execute=bool(ws.get("allow_execute", False)),
+            )
+        )
+
+    # 3. Resolve relative vs absolute candidate
+    target_candidate = Path(raw_path).expanduser()
+    if not target_candidate.is_absolute():
         found = False
         for ws in workspaces:
-            candidate = Path(ws["folder_path"]) / req.path
-            if candidate.exists():
-                target = candidate.resolve()
+            cand = Path(ws["folder_path"]) / raw_path
+            if cand.exists():
+                target_candidate = cand
                 found = True
                 break
-        if not found:
-            raise HTTPException(status_code=404, detail=f"Berkas '{req.path}' tidak ditemukan di sistem.")
+        if not found and workspaces:
+            # Anchor to first workspace to enforce sandbox validation bounds
+            target_candidate = Path(workspaces[0]["folder_path"]) / raw_path
 
+    # 4. Enforce sandbox jail validation (resolves symlinks via realpath)
+    try:
+        resolved = sandbox_manager.validate_path(target_candidate, mode="read")
+    except SandboxViolationError as sve:
+        observability_manager.log_event(
+            level="WARNING",
+            component="SYSTEM_OPEN_PATH",
+            message=f"Percobaan pelanggaran sandbox pada open-path: {raw_path}",
+            error_code="SANDBOX_VIOLATION",
+            details={"requested_path": raw_path},
+        )
+        raise HTTPException(status_code=403, detail=str(sve))
+
+    # 5. Check if target exists
+    if not resolved.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Berkas '{resolved.name}' tidak ditemukan di sistem.",
+        )
+
+    # 6. Reject app bundles and enforce directory vs file rules
+    if resolved.is_dir():
+        if resolved.name.lower().endswith(".app") or any(part.lower().endswith(".app") for part in resolved.parts):
+            observability_manager.log_event(
+                level="WARNING",
+                component="SYSTEM_OPEN_PATH",
+                message=f"Percobaan membuka bundle aplikasi ditolak: {resolved}",
+                error_code="APP_BUNDLE_FORBIDDEN",
+            )
+            raise HTTPException(
+                status_code=403,
+                detail="Membuka bundle aplikasi (.app) tidak diizinkan.",
+            )
+
+        is_ws_root = any(
+            resolved == Path(os.path.realpath(ws["folder_path"]))
+            for ws in workspaces
+        )
+        if not is_ws_root:
+            raise HTTPException(
+                status_code=400,
+                detail="Membuka direktori hanya diizinkan untuk root Folder Kerja yang terdaftar.",
+            )
+    else:
+        suffix = resolved.suffix.lower()
+        if suffix not in SAFE_OPEN_EXTENSIONS:
+            observability_manager.log_event(
+                level="WARNING",
+                component="SYSTEM_OPEN_PATH",
+                message=f"Percobaan membuka file dengan ekstensi tidak aman: {suffix}",
+                error_code="DISALLOWED_EXTENSION",
+                details={"file": str(resolved), "extension": suffix},
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ekstensi berkas '{suffix}' tidak diizinkan untuk dibuka demi keamanan sistem.",
+            )
+
+    # 7. Audit log for allowed open operation
+    observability_manager.log_event(
+        level="INFO",
+        component="SYSTEM_OPEN_PATH",
+        message=f"Membuka berkas/direktori aman: {resolved.name}",
+        details={"path": str(resolved), "is_dir": resolved.is_dir()},
+    )
+
+    # 8. Dispatch native OS open
     try:
         if sys.platform == "darwin":
-            subprocess.Popen(["open", str(target)])
+            subprocess.Popen(["open", str(resolved)])
         elif sys.platform == "win32":
-            os.startfile(str(target))
+            os.startfile(str(resolved))
         else:
-            subprocess.Popen(["xdg-open", str(target)])
+            subprocess.Popen(["xdg-open", str(resolved)])
         return {
             "success": True,
-            "path": str(target),
-            "name": target.name,
-            "message": f"Berkas '{target.name}' berhasil dibuka di aplikasi default sistem.",
+            "path": str(resolved),
+            "name": resolved.name,
+            "message": f"Berkas '{resolved.name}' berhasil dibuka di aplikasi default sistem.",
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Gagal membuka berkas: {e}")

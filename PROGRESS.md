@@ -11,12 +11,12 @@
 
 | Field | Value |
 | :--- | :--- |
-| **Current Phase** | `Phase 10 — Adaptive Agent Learning, Dynamic Model Discovery & Expanded Skills Ecosystem [VERIFIED_WINDOWS / TESTED]` |
-| **Release Status Classification** | `Release Candidate (All P0/P1/P2 gates, Per-Agent Isolated Storage, Adaptive Learning Pipeline, Dynamic Multi-Provider Model Discovery, and 20+ Agent Skills implemented and verified with 41/41 test suites on Windows)` |
-| **Verification Evidence** | `Backend: node scripts/dev.js --test -> 41 passed in 36.37s (Python 3.12.16, win32) | Frontend: npm --prefix apps/desktop run build -> 0 TypeScript/Vite errors` |
-| **Last Completed Task** | `Implemented AKSA-AUDIT-DELTA-ADAPTIVE-AGENTS-MODEL-CATALOG-SKILLS-PLAN.md: 1) User-selected root directory (<AKSA_ROOT>) with per-agent isolated storage tree; 2) AgentIsolationPolicy preventing cross-agent access and path traversal; 3) AgentLearningEngine (LearningPrivacyFilter redacting credentials & PII, EpisodicMemory minimal task summaries, SemanticMemory, PreferenceProfile, SkillCandidateExtractor with 3-repetition threshold, SkillEvaluator sandbox validation, SkillVersionService immutable versioning & rollback, export/purge); 4) Dynamic Multi-Provider Model Discovery (official live discovery for OpenAI, Anthropic, Gemini, xAI, Mistral, DeepSeek, Groq, OpenRouter, Ollama, LM Studio, normalized capabilities, role-based recommendations, resilient cache, zero silent remapping); 5) Expanded Skills Marketplace (20+ curated skills including Remotion Video, HyperFrames Motion, Frontend Design, Prisma DDTI, Naskah ID, PBJ ASN, progressive disclosure, per-agent vs shared install); 6) P0 security hardening (release dev_mode=False default, CSPRNG ephemeral token, loopback bind); 7) Verified 41/41 test suite passing.` |
-| **Known Limitations** | `1. Native Tauri .exe compilation (npm run dev:tauri) requires Rust toolchain (cargo) installed on host; Browser Dev mode (npm run dev) works without Rust. 2. Production code-signing (.msi/.exe Authenticode & macOS Apple Developer ID notarization) requires organization signing certificates in CI secrets. 3. macOS TCC Accessibility/Screen Recording dialogs require physical/VM macOS host for live end-to-end OS validation.` |
-| **Next Immediate Action** | `Package release bundles and run cross-platform CI verification on GitHub Actions (windows-latest & macos-latest)` |
+| **Current Phase** | `Phase 11 — Production-Readiness Remediation & Security Hardening (QC Audit Fixes) [IN_PROGRESS]` |
+| **Release Status Classification** | `Beta — Security Hardening & Remediation in Progress (QC Audit 2026-11-18 per QC-PRODUCTION-READINESS-FIXES.md)` |
+| **Verification Evidence** | `Backend: node scripts/dev.js --test -> 49 passed in 10.22s (Python 3.14.2, macOS arm64) | Frontend: npm --prefix apps/desktop run build -> 0 TypeScript/Vite errors | Rust: cargo check -> 0 warnings/errors` |
+| **Last Completed Task** | `Implemented P0-5: 1) Hardened CredentialVault with keyring library (macOS Keychain / Windows Credential Manager) and AES-GCM authenticated encryption fallback (PBKDF2-derived key); 2) Eliminated CLI subprocess calls to security avoiding argv leakage in ps; 3) Implemented automated legacy vault migration and secure disk shredding; 4) Added keyring and cryptography to pyproject.toml; 5) Added regression test suite test_p0_credential_vault.py (49/49 tests passing).` |
+| **Known Limitations** | `1. Packaged sidecar requires native binary freeze. 2. Tool calling currently uses keyword heuristics rather than LLM function calling.` |
+| **Next Immediate Action** | `Implement P0-6: Safe document generation and no-overwrite guard in orchestrator.py (prevent file overwrite, multi-file disambiguation, accurate size and status reporting)` |
 | **Active Blockers** | `None` |
 
 ---
@@ -263,6 +263,45 @@
   4. Interconnected all configurations into **Tim Agen** (`AgentHierarchyView.tsx`): upgraded the agent inspector panel with 3 dynamic sub-tabs under *Keahlian & Akses Alat (Lazy Tool Loading)* allowing users to assign specific **Authorized PC Applications**, **Installed Agent Skills**, and **Core System Tools** to any individual agent in the team alongside their preferred model.
   5. Verified 23/23 pytest test suites passing (100% success) and clean TypeScript + Vite production bundle (`tsc --noEmit && vite build`).
 - **2026-11-17:** Completed Phase 9 Enterprise Readiness Master Specification (`AKSA-ENTERPRISE-READINESS-MASTER-SPECIFICATION.md`) — Implemented P0/P1/P2 controls (`credential_vault.py`, `privacy_gate.py`, `observability.py`, hardened `sandbox.py`, `llm_router.py`, `orchestrator.py`, `app_discovery.py`, `permission_broker.py`, `skill_manager.py`, `mcp_client.py`, `gui_agent.py`, `main.py`, `ws.py`, `sidecar.rs`), created governance & support docs (`SECURITY.md`, `PRIVACY.md`, `SUPPORT.md`, `CHANGELOG.md`, `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `.github/workflows/{ci.yml,security.yml,release.yml}`), and verified 33/33 pytest test suites (`test_phase8_enterprise_readiness.py`) + 0 TypeScript build errors on Windows (`VERIFIED_WINDOWS`).
+- **2026-11-18:** Started Phase 11 Production-Readiness Remediation & Security Hardening based on `QC-PRODUCTION-READINESS-FIXES.md`. Status updated from premature "Release Candidate" to "Beta — Security Hardening & Remediation in Progress". Tracking prioritized fixes P0 -> P1 -> P2 -> P3.
+
+---
+
+### Phase 11: Production-Readiness Remediation & Security Hardening (QC Audit Fixes)
+*Reference: [`QC-PRODUCTION-READINESS-FIXES.md`](./QC-PRODUCTION-READINESS-FIXES.md)*
+
+#### P0 — Critical (Release Blockers)
+- [x] **P0-1** Security Hardening of `/system/open-path` (Sandbox validation, extension allowlist, app bundle reject, audit log)
+- [x] **P0-2** Sidecar Lifecycle & Frontend Auth Integration (Spawn sidecar in Rust, pass env token/port, API client token header)
+- [x] **P0-3** Default Production Security Mode (Require `--dev` + `AKSA_DEV_MODE=1` for dev, disallow empty auth tokens)
+- [x] **P0-4** API Key Exposure & Gemini Query Param Leakage (`x-goog-api-key` header, scrub response schemas & logs)
+- [x] **P0-5** Credential Vault Hardening (`keyring` OS store integration, remove plaintext master keys & argv leaks, AES-GCM fallback)
+- [ ] **P0-6** Safe Document Generation & No-Overwrite (Unique file naming, multi-PDF disambiguation, real size & status reporting)
+
+#### P1 — High Priority
+- [ ] **P1-1** Native Tool-Calling & LLM Execution Loop (Replace keyword heuristics with LLM function calling & lazy schemas)
+- [ ] **P1-2** Origin/Host Allow-list Hardening (Remove test bypasses in production mode)
+- [ ] **P1-3** Constant-Time Token Comparison & WebSocket Frame Auth
+- [ ] **P1-4** Sidecar Binary Freezing & Distribution Packaging
+- [ ] **P1-5** Dynamic Port & Engine Connection Discovery
+- [ ] **P1-6** Explicit User File Attachment & Data-Classification Gate
+- [ ] **P1-7** Hybrid RAG with Real Embedder & Persistent LanceDB
+- [ ] **P1-8** Persistent Telegram Whitelist & Single-Use Pairing
+
+#### P2 — Medium Priority
+- [ ] **P2-1** Real Token Metrics Calculation (Measured provider usage)
+- [ ] **P2-2** Strict Local AI Privacy (Zero cloud fallback for local-only agents)
+- [ ] **P2-3** Concurrency Guards & Request Rate Limiting
+- [ ] **P2-4** Dependency Pinning & Lockfile Generation
+- [ ] **P2-5** Single Source of Truth Settings & Path Normalization
+- [ ] **P2-6** Sanitized Global Error Handling
+- [ ] **P2-7** Comprehensive Security & E2E Test Suite Expansion
+
+#### P3 — Low Priority
+- [ ] **P3-1** Modular Router & Repository Refactoring
+- [ ] **P3-2** Frontend Dynamic Code Splitting (<400 KB initial chunk)
+- [ ] **P3-3** Honest Documentation Alignment
+
 
 
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.config import settings
 from app.db.models import db_manager
 from app.main import app
 from app.system.app_discovery import application_discovery_manager
@@ -194,7 +195,8 @@ async def test_execution_policy_gateway_approval_replay_prevention() -> None:
 async def test_system_and_skills_rest_endpoints() -> None:
     """Verify the new REST endpoints for apps, permissions, and skills."""
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    auth_headers = {"X-AKSA-Auth-Token": settings.auth_token}
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth_headers) as client:
         # Apps endpoint
         resp_apps = await client.get("/api/v1/system/apps")
         assert resp_apps.status_code == 200

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.config import settings
 from app.core.sandbox import RiskLevel, SandboxManager, SandboxViolationError, WorkspacePolicy, sandbox_manager
 from app.main import app
 from app.tools import tool_registry
@@ -328,7 +329,8 @@ async def test_tier3_computer_use_and_failsafe(tmp_path: Path) -> None:
 async def test_phase3_rest_endpoints(tmp_path: Path) -> None:
     """Verify Phase 3 REST API endpoints for tools, HITL approvals, and MCP servers."""
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    auth_headers = {"X-AKSA-Auth-Token": settings.auth_token}
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth_headers) as client:
         resp_tools = await client.get("/api/v1/tools")
         assert resp_tools.status_code == 200
         tool_names = {t["name"] for t in resp_tools.json()["tools"]}

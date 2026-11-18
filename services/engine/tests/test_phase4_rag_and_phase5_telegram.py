@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.config import settings
 from app.core.sandbox import RiskLevel, WorkspacePolicy, sandbox_manager
 from app.db.models import DatabaseManager, db_manager
 from app.db.seed import seed_default_indonesian_team
@@ -199,7 +200,8 @@ async def test_phase4_and_phase5_rest_endpoints(tmp_path: Path) -> None:
     await seed_default_indonesian_team(db_manager)
 
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    auth_headers = {"X-AKSA-Auth-Token": settings.auth_token}
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth_headers) as client:
         # Memory endpoints
         resp_mem = await client.post(
             "/api/v1/memories",

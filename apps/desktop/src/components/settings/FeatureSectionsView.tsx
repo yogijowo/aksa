@@ -23,8 +23,6 @@ import {
   Layers,
   Sparkles,
   Info,
-  Eye,
-  EyeOff,
 } from "lucide-react";
 import { useAksaStore } from "@/stores/useAksaStore";
 import {
@@ -411,8 +409,6 @@ export const FeatureSectionsView: React.FC = () => {
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0];
 
-  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
-
   const loadProviderStatus = async () => {
     const details = await fetchProviderDetails();
     if (details) {
@@ -639,7 +635,6 @@ export const FeatureSectionsView: React.FC = () => {
                 {CLOUD_PROVIDERS.map((prov) => {
                   const isConnected = Boolean(configuredProviders[prov.id]);
                   const testState = testingStatus[prov.id];
-                  const isRevealed = showKey[prov.id] !== undefined ? showKey[prov.id] : true;
                   const currentVal = apiKeys[prov.id] ?? "";
 
                   return (
@@ -675,26 +670,14 @@ export const FeatureSectionsView: React.FC = () => {
                         <div className="flex items-center gap-2">
                           <div className="relative flex-1">
                             <input
-                              type={isRevealed ? "text" : "password"}
+                              type="text"
                               value={currentVal}
                               onChange={(e) =>
                                 setApiKeys((prev) => ({ ...prev, [prov.id]: e.target.value }))
                               }
                               placeholder={prov.placeholder}
-                              className="w-full rounded-lg bg-[#191918] border border-white/[0.08] pl-3 pr-8 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
+                              className="w-full rounded-lg bg-[#191918] border border-white/[0.08] px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
                             />
-                            {Boolean(currentVal) && (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setShowKey((prev) => ({ ...prev, [prov.id]: !isRevealed }))
-                                }
-                                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 transition-colors"
-                                title={isRevealed ? "Sembunyikan kunci" : "Tampilkan kunci"}
-                              >
-                                {isRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
-                              </button>
-                            )}
                           </div>
                           <button
                             onClick={() => void handleSaveKey(prov.id)}

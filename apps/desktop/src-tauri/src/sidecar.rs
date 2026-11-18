@@ -1,7 +1,7 @@
 use serde::Serialize;
 use std::net::TcpListener;
-use std::process::Child;
 use std::sync::Mutex;
+use tauri_plugin_shell::process::CommandChild;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
@@ -15,7 +15,7 @@ pub struct EngineConnectionInfo {
 
 pub struct SidecarState {
     pub info: Mutex<EngineConnectionInfo>,
-    pub child_process: Mutex<Option<Child>>,
+    pub child_process: Mutex<Option<CommandChild>>,
 }
 
 /// Allocate an available loopback-only port, preferring `preferred_port` if free,
@@ -59,9 +59,8 @@ impl SidecarState {
 
     pub fn shutdown(&self) {
         if let Ok(mut guard) = self.child_process.lock() {
-            if let Some(mut child) = guard.take() {
+            if let Some(child) = guard.take() {
                 let _ = child.kill();
-                let _ = child.wait();
             }
         }
     }

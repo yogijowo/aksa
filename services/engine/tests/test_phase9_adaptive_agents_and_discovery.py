@@ -223,7 +223,8 @@ def test_skills_marketplace_progressive_disclosure_and_indonesian_catalog():
 async def test_rest_api_root_dir_and_agent_learning_endpoints():
     """Verify REST API endpoints for root-dir, models, memory, and candidate evaluation."""
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
+    auth_headers = {"X-AKSA-Auth-Token": settings.auth_token}
+    async with AsyncClient(transport=transport, base_url="http://test", headers=auth_headers) as client:
         # 1. Root dir status
         resp_root = await client.get("/api/v1/system/root-dir")
         assert resp_root.status_code == 200

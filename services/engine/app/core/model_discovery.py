@@ -150,11 +150,12 @@ class GeminiDiscoveryAdapter(BaseProviderAdapter):
     async def discover_models(self, api_key: str | None = None) -> list[DiscoveredModel]:
         if not api_key:
             return []
-        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+        url = "https://generativelanguage.googleapis.com/v1beta/models"
+        headers = {"x-goog-api-key": api_key}
         models: list[DiscoveredModel] = []
         try:
             async with httpx.AsyncClient(timeout=8.0) as client:
-                resp = await client.get(url)
+                resp = await client.get(url, headers=headers)
                 if resp.status_code == 200:
                     data = resp.json().get("models", [])
                     for item in data:
