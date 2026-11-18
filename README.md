@@ -60,12 +60,14 @@ Mayoritas asisten AI hanya berjalan sebagai ruang obrolan di peramban web yang t
 * **Isolasi Tanpa Bocor Antar-Agen (`AgentIsolationPolicy`):** Agen video tidak dapat mengakses memori atau keahlian internal milik agen keuangan/PBJ kecuali dipromosikan secara eksplisit ke pustaka bersama (`shared/skills/`).
 
 ### 2. Penemuan Model Multi-Provider Dinamis (`Dynamic Discovery`)
-* **Integrasi Langsung API Resmi Provider:** Menemukan model secara otomatis dari endpoint resmi:
-  * **OpenAI:** `v1/models` (GPT-4o, GPT-4.5 Preview, o1, o3-mini)
-  * **Anthropic:** `v1/models` (Claude 3.7 Sonnet, Claude 3.5 Sonnet, Claude 3.5 Haiku)
-  * **Google Gemini:** `v1beta/models` (Gemini 2.5 Pro, Gemini 2.5 Flash, Gemini 2.5 Flash Lite)
-  * **xAI Grok, Mistral AI, DeepSeek, Groq Cloud, OpenRouter**
-  * **Ollama & LM Studio:** Penemuan otomatis model AI lokal yang aktif tanpa internet.
+* **Integrasi Langsung API Resmi Provider:** Menemukan model secara otomatis dari endpoint resmi beserta katalog model terbaru:
+  * **Google Gemini (`v1beta/models`):** `gemini-4-carbon` (Gemini 4 Carbon), `gemini-4-argon` (Gemini 4 Argon), `gemini-4-hydrogen` (Gemini 4 Hydrogen), `gemini-3.8-flash` (Gemini 3.8 Flash), `gemini-3.5-flash-lite`
+  * **Anthropic Claude (`v1/models`):** `claude-fable-5-2` (Claude Fable 5.2), `claude-opus-5-5` (Claude Opus 5.5), `claude-sonnet-5-5` (Claude Sonnet 5.5), `claude-haiku-5-5` (Claude Haiku 5.5)
+  * **OpenAI (`v1/models`):** `gpt-6.2-astra` (GPT-6.2 Astra), `gpt-6.2-sol` (GPT-6.2 Sol), `gpt-6.1-sol`, `gpt-6-luna` (GPT-6 Luna)
+  * **DeepSeek:** `deepseek-v4-pro` (DeepSeek V4 Pro MoE), `deepseek-flash` (DeepSeek V4.1 Flash), `deepseek-chat`, `deepseek-reasoner` (DeepSeek R1)
+  * **Groq Cloud (LPU):** `meta-llama/llama-4-maverick-17b-128e-instruct`, `meta-llama/llama-4-scout-17b-16e-instruct`, `qwen/qwen3-32b`, `deepseek-r1-distill-llama-70b`
+  * **OpenRouter, xAI Grok & Mistral AI:** `anthropic/claude-opus-5-5`, `anthropic/claude-sonnet-5-5`, `google/gemini-4-carbon`, `openai/gpt-6.2-astra`, `deepseek/deepseek-v4-pro`, `openrouter/auto`
+  * **Ollama & LM Studio (100% Lokal & Gratis):** `qwen3.8:8b`, `qwen3.8:14b`, `qwen3-coder:30b`, `gemma4:12b`, `deepseek-r1:8b`, `llama4:scout`
 * **Normalisasi Kapabilitas:** Mengelompokkan model berdasarkan `text_input`, `image_input`, `audio_input`, `video_input`, `pdf_input`, `tool_calling`, `json_schema`, `reasoning`, dan `computer_use`.
 * **Routing Berdasarkan Peran Tugas:** Memberikan rekomendasi model terbaik untuk *Coding*, *Reasoning*, *Vision/GUI*, *Riset*, dan percakapan umum.
 * **Cache Resilient:** Penyimpanan cache model bertahan dari gangguan jaringan (katalog tidak dihapus jika provider sedang offline/gagal dihubungi) dan mencegah penggantian model diam-diam (*zero silent remapping*).
@@ -120,8 +122,8 @@ flowchart TD
     PG --> SKILL["External Skill Manager (SKILL.md + aksa.skill.yaml Quarantine)"]
     PG --> MCP["Integration Manager (Isolated MCP Client & Office/OS Adapters)"]
 
-    PRIV --> LOCAL["Local AI (Ollama / LM Studio — Zero Cloud Fallback)"]
-    PRIV -->|Explicit Consent Only| CLOUD["Cloud APIs (Gemini 2.5 / Claude 3.7 / GPT-4.5 / DeepSeek R1)"]
+    PRIV --> LOCAL["Local AI (Ollama / LM Studio — Qwen 3.8 / Gemma 4 / Llama 4)"]
+    PRIV -->|Explicit Consent Only| CLOUD["Cloud APIs (Gemini 4 / Claude 5.5 & Fable 5.2 / GPT-6.2 / DeepSeek V4)"]
 
     APP & PERM & SKILL & MCP --> EXEC["Native OS Execution Layer & Sandbox Path Jail"]
     EXEC --> VAULT["OS Credential Vault (Windows DPAPI / macOS Keychain)"]

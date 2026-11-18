@@ -36,56 +36,57 @@ import type { AgentNodeConfig, ModelProvider, DesktopApp, SkillItem } from "@/ty
 import { fetchDesktopAppsRemote, fetchSkillsRemote } from "@/services/engineClient";
 
 const BASE_MODEL_PRESETS: { provider: ModelProvider; model_id: string; label: string }[] = [
-  // Google Gemini
-  { provider: "gemini", model_id: "gemini-2.5-pro", label: "[Cloud] Google Gemini • Gemini 2.5 Pro (Flagship Penalaran & Manajer)" },
-  { provider: "gemini", model_id: "gemini-2.5-flash", label: "[Cloud] Google Gemini • Gemini 2.5 Flash (Super Cepat & Responsif)" },
-  { provider: "gemini", model_id: "gemini-2.5-flash-lite", label: "[Cloud] Google Gemini • Gemini 2.5 Flash Lite (Paling Hemat Kuota)" },
-  { provider: "gemini", model_id: "gemini-2.0-flash", label: "[Cloud] Google Gemini • Gemini 2.0 Flash (Multimodal Generasi Baru)" },
-  { provider: "gemini", model_id: "gemini-1.5-pro", label: "[Cloud] Google Gemini • Gemini 1.5 Pro (Konteks Raksasa 2M)" },
+  // Google Gemini (Seri Gemini 4 & 3.8)
+  { provider: "gemini", model_id: "gemini-4-carbon", label: "[Cloud] Google Gemini • Gemini 4 Carbon (Frontier Tertinggi & Manajer)" },
+  { provider: "gemini", model_id: "gemini-4-argon", label: "[Cloud] Google Gemini • Gemini 4 Argon (Flagship Multimodal & Agen)" },
+  { provider: "gemini", model_id: "gemini-4-hydrogen", label: "[Cloud] Google Gemini • Gemini 4 Hydrogen (Generasi 4 Efisien)" },
+  { provider: "gemini", model_id: "gemini-3.8-flash", label: "[Cloud] Google Gemini • Gemini 3.8 Flash (Super Cepat & Responsif)" },
+  { provider: "gemini", model_id: "gemini-3.5-flash-lite", label: "[Cloud] Google Gemini • Gemini 3.5 Flash-Lite (Paling Hemat Kuota)" },
 
-  // Anthropic Claude
-  { provider: "anthropic", model_id: "claude-3-7-sonnet-latest", label: "[Cloud] Anthropic • Claude 3.7 Sonnet (Penalaran Hibrida Flagship)" },
-  { provider: "anthropic", model_id: "claude-3-5-sonnet-latest", label: "[Cloud] Anthropic • Claude 3.5 Sonnet (Standar Kode Industri)" },
-  { provider: "anthropic", model_id: "claude-3-5-haiku-latest", label: "[Cloud] Anthropic • Claude 3.5 Haiku (Ringan, Murah, & Gesit)" },
-  { provider: "anthropic", model_id: "claude-3-opus-latest", label: "[Cloud] Anthropic • Claude 3 Opus (Telaah Kualitatif Mendalam)" },
+  // Anthropic Claude (Seri Claude 5.5 & Fable 5.2)
+  { provider: "anthropic", model_id: "claude-fable-5-2", label: "[Cloud] Anthropic • Claude Fable 5.2 (Penalaran Horizon Panjang)" },
+  { provider: "anthropic", model_id: "claude-opus-5-5", label: "[Cloud] Anthropic • Claude Opus 5.5 (Flagship Pengetahuan & Kode)" },
+  { provider: "anthropic", model_id: "claude-sonnet-5-5", label: "[Cloud] Anthropic • Claude Sonnet 5.5 (Standar Emas Agen & Computer Use)" },
+  { provider: "anthropic", model_id: "claude-haiku-5-5", label: "[Cloud] Anthropic • Claude Haiku 5.5 (Kilat, Murah, & Gesit)" },
 
-  // OpenAI
-  { provider: "openai", model_id: "gpt-4.5-preview", label: "[Cloud] OpenAI • GPT-4.5 Preview (Frontier Terbesar)" },
-  { provider: "openai", model_id: "o3-mini", label: "[Cloud] OpenAI • o3-mini (Penalaran STEM, Logika & Kode)" },
-  { provider: "openai", model_id: "o1", label: "[Cloud] OpenAI • o1 (Penalaran Strategis Penuh)" },
-  { provider: "openai", model_id: "gpt-4o", label: "[Cloud] OpenAI • GPT-4o (Standar Industri Multimodal)" },
-  { provider: "openai", model_id: "gpt-4o-mini", label: "[Cloud] OpenAI • GPT-4o Mini (Hemat Biaya & Gesit)" },
+  // OpenAI (Seri GPT-6.2 & GPT-6)
+  { provider: "openai", model_id: "gpt-6.2-astra", label: "[Cloud] OpenAI • GPT-6.2 Astra (Flagship Penalaran & Agen Otonom)" },
+  { provider: "openai", model_id: "gpt-6.2-sol", label: "[Cloud] OpenAI • GPT-6.2 Sol (Performa & Efisiensi Seimbang)" },
+  { provider: "openai", model_id: "gpt-6.1-sol", label: "[Cloud] OpenAI • GPT-6.1 Sol (Produksi Enterprise Stabil)" },
+  { provider: "openai", model_id: "gpt-6-luna", label: "[Cloud] OpenAI • GPT-6 Luna (Cepat & Hemat Biaya)" },
 
-  // DeepSeek
-  { provider: "deepseek", model_id: "deepseek-chat", label: "[Cloud] DeepSeek • DeepSeek V3 (Sangat Hemat / Formula Excel)" },
-  { provider: "deepseek", model_id: "deepseek-reasoner", label: "[Cloud] DeepSeek • DeepSeek R1 (Penalaran Chain-of-Thought)" },
+  // DeepSeek (Seri DeepSeek V4 & R1)
+  { provider: "deepseek", model_id: "deepseek-v4-pro", label: "[Cloud] DeepSeek • DeepSeek V4 Pro (Flagship MoE Kode & Logika)" },
+  { provider: "deepseek", model_id: "deepseek-flash", label: "[Cloud] DeepSeek • DeepSeek V4.1 Flash (Sangat Hemat / Formula Excel)" },
+  { provider: "deepseek", model_id: "deepseek-chat", label: "[Cloud] DeepSeek • DeepSeek Chat (Alias V4 Standar)" },
+  { provider: "deepseek", model_id: "deepseek-reasoner", label: "[Cloud] DeepSeek • DeepSeek R1 / Reasoner (Penalaran Chain-of-Thought)" },
 
   // Groq
-  { provider: "groq", model_id: "llama-3.3-70b-versatile", label: "[Cloud] Groq • Llama 3.3 70B (Inferensi LPU Kilat 300+ tps)" },
+  { provider: "groq", model_id: "meta-llama/llama-4-maverick-17b-128e-instruct", label: "[Cloud] Groq • Llama 4 Maverick 17B (Flagship LPU Kilat)" },
+  { provider: "groq", model_id: "meta-llama/llama-4-scout-17b-16e-instruct", label: "[Cloud] Groq • Llama 4 Scout 17B (Inferensi LPU Ultra-Cepat)" },
+  { provider: "groq", model_id: "qwen/qwen3-32b", label: "[Cloud] Groq • Qwen 3.8 / 3 32B (Penalaran & Kode Kilat LPU)" },
   { provider: "groq", model_id: "deepseek-r1-distill-llama-70b", label: "[Cloud] Groq • DeepSeek R1 Distill 70B (Penalaran Kilat)" },
-  { provider: "groq", model_id: "llama-3.1-8b-instant", label: "[Cloud] Groq • Llama 3.1 8B Instant (Ultra-Low Latency)" },
-  { provider: "groq", model_id: "qwen-2.5-32b", label: "[Cloud] Groq • Qwen 2.5 32B (Multilingual & Kode)" },
 
   // OpenRouter
-  { provider: "openrouter", model_id: "anthropic/claude-3.7-sonnet", label: "[Cloud] OpenRouter • Claude 3.7 Sonnet" },
-  { provider: "openrouter", model_id: "google/gemini-2.5-pro", label: "[Cloud] OpenRouter • Gemini 2.5 Pro" },
-  { provider: "openrouter", model_id: "deepseek/deepseek-r1", label: "[Cloud] OpenRouter • DeepSeek R1" },
-  { provider: "openrouter", model_id: "openai/gpt-4.5-preview", label: "[Cloud] OpenRouter • GPT-4.5 Preview" },
+  { provider: "openrouter", model_id: "anthropic/claude-opus-5-5", label: "[Cloud] OpenRouter • Claude Opus 5.5" },
+  { provider: "openrouter", model_id: "anthropic/claude-sonnet-5-5", label: "[Cloud] OpenRouter • Claude Sonnet 5.5" },
+  { provider: "openrouter", model_id: "google/gemini-4-carbon", label: "[Cloud] OpenRouter • Gemini 4 Carbon" },
+  { provider: "openrouter", model_id: "openai/gpt-6.2-astra", label: "[Cloud] OpenRouter • OpenAI GPT-6.2 Astra" },
+  { provider: "openrouter", model_id: "deepseek/deepseek-v4-pro", label: "[Cloud] OpenRouter • DeepSeek V4 Pro" },
   { provider: "openrouter", model_id: "openrouter/auto", label: "[Cloud] OpenRouter • Auto Router (Rute Otomatis)" },
 
   // Ollama (Lokal Gratis)
-  { provider: "ollama", model_id: "qwen2.5:7b", label: "[Lokal] Ollama • Qwen 2.5 7B (Rekomendasi Indonesia & Kode)" },
-  { provider: "ollama", model_id: "qwen2.5-coder:7b", label: "[Lokal] Ollama • Qwen 2.5 Coder 7B (Spesialis Kode)" },
-  { provider: "ollama", model_id: "llama3.3:70b", label: "[Lokal] Ollama • Llama 3.3 70B (Flagship Lokal)" },
-  { provider: "ollama", model_id: "llama3.2:3b", label: "[Lokal] Ollama • Llama 3.2 3B (Ringan untuk Laptop)" },
-  { provider: "ollama", model_id: "deepseek-r1:8b", label: "[Lokal] Ollama • DeepSeek R1 Distill 8B (Penalaran Offline)" },
-  { provider: "ollama", model_id: "phi4:14b", label: "[Lokal] Ollama • Microsoft Phi-4 14B" },
-  { provider: "ollama", model_id: "mistral:7b", label: "[Lokal] Ollama • Mistral 7B" },
+  { provider: "ollama", model_id: "qwen3.8:8b", label: "[Lokal] Ollama • Qwen 3.8 8B (Rekomendasi Utama Indonesia & Kode)" },
+  { provider: "ollama", model_id: "qwen3.8:14b", label: "[Lokal] Ollama • Qwen 3.8 14B (Akurasi Tinggi Lokal)" },
+  { provider: "ollama", model_id: "qwen3-coder:30b", label: "[Lokal] Ollama • Qwen 3 Coder 30B (Spesialis Kode)" },
+  { provider: "ollama", model_id: "gemma4:12b", label: "[Lokal] Ollama • Google Gemma 4 12B (Multimodal Lokal Gen-4)" },
+  { provider: "ollama", model_id: "deepseek-r1:8b", label: "[Lokal] Ollama • DeepSeek R1 8B (Penalaran Offline)" },
+  { provider: "ollama", model_id: "llama4:scout", label: "[Lokal] Ollama • Meta Llama 4 Scout (Flagship Lokal)" },
 
   // LM Studio
-  { provider: "lmstudio", model_id: "qwen2.5-7b-instruct", label: "[Lokal] LM Studio • Qwen 2.5 7B Instruct" },
-  { provider: "lmstudio", model_id: "deepseek-r1-distill-qwen-7b", label: "[Lokal] LM Studio • DeepSeek R1 Distill 7B" },
-  { provider: "lmstudio", model_id: "llama-3.3-70b-instruct", label: "[Lokal] LM Studio • Llama 3.3 70B Instruct" },
+  { provider: "lmstudio", model_id: "qwen3.8-8b-instruct", label: "[Lokal] LM Studio • Qwen 3.8 8B Instruct" },
+  { provider: "lmstudio", model_id: "gemma-4-12b-it", label: "[Lokal] LM Studio • Google Gemma 4 12B Instruct" },
+  { provider: "lmstudio", model_id: "deepseek-r1-distill-qwen-14b", label: "[Lokal] LM Studio • DeepSeek R1 Distill 14B" },
 ];
 
 type AgentFlowNodeData = {
@@ -257,8 +258,8 @@ export const AgentHierarchyView: React.FC = () => {
       }
     } else {
       list.push(
-        { provider: "ollama", model_id: "qwen2.5:7b", label: "[Lokal] Ollama • Qwen 2.5 7B (Offline)" },
-        { provider: "ollama", model_id: "llama3.2:3b", label: "[Lokal] Ollama • Llama 3.2 3B (Offline)" }
+        { provider: "ollama", model_id: "qwen3.8:8b", label: "[Lokal] Ollama • Qwen 3.8 8B (Offline)" },
+        { provider: "ollama", model_id: "gemma4:12b", label: "[Lokal] Ollama • Gemma 4 12B (Offline)" }
       );
     }
     return list;
@@ -674,7 +675,7 @@ export const AgentHierarchyView: React.FC = () => {
                       type="text"
                       value={customModelId}
                       onChange={(e) => setCustomModelId(e.target.value)}
-                      placeholder="misal: gemini-2.5-flash-thinking, o3-mini, claude-3-7-sonnet"
+                      placeholder="misal: gemini-4-carbon, gpt-6.2-astra, claude-opus-5-5"
                       className="flex-1 rounded-lg bg-[#1f1f1d] border border-white/[0.08] px-2.5 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-600 focus:outline-none font-mono"
                     />
                     <button
@@ -697,7 +698,7 @@ export const AgentHierarchyView: React.FC = () => {
             {selectedAgent.provider === "ollama" && !engineHealth.ollama_online ? (
               <p className="text-[10.5px] text-amber-400 flex items-center gap-1">
                 <Sparkles size={11} className="text-amber-400 shrink-0" />
-                Ollama belum aktif di komputer Anda. Jalankan `ollama run qwen2.5:7b` atau pilih model Cloud API di atas.
+                Ollama belum aktif di komputer Anda. Jalankan `ollama run qwen3.8:8b` atau pilih model Cloud API di atas.
               </p>
             ) : (
               <p className="text-[10.5px] text-zinc-400 flex items-center gap-1">

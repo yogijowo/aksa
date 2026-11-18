@@ -7,10 +7,26 @@ from pydantic import BaseModel
 
 # Approximate USD pricing per 1M tokens for cost & savings analytics
 MODEL_PRICING_PER_1M: dict[str, tuple[float, float]] = {
+    "gemini-4-carbon": (1.50, 6.00),
+    "gemini-4-argon": (1.25, 5.00),
+    "gemini-4-hydrogen": (0.40, 1.60),
+    "gemini-3.8-flash": (0.15, 0.60),
+    "gemini-3.5-flash-lite": (0.05, 0.20),
     "gemini-2.5-pro": (1.25, 5.00),
     "gemini-2.5-flash": (0.10, 0.40),
+    "claude-fable-5-2": (6.00, 30.00),
+    "claude-opus-5-5": (5.00, 25.00),
+    "claude-sonnet-5-5": (3.00, 15.00),
+    "claude-haiku-5-5": (0.80, 4.00),
     "claude-3-7-sonnet-latest": (3.00, 15.00),
+    "deepseek-v4-pro": (0.20, 0.50),
+    "deepseek-flash": (0.10, 0.25),
     "deepseek-chat": (0.14, 0.28),
+    "deepseek-reasoner": (0.55, 2.19),
+    "gpt-6.2-astra": (2.50, 10.00),
+    "gpt-6.2-sol": (1.25, 5.00),
+    "gpt-6.1-sol": (1.00, 4.00),
+    "gpt-6-luna": (0.20, 0.80),
     "gpt-4o": (2.50, 10.00),
     "gpt-4o-mini": (0.15, 0.60),
 }

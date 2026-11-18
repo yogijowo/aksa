@@ -52,139 +52,166 @@ interface PreloadedModel {
 }
 
 const PRELOADED_MODELS: PreloadedModel[] = [
-  // Google Gemini
+  // Google Gemini (Seri Gemini 4 & 3.8)
   {
     provider: "gemini",
-    model_id: "gemini-2.5-pro",
-    name: "Gemini 2.5 Pro",
-    badge_label: "Rekomendasi Manajer",
-    description: "Model penalaran multimodal Google tercanggih untuk koordinasi tim agen, penalaran kompleks, dan rencana strategis.",
+    model_id: "gemini-4-carbon",
+    name: "Gemini 4 Carbon",
+    badge_label: "Frontier Tertinggi & Manajer",
+    description: "Model frontier kasta tertinggi Google Gemini 4 untuk penalaran mendalam, koordinasi tim multi-agen, dan arsitektur strategis.",
     is_recommended: true,
   },
   {
     provider: "gemini",
-    model_id: "gemini-2.5-flash",
-    name: "Gemini 2.5 Flash",
+    model_id: "gemini-4-argon",
+    name: "Gemini 4 Argon",
+    badge_label: "Flagship Multimodal & Agen",
+    description: "Model unggulan Gemini 4 untuk pemrosesan multimodal presisi tinggi, eksekusi tool-calling kompleks, dan dokumen panjang.",
+    is_recommended: true,
+  },
+  {
+    provider: "gemini",
+    model_id: "gemini-4-hydrogen",
+    name: "Gemini 4 Hydrogen",
+    badge_label: "Generasi 4 Efisien",
+    description: "Varian berkecepatan tinggi di keluarga Gemini 4 dengan keseimbangan optimal antara kecerdasan dan latensi rendah.",
+  },
+  {
+    provider: "gemini",
+    model_id: "gemini-3.8-flash",
+    name: "Gemini 3.8 Flash",
     badge_label: "Super Cepat & Tangkas",
-    description: "Inferensi berkecepatan tinggi dengan jendela konteks 1M token, sangat responsif dan efisien.",
+    description: "Model harian andalan berkecepatan ekstra tinggi untuk beban kerja agen responsif dan automasi real-time.",
     is_recommended: true,
   },
   {
     provider: "gemini",
-    model_id: "gemini-2.5-flash-lite",
-    name: "Gemini 2.5 Flash Lite",
+    model_id: "gemini-3.5-flash-lite",
+    name: "Gemini 3.5 Flash-Lite",
     badge_label: "Paling Hemat Kuota",
-    description: "Versi ringan efisiensi maksimal untuk tugas singkat, ekstraksi data, dan inferensi berulang berbiaya rendah.",
-  },
-  {
-    provider: "gemini",
-    model_id: "gemini-2.0-flash",
-    name: "Gemini 2.0 Flash",
-    badge_label: "Generasi Multimodal",
-    description: "Model multimodal mutakhir dengan latency ultra rendah untuk automasi layar dan analisis visual dokumen.",
-  },
-  {
-    provider: "gemini",
-    model_id: "gemini-1.5-pro",
-    name: "Gemini 1.5 Pro",
-    badge_label: "Konteks 2M Token",
-    description: "Kapasitas konteks dokumen raksasa hingga ratusan halaman PDF dan basis data tanpa kompresi.",
+    description: "Versi ultra-ringan dengan efisiensi biaya maksimal untuk ekstraksi data massal dan tugas berulang.",
   },
 
-  // Anthropic Claude
+  // Anthropic Claude (Seri Claude 5.5 & Fable 5.2)
   {
     provider: "anthropic",
-    model_id: "claude-3-7-sonnet-latest",
-    name: "Claude 3.7 Sonnet",
-    badge_label: "Penalaran Hibrida Flagship",
-    description: "Model unggulan Anthropic dengan penalaran hibrida dinamis, arsitektur kode mutakhir, dan sintesis dokumen panjang.",
+    model_id: "claude-fable-5-2",
+    name: "Claude Fable 5.2",
+    badge_label: "Penalaran Horizon Panjang",
+    description: "Generasi frontier Anthropic Fable 5.2 untuk riset otonom multi-tahap, penalaran algoritmik berat, dan rekayasa sistem.",
     is_recommended: true,
   },
   {
     provider: "anthropic",
-    model_id: "claude-3-5-sonnet-latest",
-    name: "Claude 3.5 Sonnet",
-    badge_label: "Standar Industri Kode",
-    description: "Sangat unggul untuk analisis teknis, penulisan kode Python/TypeScript, dan laporan eksekutif formal.",
+    model_id: "claude-opus-5-5",
+    name: "Claude Opus 5.5",
+    badge_label: "Flagship Pengetahuan & Kode",
+    description: "Model utama Claude 5.5 untuk telaah dokumen hukum/keuangan mendalam, penulisan naskah eksekutif, dan orkestrasi agen.",
+    is_recommended: true,
   },
   {
     provider: "anthropic",
-    model_id: "claude-3-5-haiku-latest",
-    name: "Claude 3.5 Haiku",
-    badge_label: "Ringan & Gesit",
-    description: "Model tercepat dari Anthropic untuk eksekusi tugas mikro, klasifikasi berkas, dan peringkasan instan.",
+    model_id: "claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5",
+    badge_label: "Standar Emas Agen & Computer Use",
+    description: "Kombinasi kecepatan dan kecerdasan terbaik generasi Claude 5.5 untuk pemrograman, Office, dan automasi layar PC.",
+    is_recommended: true,
   },
   {
     provider: "anthropic",
-    model_id: "claude-3-opus-latest",
-    name: "Claude 3 Opus",
-    badge_label: "Analisis Mendalam",
-    description: "Model dengan kedalaman pemahaman kualitatif tinggi untuk telaah dokumen hukum dan penulisan akademik.",
+    model_id: "claude-haiku-5-5",
+    name: "Claude Haiku 5.5",
+    badge_label: "Kilat & Berbiaya Rendah",
+    description: "Model tercepat di keluarga Claude 5.5 untuk respons instan, klasifikasi dokumen, dan delegasi sub-agen.",
   },
 
-  // OpenAI
+  // OpenAI (Seri GPT-6.2 & GPT-6)
   {
     provider: "openai",
-    model_id: "gpt-4.5-preview",
-    name: "GPT-4.5 Preview",
-    badge_label: "Frontier Model Terbesar",
-    description: "Model skala frontier terbesar OpenAI dengan pengetahuan ensiklopedis dan pemahaman konteks emosional mendalam.",
-  },
-  {
-    provider: "openai",
-    model_id: "o3-mini",
-    name: "OpenAI o3-mini",
-    badge_label: "Penalaran STEM & Kode",
-    description: "Model penalaran chain-of-thought khusus komputasi, sains, matematika keuangan, dan sintesis kode cepat.",
+    model_id: "gpt-6.2-astra",
+    name: "OpenAI GPT-6.2 Astra",
+    badge_label: "Flagship Penalaran & Agen",
+    description: "Model frontier tertinggi OpenAI generasi GPT-6.2 untuk penalaran kompleks, eksekusi agen otonom, dan sintesis kode.",
     is_recommended: true,
   },
   {
     provider: "openai",
-    model_id: "o1",
-    name: "OpenAI o1",
-    badge_label: "Penalaran Strategis Penuh",
-    description: "Penalaran mendalam untuk masalah algoritmik kompleks dan perencanaan arsitektur multi-tahap.",
+    model_id: "gpt-6.2-sol",
+    name: "OpenAI GPT-6.2 Sol",
+    badge_label: "Performa & Efisiensi Seimbang",
+    description: "Model serbaguna generasi GPT-6.2 dengan ketajaman instruksi tinggi dan kecepatan optimal untuk produktivitas kantor.",
+    is_recommended: true,
   },
   {
     provider: "openai",
-    model_id: "gpt-4o",
-    name: "GPT-4o",
-    badge_label: "Multimodal Flagship",
-    description: "Standar kecerdasan umum multimodal untuk pemrosesan teks, tabel spreadsheet, dan visualisasi bagan.",
+    model_id: "gpt-6.1-sol",
+    name: "OpenAI GPT-6.1 Sol",
+    badge_label: "Produksi Enterprise Stabil",
+    description: "Varian stabil seri GPT-6.1 untuk pemrosesan spreadsheet, analisis laporan, dan integrasi JSON schema presisi.",
   },
   {
     provider: "openai",
-    model_id: "gpt-4o-mini",
-    name: "GPT-4o Mini",
-    badge_label: "Cepat & Hemat",
-    description: "Model ringan OpenAI yang hemat biaya untuk tugas-tugas terstruktur harian dan pembersihan data.",
+    model_id: "gpt-6-luna",
+    name: "OpenAI GPT-6 Luna",
+    badge_label: "Cepat & Hemat Biaya",
+    description: "Model ringan generasi GPT-6 yang dirancang untuk tugas berfrekuensi tinggi dengan latensi sangat rendah.",
   },
 
-  // DeepSeek
+  // DeepSeek (Seri DeepSeek V4 & R1)
+  {
+    provider: "deepseek",
+    model_id: "deepseek-v4-pro",
+    name: "DeepSeek V4 Pro",
+    badge_label: "Flagship MoE Kode & Logika",
+    description: "Arsitektur Mixture-of-Experts generasi V4 terbaru untuk rekayasa kode, pemodelan finansial Excel, dan analisis data.",
+    is_recommended: true,
+  },
+  {
+    provider: "deepseek",
+    model_id: "deepseek-flash",
+    name: "DeepSeek V4.1 Flash",
+    badge_label: "Sangat Hemat Token & Cepat",
+    description: "Model multimodal konteks panjang V4.1 Flash yang super hemat biaya untuk pembuatan rumus Excel, Word, dan PPT.",
+    is_recommended: true,
+  },
   {
     provider: "deepseek",
     model_id: "deepseek-chat",
-    name: "DeepSeek V3 (671B)",
-    badge_label: "Sangat Hemat Token",
-    description: "Model MoE andalan untuk perumusan tabel Excel, formula Rupiah, SUM, VLOOKUP, dan analisis data korporat.",
-    is_recommended: true,
+    name: "DeepSeek Chat (V4 Alias)",
+    badge_label: "Endpoint Standar V4",
+    description: "Alias resmi DeepSeek yang otomatis mengarah ke checkpoint V4 aktif untuk pengolahan dokumen harian.",
   },
   {
     provider: "deepseek",
     model_id: "deepseek-reasoner",
-    name: "DeepSeek R1 (Reasoning)",
+    name: "DeepSeek R1 / Reasoner",
     badge_label: "Penalaran Chain-of-Thought",
-    description: "Penalaran matematis terbuka dengan visualisasi proses berpikir langkah-demi-langkah mendalam.",
+    description: "Model penalaran matematis dan verifikasi logika mendalam dengan jejak berpikir langkah-demi-langkah.",
     is_recommended: true,
   },
 
   // Groq
   {
     provider: "groq",
-    model_id: "llama-3.3-70b-versatile",
-    name: "Llama 3.3 70B (Groq)",
-    badge_label: "Inferensi LPU Kilat (300+ tps)",
-    description: "Menjalankan model open-weights Llama 3.3 dengan akselerasi perangkat keras LPU Groq super cepat.",
+    model_id: "meta-llama/llama-4-maverick-17b-128e-instruct",
+    name: "Llama 4 Maverick 17B (Groq)",
+    badge_label: "Flagship Llama 4 LPU",
+    description: "Model multimodal MoE generasi Llama 4 (128 experts) dengan akselerasi perangkat keras LPU Groq super cepat.",
+    is_recommended: true,
+  },
+  {
+    provider: "groq",
+    model_id: "meta-llama/llama-4-scout-17b-16e-instruct",
+    name: "Llama 4 Scout 17B (Groq)",
+    badge_label: "Inferensi LPU Kilat",
+    description: "Model Llama 4 Scout berkecepatan ratusan token/detik untuk peringkasan dokumen dan eksekusi alat instan.",
+  },
+  {
+    provider: "groq",
+    model_id: "qwen/qwen3-32b",
+    name: "Qwen 3.8 / 3 32B (Groq)",
+    badge_label: "Penalaran & Kode LPU",
+    description: "Model penalaran hibrida dan pemrograman tingkat lanjut yang berjalan di atas chip LPU Groq.",
     is_recommended: true,
   },
   {
@@ -192,113 +219,124 @@ const PRELOADED_MODELS: PreloadedModel[] = [
     model_id: "deepseek-r1-distill-llama-70b",
     name: "DeepSeek R1 Distill 70B (Groq)",
     badge_label: "Penalaran Kilat Groq",
-    description: "Kemampuan penalaran mendalam DeepSeek R1 dengan kecepatan inferensi ultra-cepat ratusan token/detik.",
-  },
-  {
-    provider: "groq",
-    model_id: "llama-3.1-8b-instant",
-    name: "Llama 3.1 8B Instant (Groq)",
-    badge_label: "Ultra-Low Latency",
-    description: "Model 8B berkecepatan instan untuk respons percakapan tanpa jeda dan klasifikasi cepat.",
-  },
-  {
-    provider: "groq",
-    model_id: "qwen-2.5-32b",
-    name: "Qwen 2.5 32B (Groq)",
-    badge_label: "Multilingual & Kode",
-    description: "Model multilingual bertenaga tinggi untuk pemrosesan teks bahasa Indonesia dan skrip automasi.",
+    description: "Kemampuan penalaran mendalam DeepSeek R1 dengan kecepatan inferensi LPU ultra-rendah latensi.",
   },
 
   // OpenRouter
   {
     provider: "openrouter",
-    model_id: "anthropic/claude-3.7-sonnet",
-    name: "Claude 3.7 Sonnet (OpenRouter)",
-    badge_label: "Router Claude Mutakhir",
-    description: "Akses fleksibel ke Claude 3.7 Sonnet melalui agregator OpenRouter dengan saldo terpadu.",
+    model_id: "anthropic/claude-opus-5-5",
+    name: "Claude Opus 5.5 (OpenRouter)",
+    badge_label: "Router Claude 5.5",
+    description: "Akses langsung ke flagship Anthropic Claude Opus 5.5 melalui gerbang terpadu OpenRouter.",
+    is_recommended: true,
   },
   {
     provider: "openrouter",
-    model_id: "google/gemini-2.5-pro",
-    name: "Gemini 2.5 Pro (OpenRouter)",
-    badge_label: "Router Gemini",
-    description: "Model penalaran multimodal Google via gerbang OpenRouter.",
+    model_id: "anthropic/claude-sonnet-5-5",
+    name: "Claude Sonnet 5.5 (OpenRouter)",
+    badge_label: "Router Sonnet 5.5",
+    description: "Model agen dan kode Claude Sonnet 5.5 via satu kunci API OpenRouter.",
+    is_recommended: true,
   },
   {
     provider: "openrouter",
-    model_id: "deepseek/deepseek-r1",
-    name: "DeepSeek R1 (OpenRouter)",
-    badge_label: "Router Reasoning",
-    description: "Model reasoning chain-of-thought open-weights via infrastruktur global OpenRouter.",
+    model_id: "google/gemini-4-carbon",
+    name: "Gemini 4 Carbon (OpenRouter)",
+    badge_label: "Router Gemini 4",
+    description: "Model frontier Google Gemini 4 Carbon melalui agregator OpenRouter.",
+  },
+  {
+    provider: "openrouter",
+    model_id: "openai/gpt-6.2-astra",
+    name: "OpenAI GPT-6.2 Astra (OpenRouter)",
+    badge_label: "Router GPT-6.2",
+    description: "Akses model flagship OpenAI GPT-6.2 Astra melalui infrastruktur OpenRouter.",
+  },
+  {
+    provider: "openrouter",
+    model_id: "deepseek/deepseek-v4-pro",
+    name: "DeepSeek V4 Pro (OpenRouter)",
+    badge_label: "Router DeepSeek V4",
+    description: "Model MoE DeepSeek V4 Pro via jaringan global OpenRouter.",
   },
   {
     provider: "openrouter",
     model_id: "openrouter/auto",
     name: "OpenRouter Auto Gateway",
     badge_label: "Router Cerdas Otomatis",
-    description: "Gerbang terpadu yang merutekan secara dinamis ke ratusan model cloud dengan tarif dan ketersediaan terbaik.",
+    description: "Gerbang terpadu yang merutekan secara dinamis ke model terbaik berdasarkan kompleksitas prompt.",
     is_recommended: true,
   },
 
   // Ollama (Lokal Gratis)
   {
     provider: "ollama",
-    model_id: "qwen2.5:7b",
-    name: "Qwen 2.5 7B (Ollama)",
-    badge_label: "Rekomendasi Lokal",
-    description: "Model lokal terbaik untuk bahasa Indonesia, instruksi terstruktur, dan privasi offline 100%.",
+    model_id: "qwen3.8:8b",
+    name: "Qwen 3.8 8B (Ollama)",
+    badge_label: "Rekomendasi Lokal Utama",
+    description: "Model lokal generasi Qwen 3.8 terbaru untuk Bahasa Indonesia, penalaran hibrida, tool-calling, dan privasi offline 100%.",
     is_recommended: true,
   },
   {
     provider: "ollama",
-    model_id: "qwen2.5-coder:7b",
-    name: "Qwen 2.5 Coder 7B (Ollama)",
+    model_id: "qwen3.8:14b",
+    name: "Qwen 3.8 14B (Ollama)",
+    badge_label: "Akurasi Tinggi Lokal",
+    description: "Varian 14B Qwen 3.8 dengan ketajaman analisis dokumen RAG dan sintesis laporan setara model cloud.",
+  },
+  {
+    provider: "ollama",
+    model_id: "qwen3-coder:30b",
+    name: "Qwen 3 Coder 30B (Ollama)",
     badge_label: "Spesialis Kode Lokal",
-    description: "Model lokal terlatih khusus untuk membaca kode skrip Python, debugging, dan manipulasi data.",
+    description: "Model coding lokal untuk penulisan skrip Python otomatis, analisis CSV/Excel, dan debugging.",
   },
   {
     provider: "ollama",
-    model_id: "llama3.3:70b",
-    name: "Llama 3.3 70B (Ollama)",
-    badge_label: "Flagship Lokal",
-    description: "Model berbobot penuh Meta untuk PC berspesifikasi GPU tinggi, kemampuan setara model cloud.",
-  },
-  {
-    provider: "ollama",
-    model_id: "llama3.2:3b",
-    name: "Llama 3.2 3B (Ollama)",
-    badge_label: "Ringan untuk Laptop",
-    description: "Model ultra-ringan yang berjalan mulus bahkan di laptop tanpa kartu grafis khusus.",
+    model_id: "gemma4:12b",
+    name: "Google Gemma 4 12B (Ollama)",
+    badge_label: "Multimodal Lokal Gen-4",
+    description: "Model open-weights generasi ke-4 dari Google dengan dukungan teks dan vision berkapasitas konteks besar.",
+    is_recommended: true,
   },
   {
     provider: "ollama",
     model_id: "deepseek-r1:8b",
-    name: "DeepSeek R1 Distill 8B (Ollama)",
+    name: "DeepSeek R1 8B (Ollama)",
     badge_label: "Penalaran Offline",
-    description: "Penalaran matematika dan logika offline pada perangkat PC Anda tanpa koneksi internet.",
+    description: "Penalaran matematika dan logika chain-of-thought offline di perangkat PC Anda tanpa koneksi internet.",
   },
   {
     provider: "ollama",
-    model_id: "phi4:14b",
-    name: "Microsoft Phi-4 14B (Ollama)",
-    badge_label: "Sintesis Cerdas",
-    description: "Model penalaran ringkas mutakhir dari Microsoft Research untuk sintesis teks terstruktur.",
+    model_id: "llama4:scout",
+    name: "Meta Llama 4 Scout (Ollama)",
+    badge_label: "Flagship Lokal Meta",
+    description: "Arsitektur Mixture-of-Experts Llama 4 untuk PC/Mac berspesifikasi memori tinggi.",
   },
 
   // LM Studio
   {
     provider: "lmstudio",
-    model_id: "qwen2.5-7b-instruct",
-    name: "Qwen 2.5 7B Instruct (LM Studio)",
+    model_id: "qwen3.8-8b-instruct",
+    name: "Qwen 3.8 8B Instruct (LM Studio)",
     badge_label: "Server Lokal OpenAI",
-    description: "Integrasi server lokal LM Studio kompatibel endpoint OpenAI untuk inferensi pribadi.",
+    description: "Integrasi server lokal LM Studio untuk menjalankan Qwen 3.8 8B dengan akselerasi penuh GPU/MLX.",
+    is_recommended: true,
   },
   {
     provider: "lmstudio",
-    model_id: "deepseek-r1-distill-qwen-7b",
-    name: "DeepSeek R1 Distill (LM Studio)",
+    model_id: "gemma-4-12b-it",
+    name: "Google Gemma 4 12B Instruct (LM Studio)",
+    badge_label: "Multimodal Lokal Gen-4",
+    description: "Model multimodal Gemma 4 12B melalui endpoint OpenAI lokal LM Studio.",
+  },
+  {
+    provider: "lmstudio",
+    model_id: "deepseek-r1-distill-qwen-14b",
+    name: "DeepSeek R1 Distill 14B (LM Studio)",
     badge_label: "Reasoning Lokal",
-    description: "Menjalankan model penalaran terdistilasi melalui GUI LM Studio.",
+    description: "Menjalankan model penalaran DeepSeek R1 14B secara lokal melalui antarmuka LM Studio.",
   },
 ];
 
@@ -313,47 +351,47 @@ const CLOUD_PROVIDERS: {
   {
     id: "gemini",
     name: "Google Gemini",
-    desc: "Gemini 2.5 Pro & Flash — Cepat, hemat kuota, dan ideal untuk Supervisor",
+    desc: "Gemini 4 Carbon, 4 Argon & 3.8 Flash — Frontier multimodal & ideal untuk Supervisor",
     placeholder: "AIzaSy...",
     link: "https://aistudio.google.com/app/apikey",
-    defaultTestModel: "gemini-flash-latest",
+    defaultTestModel: "gemini-3.8-flash",
   },
   {
     id: "anthropic",
     name: "Anthropic Claude",
-    desc: "Claude 3.7 Sonnet & 3.5 Haiku — Penalaran mendalam & dokumen eksekutif",
+    desc: "Claude Fable 5.2, Opus 5.5 & Sonnet 5.5 — Penalaran mendalam & agen otonom",
     placeholder: "sk-ant-...",
     link: "https://console.anthropic.com/",
-    defaultTestModel: "claude-3-7-sonnet-latest",
+    defaultTestModel: "claude-sonnet-5-5",
   },
   {
     id: "deepseek",
     name: "DeepSeek API",
-    desc: "DeepSeek-V3 & R1 — Sangat hemat token untuk formula Excel & tabel data",
+    desc: "DeepSeek V4 Pro, V4.1 Flash & R1 — Sangat hemat token untuk formula Excel & data",
     placeholder: "sk-...",
     link: "https://platform.deepseek.com/",
-    defaultTestModel: "deepseek-chat",
+    defaultTestModel: "deepseek-flash",
   },
   {
     id: "openai",
     name: "OpenAI",
-    desc: "GPT-4o, GPT-4o Mini & o3-mini — Standar industri kecerdasan buatan",
+    desc: "GPT-6.2 Astra, GPT-6.2 Sol & GPT-6 Luna — Standar industri kecerdasan buatan",
     placeholder: "sk-...",
     link: "https://platform.openai.com/api-keys",
-    defaultTestModel: "gpt-4o-mini",
+    defaultTestModel: "gpt-6.2-sol",
   },
   {
     id: "groq",
     name: "Groq Cloud",
-    desc: "Llama 3.3 70B & DeepSeek R1 — Inferensi ultra-cepat berbasis chip LPU",
+    desc: "Llama 4 Maverick, Qwen 3.8 & DeepSeek R1 — Inferensi ultra-cepat berbasis chip LPU",
     placeholder: "gsk_...",
     link: "https://console.groq.com/keys",
-    defaultTestModel: "llama-3.3-70b-versatile",
+    defaultTestModel: "meta-llama/llama-4-scout-17b-16e-instruct",
   },
   {
     id: "openrouter",
     name: "OpenRouter",
-    desc: "Akses fleksibel ke 200+ model AI dalam satu kunci API terpadu",
+    desc: "Akses fleksibel ke Claude 5.5, Gemini 4, GPT-6.2 & 200+ model dalam satu kunci API",
     placeholder: "sk-or-...",
     link: "https://openrouter.ai/keys",
     defaultTestModel: "openrouter/auto",
@@ -514,7 +552,7 @@ export const FeatureSectionsView: React.FC = () => {
   };
 
   const handleCopyOllamaCommand = () => {
-    void navigator.clipboard.writeText("ollama run qwen2.5:7b");
+    void navigator.clipboard.writeText("ollama run qwen3.8:8b");
     setCopiedCmd(true);
     setTimeout(() => setCopiedCmd(false), 2000);
   };
@@ -843,7 +881,7 @@ export const FeatureSectionsView: React.FC = () => {
                   type="text"
                   value={customModelId}
                   onChange={(e) => setCustomModelId(e.target.value)}
-                  placeholder="Contoh: gemini-3.1-pro-preview atau o3-mini"
+                  placeholder="Contoh: gemini-4-carbon, claude-opus-5-5, atau gpt-6.2-astra"
                   className="flex-1 rounded-xl bg-[#262624] border border-white/[0.09] px-3.5 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
                 />
 
@@ -903,7 +941,7 @@ export const FeatureSectionsView: React.FC = () => {
                   className="rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] px-3 py-1.5 text-[11px] text-zinc-300 font-mono transition-colors flex items-center gap-1.5 shrink-0"
                 >
                   {copiedCmd ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                  <span>{copiedCmd ? "Tersalin!" : "ollama run qwen2.5:7b"}</span>
+                  <span>{copiedCmd ? "Tersalin!" : "ollama run qwen3.8:8b"}</span>
                 </button>
               </div>
             </div>

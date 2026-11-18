@@ -106,9 +106,9 @@ class OpenAIDiscoveryAdapter(BaseProviderAdapter):
                     for item in data:
                         mid = item.get("id", "")
                         caps = ["text_input", "text_output", "tool_calling", "streaming", "json_schema"]
-                        if "vision" in mid or "4o" in mid or "4.5" in mid:
+                        if "vision" in mid or "4o" in mid or "4.1" in mid or "4.5" in mid or "gpt-5" in mid or "gpt-6" in mid:
                             caps.extend(["image_input", "computer_use"])
-                        if "o1" in mid or "o3" in mid:
+                        if "o1" in mid or "o3" in mid or "o4" in mid or "gpt-5" in mid or "gpt-6" in mid:
                             caps.append("reasoning")
                         if "embedding" in mid:
                             caps = ["embeddings"]
@@ -119,7 +119,7 @@ class OpenAIDiscoveryAdapter(BaseProviderAdapter):
                                 provider_model_id=mid,
                                 display_name=f"OpenAI {mid}",
                                 capabilities=caps,
-                                context_window=128000 if "4o" in mid else 32000,
+                                context_window=1000000 if ("gpt-6" in mid or "4.1" in mid) else (400000 if "gpt-5" in mid else 128000),
                                 input_modalities=["text", "image"] if "image_input" in caps else ["text"],
                                 output_modalities=["text"],
                                 provider_metadata={"created": item.get("created"), "owned_by": item.get("owned_by")},
@@ -150,7 +150,7 @@ class AnthropicDiscoveryAdapter(BaseProviderAdapter):
                         mid = item.get("id", "")
                         display = item.get("display_name", mid)
                         caps = ["text_input", "image_input", "pdf_input", "text_output", "tool_calling", "streaming", "json_schema", "computer_use"]
-                        if "3-7" in mid or "3.7" in mid:
+                        if "3-7" in mid or "3.7" in mid or "-4-" in mid or "-4." in mid or "-5-" in mid or "-5." in mid or "fable" in mid:
                             caps.append("reasoning")
 
                         models.append(
@@ -159,7 +159,7 @@ class AnthropicDiscoveryAdapter(BaseProviderAdapter):
                                 provider_model_id=mid,
                                 display_name=display,
                                 capabilities=caps,
-                                context_window=200000,
+                                context_window=1000000 if ("-5-" in mid or "-5." in mid or "fable" in mid or "4-6" in mid or "4.6" in mid) else 200000,
                                 max_output_tokens=8192,
                                 input_modalities=["text", "image", "pdf"],
                                 output_modalities=["text"],
@@ -191,7 +191,7 @@ class GeminiDiscoveryAdapter(BaseProviderAdapter):
                         raw_name = item.get("name", "")  # e.g. "models/gemini-2.5-flash"
                         mid = raw_name.replace("models/", "")
                         caps = ["text_input", "image_input", "audio_input", "video_input", "pdf_input", "text_output", "tool_calling", "streaming", "json_schema"]
-                        if "pro" in mid or "2.5" in mid:
+                        if "pro" in mid or "2.5" in mid or "gemini-3" in mid or "gemini-4" in mid:
                             caps.append("reasoning")
 
                         ctx = item.get("inputTokenLimit", 1000000)

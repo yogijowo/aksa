@@ -23,7 +23,7 @@ DEFAULT_AGENTS = [
         "avatar_icon": "brain-circuit",
         "tier_level": 0,
         "provider": "gemini",
-        "model_id": "gemini-2.5-pro",
+        "model_id": "gemini-4-carbon",
         "temperature": 0.2,
         "max_tokens": 4096,
         "system_prompt": (
@@ -75,7 +75,7 @@ DEFAULT_AGENTS = [
         "avatar_icon": "book-open-check",
         "tier_level": 1,
         "provider": "ollama",
-        "model_id": "qwen2.5:7b",
+        "model_id": "qwen3.8:8b",
         "temperature": 0.1,
         "max_tokens": 2048,
         "system_prompt": (
@@ -100,7 +100,7 @@ DEFAULT_AGENTS = [
         "avatar_icon": "monitor-cog",
         "tier_level": 1,
         "provider": "anthropic",
-        "model_id": "claude-3-7-sonnet-latest",
+        "model_id": "claude-sonnet-5-5",
         "temperature": 0.1,
         "max_tokens": 4096,
         "system_prompt": (

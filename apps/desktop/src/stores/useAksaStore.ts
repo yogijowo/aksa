@@ -47,7 +47,7 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       avatar_icon: "brain-circuit",
       tier_level: 0,
       provider: "gemini",
-      model_id: "gemini-2.5-pro",
+      model_id: "gemini-4-carbon",
       temperature: 0.2,
       max_tokens: 4096,
       system_prompt:
@@ -87,7 +87,7 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       avatar_icon: "book-open-check",
       tier_level: 1,
       provider: "ollama",
-      model_id: "qwen2.5:7b",
+      model_id: "qwen3.8:8b",
       temperature: 0.1,
       max_tokens: 2048,
       system_prompt:
@@ -107,7 +107,7 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       avatar_icon: "monitor-cog",
       tier_level: 1,
       provider: "anthropic",
-      model_id: "claude-3-7-sonnet-latest",
+      model_id: "claude-sonnet-5-5",
       temperature: 0.1,
       max_tokens: 4096,
       system_prompt:
@@ -341,7 +341,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       avatar_icon: "bot",
       tier_level: parentAgent.tier_level + 1,
       provider: "ollama",
-      model_id: "qwen2.5:7b",
+      model_id: "qwen3.8:8b",
       temperature: 0.2,
       max_tokens: 2048,
       system_prompt:
@@ -408,7 +408,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       agent_name: supervisor ? supervisor.name : "Manajer Eksekutif",
       agent_role: supervisor ? supervisor.role_title : "Manajer Utama (Supervisor)",
       provider: supervisor ? supervisor.provider : "gemini",
-      model_id: supervisor ? supervisor.model_id : "gemini-2.5-flash",
+      model_id: supervisor ? supervisor.model_id : "gemini-3.8-flash",
       action_label: `Menganalisis instruksi & memeriksa Folder Kerja ${activeWs?.name ?? "Lokal"}`,
       detail: targetSubAgent
         ? `Menyiapkan delegasi terisolasi ke ${targetSubAgent.name}...`
