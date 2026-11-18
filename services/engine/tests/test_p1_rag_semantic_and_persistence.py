@@ -75,3 +75,42 @@ async def test_p1_rag_crash_recovery_from_sqlite_vectors(tmp_path: Path) -> None
     assert "pengadaan server cloud" in results[0]["content"].lower()
     assert len(store2._vectors) > 0  # Restored from SQLite
 
+
+def test_p2_rag_pluggable_embedder_factory() -> None:
+    """Verify that create_rag_embedder returns appropriate embedder class based on mode."""
+    from app.rag.store import (
+        LexicalNgramEmbedder,
+        OllamaEmbedder,
+        create_rag_embedder,
+    )
+
+    lex = create_rag_embedder("lexical")
+    assert isinstance(lex, LexicalNgramEmbedder)
+    assert lex.dimension == 128
+    assert lex.model_name == "lexical_ngram_128d"
+
+    ol = create_rag_embedder("ollama")
+    assert isinstance(ol, OllamaEmbedder)
+    assert ol.dimension == 1024
+    assert "ollama" in ol.model_name
+
+
+def test_p2_rag_ollama_fallback_to_lexical_when_unreachable() -> None:
+    """Verify OllamaEmbedder falls back safely to LexicalNgramEmbedder if Ollama is offline."""
+    from app.rag.store import OllamaEmbedder
+    import numpy as np
+
+    # Use a dummy non-existent port to simulate offline server with very short timeout
+    offline_embedder = OllamaEmbedder(
+        base_url="http://127.0.0.1:59999",
+        model_name="bge-m3",
+        timeout=0.2,
+    )
+
+    # Should NOT raise an exception; should return lexical fallback vector
+    vec = offline_embedder.embed_text("Uji coba fallback offline RAG")
+    assert isinstance(vec, np.ndarray)
+    assert len(vec) == 128  # Fallback to lexical dimension
+    assert np.linalg.norm(vec) > 0.0
+
+

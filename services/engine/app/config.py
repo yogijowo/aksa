@@ -54,6 +54,8 @@ class EngineConfig(BaseModel):
     aksa_root_dir: Path | None = Field(default=None)
     ollama_base_url: str = Field(default="http://127.0.0.1:11434")
     lmstudio_base_url: str = Field(default="http://127.0.0.1:1234/v1")
+    rag_embedding_mode: str = Field(default="lexical")  # lexical | ollama | onnx
+    rag_ollama_model: str = Field(default="bge-m3")
 
     def model_post_init(self, __context: object) -> None:
         if not self.auth_token:

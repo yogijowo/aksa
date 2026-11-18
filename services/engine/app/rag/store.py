@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 import hashlib
 import json
+import logging
 import os
 import re
 import stat
@@ -15,6 +17,8 @@ import aiosqlite
 import numpy as np
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 from app.core.auth_context import get_default_host_principal
 from app.core.sandbox import (
     RiskLevel,
@@ -45,16 +49,43 @@ INDONESIAN_SYNONYMS: dict[str, list[str]] = {
 }
 
 
-class LexicalNgramEmbedder:
+class AbstractEmbedder(ABC):
+    """Abstract base contract for local or neural vector embedding models (P2-01)."""
+
+    @abstractmethod
+    def embed_text(self, text: str, expand_synonyms: bool = False) -> np.ndarray:
+        """Compute a normalized dense embedding vector for text."""
+        ...
+
+    @property
+    @abstractmethod
+    def dimension(self) -> int:
+        """Vector embedding dimensionality."""
+        ...
+
+    @property
+    @abstractmethod
+    def model_name(self) -> str:
+        """Display name of the embedding model."""
+        ...
+
+
+class LexicalNgramEmbedder(AbstractEmbedder):
     """Offline lexical vector embedder using character & word n-gram projections.
 
-    Note (P1-7 Audit): This is an offline lexical n-gram projector with synonym-expanded
-    morphology matching, not a deep-learning transformer model. For neural semantic search,
-    Ollama (bge-m3/nomic-embed-text) or cloud embedding models can be configured.
+    Lightweight, deterministic, zero-download offline default.
     """
 
     def __init__(self, dim: int = EMBEDDING_DIM) -> None:
         self.dim = dim
+
+    @property
+    def dimension(self) -> int:
+        return self.dim
+
+    @property
+    def model_name(self) -> str:
+        return "lexical_ngram_128d"
 
     def embed_text(self, text: str, expand_synonyms: bool = False) -> np.ndarray:
         """Compute a normalized dense embedding vector for Indonesian/English text."""
@@ -70,7 +101,6 @@ class LexicalNgramEmbedder:
                 all_tokens.extend(syns)
 
         for tok in all_tokens:
-            # Word feature + character trigram features for robust Indonesian morphology matching
             grams = [tok] + [tok[i : i + 3] for i in range(max(0, len(tok) - 2))]
             for g in grams:
                 digest = hashlib.md5(g.encode("utf-8")).digest()
@@ -84,6 +114,65 @@ class LexicalNgramEmbedder:
         return vec
 
 
+class OllamaEmbedder(AbstractEmbedder):
+    """Neural vector embedder querying a local running Ollama instance with automatic fallback (P2-01)."""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        model_name: str | None = None,
+        fallback_embedder: AbstractEmbedder | None = None,
+        timeout: float = 2.0,
+    ) -> None:
+        self._base_url = (base_url or settings.ollama_base_url).rstrip("/")
+        self._model = model_name or settings.rag_ollama_model
+        self._fallback = fallback_embedder or LexicalNgramEmbedder()
+        self._timeout = timeout
+
+    @property
+    def dimension(self) -> int:
+        return 1024
+
+    @property
+    def model_name(self) -> str:
+        return f"ollama_{self._model}"
+
+    def embed_text(self, text: str, expand_synonyms: bool = False) -> np.ndarray:
+        """Query Ollama /api/embeddings with timeout and graceful fallback to lexical embedder."""
+        import httpx
+
+        if not text or not text.strip():
+            return np.zeros(self._fallback.dimension, dtype=np.float32)
+
+        url = f"{self._base_url}/api/embeddings"
+        payload = {"model": self._model, "prompt": text[:4000]}
+        try:
+            with httpx.Client(timeout=self._timeout) as client:
+                resp = client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw_emb = data.get("embedding")
+                    if raw_emb and isinstance(raw_emb, list):
+                        vec = np.array(raw_emb, dtype=np.float32)
+                        norm = float(np.linalg.norm(vec))
+                        if norm > 0:
+                            vec /= norm
+                        return vec
+        except Exception as exc:
+            logger.debug(f"[OllamaEmbedder Fallback] Gagal menghubungi Ollama di {url}: {exc}")
+
+        # Fail safe to offline lexical embedder
+        return self._fallback.embed_text(text, expand_synonyms=expand_synonyms)
+
+
+def create_rag_embedder(mode: str | None = None) -> AbstractEmbedder:
+    """Instantiate the active RAG embedder based on configuration or explicit mode."""
+    effective_mode = (mode or getattr(settings, "rag_embedding_mode", "lexical")).lower().strip()
+    if effective_mode == "ollama":
+        return OllamaEmbedder()
+    return LexicalNgramEmbedder()
+
+
 # Alias for backward compatibility
 MultilingualEmbedder = LexicalNgramEmbedder
 
@@ -91,10 +180,15 @@ MultilingualEmbedder = LexicalNgramEmbedder
 class HybridRAGStore:
     """Combines Embedded Dense Vectors (LanceDB directory / SQLite persistent table) and SQLite FTS5 BM25 via Reciprocal Rank Fusion."""
 
-    def __init__(self, db: DatabaseManager = db_manager, vector_dir: Path | None = None) -> None:
+    def __init__(
+        self,
+        db: DatabaseManager = db_manager,
+        vector_dir: Path | None = None,
+        embedder: AbstractEmbedder | None = None,
+    ) -> None:
         self.db = db
         self.vector_dir = vector_dir or settings.lancedb_dir
-        self.embedder = LexicalNgramEmbedder()
+        self.embedder = embedder or create_rag_embedder()
         self._vectors: dict[str, dict[str, Any]] = {}
         self._loaded = False
 
@@ -469,8 +563,9 @@ class HybridRAGStore:
             if workspace_id and meta.get("workspace_id") != workspace_id:
                 continue
             v = np.array(meta["vector"], dtype=np.float32)
-            score = float(np.dot(query_vec, v))
-            vec_candidates.append((cid, score))
+            if v.shape == query_vec.shape:
+                score = float(np.dot(query_vec, v))
+                vec_candidates.append((cid, score))
         vec_candidates.sort(key=lambda x: x[1], reverse=True)
         vec_ranks = {cid: rank for rank, (cid, _) in enumerate(vec_candidates[:50], start=1)}
 

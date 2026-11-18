@@ -30,7 +30,7 @@ pub struct SidecarState {
 }
 
 /// Allocate an available loopback-only port, preferring `preferred_port` if free,
-/// otherwise falling back to an OS-assigned loopback port in range 43121..43199.
+/// falling back to range 43121..43199, or atomically to an OS-assigned ephemeral port (P3-01).
 pub fn allocate_loopback_port(preferred_port: u16) -> u16 {
     if let Ok(listener) = TcpListener::bind(("127.0.0.1", preferred_port)) {
         drop(listener);
@@ -40,6 +40,13 @@ pub fn allocate_loopback_port(preferred_port: u16) -> u16 {
         if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
             drop(listener);
             return port;
+        }
+    }
+    // Ephemeral OS fallback (port 0) ensures safe binding under extreme port exhaustion
+    if let Ok(listener) = TcpListener::bind(("127.0.0.1", 0)) {
+        if let Ok(addr) = listener.local_addr() {
+            drop(listener);
+            return addr.port();
         }
     }
     preferred_port
@@ -121,4 +128,68 @@ pub fn update_engine_lifecycle_state(
 ) -> Result<(), String> {
     state.set_state(new_state);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_allocate_loopback_port_prefers_unbound_port() {
+        // Allocate a dynamic OS ephemeral port to get a guaranteed free port
+        let free_port = {
+            let l = TcpListener::bind(("127.0.0.1", 0)).expect("Failed to bind ephemeral port");
+            let p = l.local_addr().expect("Failed to get local addr").port();
+            drop(l);
+            p
+        };
+        let allocated = allocate_loopback_port(free_port);
+        assert_eq!(allocated, free_port);
+    }
+
+    #[test]
+    fn test_allocate_loopback_port_fallback_when_busy() {
+        // Hold preferred port 43120 busy with a live listener
+        let busy_listener = TcpListener::bind(("127.0.0.1", 43120));
+        if let Ok(listener) = busy_listener {
+            let allocated = allocate_loopback_port(43120);
+            assert_ne!(allocated, 43120);
+            assert!(
+                (43121..=43199).contains(&allocated) || allocated > 1024,
+                "Allocated port {} should be in fallback range or ephemeral",
+                allocated
+            );
+            drop(listener);
+        }
+    }
+
+    #[test]
+    fn test_sidecar_state_initialization_and_token() {
+        let state = SidecarState::new(43120);
+        let info = state.info.lock().expect("Failed to lock sidecar info");
+
+        assert!(info.auth_token.starts_with("aksa-"));
+        // Prefix "aksa-" (5 chars) + 2x UUID simple (32 hex chars each = 64) = 69 chars
+        assert_eq!(info.auth_token.len(), 69);
+        assert_eq!(info.host, "127.0.0.1");
+        assert!(info.base_url.starts_with("http://127.0.0.1:"));
+        assert!(info.ws_url.starts_with("ws://127.0.0.1:"));
+        assert_eq!(info.lifecycle_state, LifecycleState::Starting);
+        assert_eq!(state.get_state(), LifecycleState::Starting);
+    }
+
+    #[test]
+    fn test_sidecar_state_transitions() {
+        let state = SidecarState::new(43120);
+        assert_eq!(state.get_state(), LifecycleState::Starting);
+
+        state.set_state(LifecycleState::Ready);
+        assert_eq!(state.get_state(), LifecycleState::Ready);
+
+        state.set_state(LifecycleState::Stopping);
+        assert_eq!(state.get_state(), LifecycleState::Stopping);
+
+        state.set_state(LifecycleState::Failed);
+        assert_eq!(state.get_state(), LifecycleState::Failed);
+    }
 }

@@ -16,34 +16,49 @@ export interface EngineConnectionConfig {
 }
 
 /**
- * Generate a cryptographically secure random nonce using window.crypto.getRandomValues.
+ * Universal Crypto resolution across Browser, Tauri Webview, and Node.js test runtimes.
+ */
+function getCrypto(): Crypto | null {
+  if (typeof window !== "undefined" && window.crypto) {
+    return window.crypto;
+  }
+  if (typeof globalThis !== "undefined" && globalThis.crypto) {
+    return globalThis.crypto;
+  }
+  return null;
+}
+
+/**
+ * Generate a cryptographically secure random nonce using crypto.getRandomValues.
  */
 export function generateCryptographicNonce(): string {
-  if (typeof window !== "undefined" && window.crypto && window.crypto.getRandomValues) {
+  const cryptoObj = getCrypto();
+  if (cryptoObj && cryptoObj.getRandomValues) {
     const bytes = new Uint8Array(16);
-    window.crypto.getRandomValues(bytes);
+    cryptoObj.getRandomValues(bytes);
     return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   }
   return Date.now().toString(16) + Math.random().toString(16).substring(2);
 }
 
 /**
- * Compute HMAC-SHA256 in standard browser / Tauri webview environment.
+ * Compute HMAC-SHA256 in standard browser / Tauri webview / test environment.
  */
 export async function computeHmacSha256(keyStr: string, message: string): Promise<string> {
-  if (typeof window !== "undefined" && window.crypto && window.crypto.subtle) {
+  const cryptoObj = getCrypto();
+  if (cryptoObj && cryptoObj.subtle) {
     try {
       const encoder = new TextEncoder();
       const keyData = encoder.encode(keyStr);
       const msgData = encoder.encode(message);
-      const cryptoKey = await window.crypto.subtle.importKey(
+      const cryptoKey = await cryptoObj.subtle.importKey(
         "raw",
         keyData,
         { name: "HMAC", hash: "SHA-256" },
         false,
         ["sign"]
       );
-      const signature = await window.crypto.subtle.sign("HMAC", cryptoKey, msgData);
+      const signature = await cryptoObj.subtle.sign("HMAC", cryptoKey, msgData);
       return Array.from(new Uint8Array(signature))
         .map((b) => b.toString(16).padStart(2, "0"))
         .join("");

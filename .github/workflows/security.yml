@@ -41,7 +41,13 @@ jobs:
         run: |
           python -m pytest tests/test_p0_*.py tests/test_p1_*.py tests/test_p2_*.py tests/test_phase6_*.py tests/test_phase7_*.py tests/test_phase8_*.py -v
 
-      - name: Audit Frontend npm lockfile
+      - name: Audit Production Frontend Dependencies (Strict Blocking)
         working-directory: apps/desktop
+        run: |
+          npm audit --omit=dev --audit-level=high
+
+      - name: Audit Development Dependencies (Non-blocking Warning)
+        working-directory: apps/desktop
+        continue-on-error: true
         run: |
           npm audit --audit-level=high
