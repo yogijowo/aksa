@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
-  ArrowDown,
   ArrowUp,
   BrainCircuit,
   CheckCircle2,
@@ -9,13 +8,8 @@ import {
   ChevronRight,
   FileSpreadsheet,
   FileText,
-  FolderOpen,
   ExternalLink,
-  LayoutGrid,
   Loader2,
-  Monitor,
-  PlugZap,
-  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { useAksaStore } from "@/stores/useAksaStore";
@@ -58,7 +52,6 @@ export const WorkspaceChatView: React.FC = () => {
     liveExecutionSteps,
     teams,
     activeTeamId,
-    setActiveNav,
   } = useAksaStore();
   const [inputPrompt, setInputPrompt] = useState("");
   const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({
@@ -96,13 +89,12 @@ export const WorkspaceChatView: React.FC = () => {
       <div className="flex-1 overflow-y-auto px-6 py-8">
         <div className="max-w-[720px] mx-auto space-y-8">
           {messages.length === 0 ? (
-            /* Claude Desktop & Linear Inspired Clean Empty State with Desktop Intelligence Architecture */
-            <div className="py-8 sm:py-12 flex flex-col items-center text-center space-y-6">
-              {/* Minimal Warm Terracotta Accent Badge with Modern Faceted 'A' Mark */}
+            /* Minimal Clean Empty State */
+            <div className="min-h-[58vh] flex flex-col items-center justify-center text-center space-y-3.5">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#D97757]/12 border border-[#D97757]/35 text-[#D97757] shadow-lg shadow-[#D97757]/5">
                 <svg
-                  width={30}
-                  height={30}
+                  width={28}
+                  height={28}
                   viewBox="0 0 256 256"
                   fill="none"
                   xmlns="http://www.w3.org/2000/svg"
@@ -124,171 +116,13 @@ export const WorkspaceChatView: React.FC = () => {
                 </svg>
               </div>
 
-              <div className="space-y-2">
-                <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-zinc-100">
-                  AKSA
+              <div className="space-y-1.5">
+                <h1 className="text-lg sm:text-xl font-semibold tracking-tight text-zinc-100">
+                  Apa yang bisa AKSA bantu hari ini?
                 </h1>
-                <p className="text-xs sm:text-[13px] text-zinc-400 max-w-lg mx-auto leading-relaxed">
-                  Asisten Kerja &amp; Sistem Automasi — <strong className="text-zinc-200">AI Desktop Operating Assistant</strong> untuk kontrol aplikasi perangkat, izin native OS, dan keahlian eksternal.
+                <p className="text-xs text-zinc-400 max-w-md mx-auto">
+                  Berikan instruksi pembuatan dokumen, analisis arsip, atau automasi PC ke tim agen Anda.
                 </p>
-                <div className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.04] border border-white/[0.08] px-3 py-1 text-[11px] text-zinc-400 font-mono mt-1">
-                  <FolderOpen size={11} className="text-[#D97757]" />
-                  <span>Folder Aktif: {activeWorkspace?.folder_path || activeWorkspace?.name}</span>
-                </div>
-              </div>
-
-              {/* AKSA — Desktop Intelligence Architecture Card Flow (From Architecture Blueprint) */}
-              <div className="w-full max-w-xl mx-auto space-y-2.5 pt-1 text-left">
-                <div className="flex items-center justify-between px-1">
-                  <span className="text-[11px] font-semibold uppercase tracking-wider text-[#D97757]">
-                    Arsitektur Kecerdasan Desktop
-                  </span>
-                  <span className="text-[10.5px] text-zinc-500">
-                    Sistem 3 Lapisan Terisolasi
-                  </span>
-                </div>
-
-                {/* Layer 1: AKSA AI Orchestrator */}
-                <div 
-                  onClick={() => setActiveNav("tim_agen")}
-                  className="group p-4 rounded-2xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.08] hover:border-[#D97757]/40 transition-all cursor-pointer flex flex-col items-center text-center space-y-1.5 shadow-sm"
-                >
-                  <div className="w-8 h-8 rounded-xl bg-[#D97757]/15 border border-[#D97757]/30 flex items-center justify-center text-[#D97757]">
-                    <BrainCircuit size={16} />
-                  </div>
-                  <div className="font-semibold text-xs sm:text-sm text-zinc-100 group-hover:text-white transition-colors">
-                    AKSA AI Orchestrator
-                  </div>
-                  <p className="text-[11px] text-zinc-400">
-                    Memahami perintah, memilih aplikasi, skill, dan tools kerja
-                  </p>
-                </div>
-
-                {/* Arrow Down */}
-                <div className="flex justify-center text-zinc-600">
-                  <ArrowDown size={14} className="text-[#D97757]/70" />
-                </div>
-
-                {/* Layer 2: 2x2 Grid */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {/* Card 1: App Intelligence */}
-                  <div 
-                    onClick={() => setActiveNav("aplikasi")}
-                    className="group p-3.5 rounded-2xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.08] hover:border-emerald-500/40 transition-all cursor-pointer space-y-1.5"
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-lg bg-emerald-500/15 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                        <LayoutGrid size={13} />
-                      </div>
-                      <span className="font-semibold text-xs text-zinc-100 group-hover:text-white transition-colors">
-                        App Intelligence
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 leading-snug">
-                      Deteksi aplikasi terpasang dan sedang berjalan di PC
-                    </p>
-                  </div>
-
-                  {/* Card 2: OS Permission Broker */}
-                  <div 
-                    onClick={() => setActiveNav("izin_pc")}
-                    className="group p-3.5 rounded-2xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.08] hover:border-amber-500/40 transition-all cursor-pointer space-y-1.5"
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-lg bg-amber-500/15 border border-amber-500/30 flex items-center justify-center text-amber-300">
-                        <ShieldCheck size={13} />
-                      </div>
-                      <span className="font-semibold text-xs text-zinc-100 group-hover:text-white transition-colors">
-                        OS Permission Broker
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 leading-snug">
-                      Meminta izin melalui mekanisme Windows / macOS
-                    </p>
-                  </div>
-
-                  {/* Card 3: External Skill Manager */}
-                  <div 
-                    onClick={() => setActiveNav("keahlian")}
-                    className="group p-3.5 rounded-2xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.08] hover:border-purple-500/40 transition-all cursor-pointer space-y-1.5"
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-lg bg-purple-500/15 border border-purple-500/30 flex items-center justify-center text-purple-400">
-                        <Sparkles size={13} />
-                      </div>
-                      <span className="font-semibold text-xs text-zinc-100 group-hover:text-white transition-colors">
-                        External Skill Manager
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 leading-snug">
-                      Mengunduh, memeriksa, dan memasang skill terisolasi
-                    </p>
-                  </div>
-
-                  {/* Card 4: Integration Manager */}
-                  <div 
-                    onClick={() => setActiveNav("izin_pc")}
-                    className="group p-3.5 rounded-2xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.08] hover:border-sky-500/40 transition-all cursor-pointer space-y-1.5"
-                  >
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-6 rounded-lg bg-sky-500/15 border border-sky-500/30 flex items-center justify-center text-sky-400">
-                        <PlugZap size={13} />
-                      </div>
-                      <span className="font-semibold text-xs text-zinc-100 group-hover:text-white transition-colors">
-                        Integration Manager
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-zinc-400 leading-snug">
-                      MCP dan integrasi native aplikasi perangkat
-                    </p>
-                  </div>
-                </div>
-
-                {/* Arrow Down */}
-                <div className="flex justify-center text-zinc-600">
-                  <ArrowDown size={14} className="text-[#D97757]/70" />
-                </div>
-
-                {/* Layer 3: Native OS Execution Layer */}
-                <div className="p-3.5 rounded-2xl bg-[#21211F] border border-white/[0.08] flex flex-col items-center text-center space-y-1">
-                  <div className="flex items-center gap-2">
-                    <Monitor size={14} className="text-emerald-400" />
-                    <span className="font-semibold text-xs text-zinc-100">
-                      Native OS Execution Layer
-                    </span>
-                  </div>
-                  <p className="text-[10.5px] text-zinc-400">
-                    Windows / macOS · Akses sesuai izin · Audit Ledger · Emergency Stop
-                  </p>
-                </div>
-              </div>
-
-              {/* Clean Quick Starter Cards */}
-              <div className="w-full max-w-xl text-left pt-2 space-y-2">
-                <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 px-1">
-                  Aksi Cepat Populer
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  {QUICK_PROMPTS.map((qp) => (
-                    <button
-                      key={qp.label}
-                      onClick={() => setInputPrompt(qp.prompt)}
-                      className="group rounded-2xl bg-[#21211F] hover:bg-[#262624] border border-white/[0.07] hover:border-white/[0.14] p-4 text-left transition-all space-y-1.5"
-                    >
-                      <div className="flex items-center gap-2">
-                        <div className="flex h-6 w-6 items-center justify-center rounded-lg bg-white/[0.04] text-[#D97757] group-hover:bg-[#D97757]/10 transition-colors">
-                          <ToolCategoryIcon category={qp.category} size={13} />
-                        </div>
-                        <span className="text-xs font-medium text-zinc-200 group-hover:text-white transition-colors">
-                          {qp.label}
-                        </span>
-                      </div>
-                      <p className="text-[11.5px] leading-relaxed text-zinc-400 line-clamp-2">
-                        {qp.prompt}
-                      </p>
-                    </button>
-                  ))}
-                </div>
               </div>
             </div>
           ) : (
@@ -570,60 +404,50 @@ export const WorkspaceChatView: React.FC = () => {
         </div>
       </div>
 
-      {/* Bottom Floating Composer (Claude Desktop Signature Input Card) */}
+      {/* Bottom Floating Composer (Simple & Clean) */}
       <div className="px-6 pb-5 pt-2 bg-gradient-to-t from-[#191918] via-[#191918] to-transparent">
-        <div className="max-w-[720px] mx-auto space-y-2.5">
+        <div className="max-w-[680px] mx-auto space-y-2.5">
           <form
             onSubmit={handleSubmit}
-            className="rounded-2xl bg-[#21211F] border border-white/[0.09] focus-within:border-white/[0.18] shadow-xl px-4 pt-3 pb-2.5 transition-colors"
+            className="flex items-center gap-2 rounded-2xl bg-[#21211F] border border-white/[0.09] focus-within:border-white/[0.18] shadow-xl px-4 py-2.5 transition-colors"
           >
             <input
               type="text"
               value={inputPrompt}
               onChange={(e) => setInputPrompt(e.target.value)}
-              placeholder={`Beri instruksi ke tim agen di ${activeWorkspace?.name}...`}
-              className="w-full bg-transparent text-[13.5px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none pb-2.5"
+              placeholder={`Beri instruksi ke tim agen${activeWorkspace?.name ? ` (${activeWorkspace.name})` : ""}...`}
+              className="flex-1 bg-transparent text-[13.5px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none"
             />
 
-            <div className="flex items-center justify-between pt-1.5 border-t border-white/[0.05]">
-              <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-                <span className="inline-flex items-center gap-1.5 rounded-md bg-white/[0.03] px-2 py-1 text-zinc-400">
-                  <FolderOpen size={12} className="text-zinc-500" />
-                  {activeWorkspace?.name}
-                </span>
-                <span className="hidden sm:inline text-zinc-600">•</span>
-                <span className="hidden sm:inline text-zinc-500">Isolasi Konteks Aktif</span>
-              </div>
-
-              <button
-                type="submit"
-                disabled={!inputPrompt.trim()}
-                className={cn(
-                  "flex h-7 w-7 items-center justify-center rounded-lg transition-all",
-                  inputPrompt.trim()
-                    ? "bg-[#D97757] hover:bg-[#c96a4b] text-white"
-                    : "bg-white/[0.06] text-zinc-500 cursor-not-allowed"
-                )}
-                title="Kirim Instruksi"
-              >
-                <ArrowUp size={15} strokeWidth={2.2} />
-              </button>
-            </div>
+            <button
+              type="submit"
+              disabled={!inputPrompt.trim()}
+              className={cn(
+                "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all",
+                inputPrompt.trim()
+                  ? "bg-[#D97757] hover:bg-[#c96a4b] text-white"
+                  : "bg-white/[0.06] text-zinc-500 cursor-not-allowed"
+              )}
+              title="Kirim Instruksi"
+            >
+              <ArrowUp size={15} strokeWidth={2.2} />
+            </button>
           </form>
 
-          {/* Subtle Minimal Suggestion Pills */}
-          <div className="flex flex-wrap items-center justify-center gap-1.5">
-            {QUICK_PROMPTS.map((qp) => (
-              <button
-                key={qp.label}
-                onClick={() => setInputPrompt(qp.prompt)}
-                className="group inline-flex items-center gap-1.5 rounded-full bg-transparent hover:bg-white/[0.05] border border-white/[0.07] px-3 py-1 text-[11.5px] text-zinc-400 hover:text-zinc-200 transition-colors"
-              >
-                <ToolCategoryIcon category={qp.category} size={12} />
-                <span>{qp.label}</span>
-              </button>
-            ))}
-          </div>
+          {messages.length === 0 && (
+            <div className="flex flex-wrap items-center justify-center gap-1.5">
+              {QUICK_PROMPTS.map((qp) => (
+                <button
+                  key={qp.label}
+                  onClick={() => setInputPrompt(qp.prompt)}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white/[0.02] hover:bg-white/[0.06] border border-white/[0.07] px-3 py-1 text-[11px] text-zinc-400 hover:text-zinc-200 transition-colors"
+                >
+                  <ToolCategoryIcon category={qp.category} size={11} />
+                  <span>{qp.label}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>
