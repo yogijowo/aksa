@@ -18,16 +18,18 @@ from app.api.routes import api_router
 from app.api.ws import ws_router
 from app.config import settings
 from app.core.observability import observability_manager
+from app.core.privacy_gate import privacy_policy_gate
 from app.db.models import db_manager
 from app.db.seed import seed_default_indonesian_team
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
-    """Initialize AppData directories, SQLite schema, and default Indonesian agent team on startup."""
+    """Initialize AppData directories, SQLite schema, default Indonesian agent team, and persistent privacy policy."""
     settings.ensure_directories()
     await db_manager.initialize()
     await seed_default_indonesian_team(db_manager)
+    await privacy_policy_gate.ensure_loaded_from_db(db_manager)
     yield
 
 
@@ -176,7 +178,26 @@ def main() -> None:
     parser.add_argument("--auth-token", default=None, help="Per-session security token")
     parser.add_argument("--dev", action="store_true", help="Run in local development mode (requires AKSA_DEV_MODE=1)")
     parser.add_argument("--production", action="store_true", help="Explicitly enforce production mode")
+    parser.add_argument("--version", action="store_true", help="Print AKSA sidecar engine version and exit")
+    parser.add_argument("--smoke-test", action="store_true", help="Run internal subsystems health verification and exit")
     args = parser.parse_args()
+
+    if args.version:
+        print("AKSA Engine v1.0.0 (API v1)")
+        sys.exit(0)
+
+    if args.smoke_test:
+        import asyncio
+
+        async def _run_smoke() -> None:
+            settings.ensure_directories()
+            await db_manager.initialize()
+            await seed_default_indonesian_team(db_manager)
+            await privacy_policy_gate.ensure_loaded_from_db(db_manager)
+            print("[SMOKE-TEST] All sidecar engine subsystems initialized and verified successfully.")
+
+        asyncio.run(_run_smoke())
+        sys.exit(0)
 
     if args.host not in ("127.0.0.1", "::1", "localhost"):
         raise ValueError(f"Pelanggaran Keamanan: Sidecar hanya boleh bind ke loopback, bukan '{args.host}'.")

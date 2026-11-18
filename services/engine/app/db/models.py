@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS workspaces (
     allow_write INTEGER DEFAULT 1,
     allow_execute INTEGER DEFAULT 0,
     auto_rag_sync INTEGER DEFAULT 1,
+    owner_id TEXT DEFAULT 'default_user',
     last_indexed_at TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -63,6 +64,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     workspace_id TEXT REFERENCES workspaces(id) ON DELETE SET NULL,
     team_id TEXT REFERENCES agent_teams(id) ON DELETE SET NULL,
     source TEXT DEFAULT 'desktop',
+    principal_id TEXT DEFAULT 'default_user',
     telegram_chat_id INTEGER,
     compacted_summary TEXT,
     total_input_tokens INTEGER DEFAULT 0,
@@ -358,6 +360,14 @@ class DatabaseManager:
                 await db.execute("ALTER TABLE installed_applications ADD COLUMN category_label TEXT DEFAULT 'Aplikasi Komputer Umum'")
             except Exception:
                 pass
+            try:
+                await db.execute("ALTER TABLE workspaces ADD COLUMN owner_id TEXT DEFAULT 'default_user'")
+            except Exception:
+                pass
+            try:
+                await db.execute("ALTER TABLE sessions ADD COLUMN principal_id TEXT DEFAULT 'default_user'")
+            except Exception:
+                pass
 
             now = _now_iso()
             for ver, name in (
@@ -478,6 +488,23 @@ class DatabaseManager:
             await db.commit()
             return cursor.rowcount > 0
 
+    async def get_workspace(self, workspace_id: str) -> dict[str, Any] | None:
+        """Retrieve a specific authorized PC workspace folder by ID."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            item = _row_to_dict(row)
+            item["allow_read"] = bool(item["allow_read"])
+            item["allow_write"] = bool(item["allow_write"])
+            item["allow_execute"] = bool(item["allow_execute"])
+            item["auto_rag_sync"] = bool(item["auto_rag_sync"])
+            if "owner_id" not in item or not item["owner_id"]:
+                item["owner_id"] = "default_user"
+            return item
+
     async def list_workspaces(self) -> list[dict[str, Any]]:
         """List all authorized PC workspace folders."""
         async with aiosqlite.connect(self.db_path) as db:
@@ -491,6 +518,8 @@ class DatabaseManager:
                 item["allow_write"] = bool(item["allow_write"])
                 item["allow_execute"] = bool(item["allow_execute"])
                 item["auto_rag_sync"] = bool(item["auto_rag_sync"])
+                if "owner_id" not in item or not item["owner_id"]:
+                    item["owner_id"] = "default_user"
                 results.append(item)
             return results
 
@@ -499,20 +528,22 @@ class DatabaseManager:
         ws_id = payload.get("id") or f"ws_{uuid.uuid4().hex[:10]}"
         resolved_path = str(Path(payload["folder_path"]).expanduser().resolve())
         name = payload.get("name") or Path(resolved_path).name or resolved_path
+        owner_id = payload.get("owner_id") or "default_user"
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute(
                 """
                 INSERT INTO workspaces (
-                    id, name, folder_path, allow_read, allow_write, allow_execute, auto_rag_sync, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, name, folder_path, allow_read, allow_write, allow_execute, auto_rag_sync, owner_id, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(folder_path) DO UPDATE SET
                     name = excluded.name,
                     allow_read = excluded.allow_read,
                     allow_write = excluded.allow_write,
                     allow_execute = excluded.allow_execute,
-                    auto_rag_sync = excluded.auto_rag_sync
+                    auto_rag_sync = excluded.auto_rag_sync,
+                    owner_id = COALESCE(excluded.owner_id, workspaces.owner_id)
                 """,
                 (
                     ws_id,
@@ -522,6 +553,7 @@ class DatabaseManager:
                     int(payload.get("allow_write", True)),
                     int(payload.get("allow_execute", False)),
                     int(payload.get("auto_rag_sync", True)),
+                    owner_id,
                     _now_iso(),
                 ),
             )
@@ -533,6 +565,8 @@ class DatabaseManager:
             item["allow_write"] = bool(item["allow_write"])
             item["allow_execute"] = bool(item["allow_execute"])
             item["auto_rag_sync"] = bool(item["auto_rag_sync"])
+            if "owner_id" not in item or not item["owner_id"]:
+                item["owner_id"] = owner_id
             return item
 
     async def delete_workspace(self, workspace_id: str) -> bool:
@@ -549,16 +583,30 @@ class DatabaseManager:
             cursor = await db.execute("SELECT * FROM sessions ORDER BY updated_at DESC")
             return [_row_to_dict(r) for r in await cursor.fetchall()]
 
+    async def get_session(self, session_id: str) -> dict[str, Any] | None:
+        """Retrieve a specific chat session by ID."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            item = _row_to_dict(row)
+            if "principal_id" not in item or not item["principal_id"]:
+                item["principal_id"] = "default_user"
+            return item
+
     async def create_session(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create a new chat session."""
         session_id = payload.get("id") or f"sess_{uuid.uuid4().hex[:10]}"
+        principal_id = payload.get("principal_id") or "default_user"
         now = _now_iso()
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute(
                 """
-                INSERT INTO sessions (id, title, workspace_id, team_id, source, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO sessions (id, title, workspace_id, team_id, source, principal_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session_id,
@@ -566,13 +614,13 @@ class DatabaseManager:
                     payload.get("workspace_id"),
                     payload.get("team_id"),
                     payload.get("source", "desktop"),
+                    principal_id,
                     now,
                     now,
                 ),
             )
             await db.commit()
-            cursor = await db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,))
-            return _row_to_dict(await cursor.fetchone())
+            return await self.get_session(session_id)
 
     # --- Installed Applications CRUD ---
     async def upsert_installed_app(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -848,6 +896,9 @@ class DatabaseManager:
             await db.commit()
             cursor = await db.execute("SELECT * FROM permission_audit_events WHERE id = ?", (event_id,))
             return _row_to_dict(await cursor.fetchone())
+
+    # Alias for consistent naming across modules
+    record_permission_audit = log_permission_audit_event
 
     async def list_permission_audit_events(self, limit: int = 50) -> list[dict[str, Any]]:
         async with aiosqlite.connect(self.db_path) as db:

@@ -23,6 +23,8 @@ import {
   Layers,
   Sparkles,
   Info,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useAksaStore } from "@/stores/useAksaStore";
 import {
@@ -389,6 +391,7 @@ export const FeatureSectionsView: React.FC = () => {
   const [configuredProviders, setConfiguredProviders] = useState<Record<string, boolean>>({});
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
   const [isSavingKey, setIsSavingKey] = useState<string | null>(null);
+  const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [testingStatus, setTestingStatus] = useState<
     Record<string, { loading: boolean; ok?: boolean; message?: string }>
   >({});
@@ -668,16 +671,31 @@ export const FeatureSectionsView: React.FC = () => {
 
                       <div className="space-y-2 pt-1">
                         <div className="flex items-center gap-2">
-                          <div className="relative flex-1">
+                          <div className="relative flex-1 flex items-center">
                             <input
-                              type="text"
+                              type={showKeys[prov.id] ? "text" : "password"}
                               value={currentVal}
                               onChange={(e) =>
                                 setApiKeys((prev) => ({ ...prev, [prov.id]: e.target.value }))
                               }
                               placeholder={prov.placeholder}
-                              className="w-full rounded-lg bg-[#191918] border border-white/[0.08] px-3 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
+                              autoComplete="off"
+                              spellCheck={false}
+                              className="w-full rounded-lg bg-[#191918] border border-white/[0.08] pl-3 pr-8 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
                             />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setShowKeys((prev) => ({
+                                  ...prev,
+                                  [prov.id]: !prev[prov.id],
+                                }))
+                              }
+                              title={showKeys[prov.id] ? "Sembunyikan Kunci" : "Tampilkan Kunci"}
+                              className="absolute right-2 text-zinc-500 hover:text-zinc-300 transition-colors p-0.5"
+                            >
+                              {showKeys[prov.id] ? <EyeOff size={13} /> : <Eye size={13} />}
+                            </button>
                           </div>
                           <button
                             onClick={() => void handleSaveKey(prov.id)}

@@ -7,6 +7,9 @@ import hashlib
 import json
 import os
 import shutil
+import stat
+import threading
+import urllib.parse
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
@@ -79,6 +82,7 @@ class ApprovalGrant(BaseModel):
     id: str
     approval_id: str = ""
     action_id: str = Field(default_factory=lambda: f"act_{uuid.uuid4().hex[:10]}")
+    principal_id: str = "default_user"
     user_id: str = "default_user"
     tool_name: str
     tool_version: str = "1.0.0"
@@ -114,7 +118,15 @@ def compute_canonical_arguments_hash(arguments: dict[str, Any]) -> str:
     filtered = {
         k: v
         for k, v in arguments.items()
-        if k not in ("hitl_grant_id", "session_id", "workspace_id", "tool_version")
+        if k not in (
+            "hitl_grant_id",
+            "session_id",
+            "workspace_id",
+            "tool_version",
+            "action_id",
+            "principal_id",
+            "resource_path",
+        )
         and k not in FORBIDDEN_POLICY_OVERRIDE_FIELDS
     }
     cleaned = json.dumps(filtered, sort_keys=True, default=str)
@@ -126,6 +138,7 @@ class ExecutionPolicyGateway:
 
     def __init__(self) -> None:
         self._grants: dict[str, ApprovalGrant] = {}
+        self._lock = threading.Lock()
 
     def create_grant(
         self,
@@ -133,6 +146,8 @@ class ExecutionPolicyGateway:
         arguments: dict[str, Any],
         session_id: str | None = None,
         workspace_id: str | None = None,
+        action_id: str | None = None,
+        principal_id: str = "default_user",
         resource_path: str | None = None,
         tool_version: str = "1.0.0",
         risk_level: str = "high",
@@ -146,19 +161,36 @@ class ExecutionPolicyGateway:
         filtered_args = {
             k: v
             for k, v in arguments.items()
-            if k not in ("hitl_grant_id", "session_id", "workspace_id", "tool_version")
+            if k not in (
+                "hitl_grant_id",
+                "session_id",
+                "workspace_id",
+                "tool_version",
+                "action_id",
+                "principal_id",
+                "resource_path",
+            )
+            and k not in FORBIDDEN_POLICY_OVERRIDE_FIELDS
         }
+        canonical_res = (
+            str(os.path.realpath(os.path.expanduser(str(resource_path))))
+            if resource_path
+            else None
+        )
         grant = ApprovalGrant(
             id=grant_id,
             approval_id=grant_id,
+            action_id=action_id or f"act_{uuid.uuid4().hex[:10]}",
+            principal_id=principal_id,
+            user_id=principal_id,
             tool_name=tool_name,
             tool_version=tool_version,
             arguments=filtered_args,
             arguments_hash=compute_canonical_arguments_hash(arguments),
             session_id=session_id,
             workspace_id=workspace_id,
-            resource_path=resource_path,
-            resource_ids=[resource_path] if resource_path else [],
+            resource_path=canonical_res,
+            resource_ids=[canonical_res] if canonical_res else [],
             risk_level=risk_level,
             data_classification=data_classification,
             created_at=now_iso,
@@ -168,7 +200,8 @@ class ExecutionPolicyGateway:
             one_time=True,
             consumed=False,
         )
-        self._grants[grant_id] = grant
+        with self._lock:
+            self._grants[grant_id] = grant
         return grant
 
     def verify_and_consume_grant(
@@ -178,43 +211,88 @@ class ExecutionPolicyGateway:
         arguments: dict[str, Any],
         session_id: str | None = None,
         workspace_id: str | None = None,
+        action_id: str | None = None,
+        principal_id: str | None = None,
+        resource_path: str | None = None,
         tool_version: str = "1.0.0",
     ) -> bool:
-        grant = self._grants.get(grant_id)
-        if not grant or grant.consumed:
-            return False
-        if grant.decision != "approved":
-            return False
-        if grant.tool_name != tool_name:
-            return False
-        if grant.tool_version != tool_version:
-            return False
-        if grant.arguments_hash != compute_canonical_arguments_hash(arguments):
-            return False
-        if grant.session_id and session_id and grant.session_id != session_id:
-            return False
-        if grant.workspace_id and workspace_id and grant.workspace_id != workspace_id:
-            return False
-        now_iso = datetime.now(timezone.utc).isoformat()
-        if now_iso > grant.expires_at:
-            grant.decision = "expired"
+        if not grant_id or not str(grant_id).strip():
             return False
 
-        # Atomically consume one-time grant before execution to prevent replay attacks
-        if grant.one_time:
-            grant.consumed = True
-        return True
+        with self._lock:
+            grant = self._grants.get(grant_id)
+            if not grant or grant.consumed:
+                return False
+            if grant.decision != "approved":
+                return False
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if now_iso > grant.expires_at:
+                grant.decision = "expired"
+                grant.consumed = True
+                return False
+
+            # Strict tool & version check
+            if grant.tool_name != tool_name:
+                return False
+            if grant.tool_version != tool_version:
+                return False
+
+            # Arguments hash check
+            if grant.arguments_hash != compute_canonical_arguments_hash(arguments):
+                return False
+
+            # Fail-closed session binding: if grant was bound to a session, action must match
+            if grant.session_id:
+                if not session_id or grant.session_id != session_id:
+                    return False
+            elif session_id:
+                return False
+
+            # Fail-closed workspace binding: if grant was bound to a workspace, action must match
+            if grant.workspace_id:
+                if not workspace_id or grant.workspace_id != workspace_id:
+                    return False
+            elif workspace_id:
+                return False
+
+            # Fail-closed action binding: if action_id is bound, must match
+            if grant.action_id and action_id:
+                if grant.action_id != action_id:
+                    return False
+
+            # Fail-closed principal binding
+            if grant.principal_id:
+                active_principal = principal_id or "default_user"
+                if grant.principal_id != active_principal:
+                    return False
+
+            # Fail-closed resource path binding
+            if grant.resource_path:
+                if not resource_path:
+                    return False
+                canon_grant_res = os.path.realpath(os.path.expanduser(str(grant.resource_path)))
+                canon_act_res = os.path.realpath(os.path.expanduser(str(resource_path)))
+                if canon_grant_res != canon_act_res:
+                    return False
+
+            # Atomically consume one-time grant immediately before execution
+            if grant.one_time:
+                grant.consumed = True
+            return True
 
     def revoke_grant(self, grant_id: str) -> bool:
-        grant = self._grants.get(grant_id)
-        if not grant:
-            return False
-        grant.decision = "revoked"
-        grant.consumed = True
-        return True
+        with self._lock:
+            grant = self._grants.get(grant_id)
+            if not grant:
+                return False
+            grant.decision = "revoked"
+            grant.consumed = True
+            return True
 
     def get_grant(self, grant_id: str) -> ApprovalGrant | None:
-        return self._grants.get(grant_id)
+        with self._lock:
+            return self._grants.get(grant_id)
 
     async def execute_tool(
         self,
@@ -246,7 +324,15 @@ class ExecutionPolicyGateway:
 
         grant_id = arguments.get("hitl_grant_id")
         workspace_id = arguments.get("workspace_id")
+        action_id = arguments.get("action_id")
+        principal_id = arguments.get("principal_id") or "default_user"
         tool_version = arguments.get("tool_version", "1.0.0")
+        resource_path = (
+            arguments.get("resource_path")
+            or arguments.get("target_path")
+            or arguments.get("file_path")
+            or arguments.get("working_dir")
+        )
 
         requires_approval = risk_level in (
             RiskLevel.HIGH,
@@ -261,6 +347,9 @@ class ExecutionPolicyGateway:
                 arguments=arguments,
                 session_id=session_id,
                 workspace_id=workspace_id,
+                action_id=action_id,
+                principal_id=principal_id,
+                resource_path=resource_path,
                 tool_version=tool_version,
             ):
                 return ToolResult(
@@ -281,7 +370,14 @@ class ExecutionPolicyGateway:
         clean_args = {
             k: v
             for k, v in arguments.items()
-            if k not in ("hitl_grant_id", "session_id", "workspace_id", "tool_version")
+            if k not in (
+                "hitl_grant_id",
+                "session_id",
+                "workspace_id",
+                "tool_version",
+                "action_id",
+                "principal_id",
+            )
         }
         try:
             return await handler(**clean_args)
@@ -304,6 +400,78 @@ class ExecutionPolicyGateway:
 
 
 execution_policy_gateway = ExecutionPolicyGateway()
+
+
+def canonicalize_and_validate_path(
+    candidate_path: str | Path,
+    authorized_root: str | Path,
+) -> Path:
+    """Canonicalize candidate_path and strictly verify that it resides within authorized_root.
+
+    Rejects:
+    - Path traversal sequences (../, ..\\)
+    - URL-encoded traversals (%2e%2e, %2f, %5c)
+    - Embedded null bytes
+    - UNC network paths (\\\\, //)
+    - Alternate Data Streams (ADS)
+    - Symlinks / directory junctions resolving outside authorized_root
+    - Special device files (FIFOs, sockets, character/block devices)
+
+    Raises SandboxViolationError if the path attempts to escape authorized_root or is invalid.
+    Never leaks whether a private non-authorized file exists on disk.
+    """
+    raw_str = str(candidate_path).strip()
+    if "\0" in raw_str:
+        raise SandboxViolationError("Akses ditolak oleh Sandbox AKSA: Path mengandung karakter null byte ilegal.")
+
+    # URL-decode once and twice to handle %2e%2e and double-encoded traversals
+    unquoted = urllib.parse.unquote(raw_str)
+    unquoted_twice = urllib.parse.unquote(unquoted)
+    for text in (raw_str, unquoted, unquoted_twice):
+        if "\0" in text:
+            raise SandboxViolationError("Akses ditolak oleh Sandbox AKSA: Path mengandung karakter null byte ilegal.")
+
+    if unquoted_twice.startswith("\\\\") or unquoted_twice.startswith("//"):
+        raise SandboxViolationError(
+            f"Akses ditolak oleh Sandbox AKSA: Path jaringan UNC '{raw_str}' tidak diizinkan."
+        )
+
+    # Normalize Windows backslashes for cross-platform path traversal detection
+    cleaned_path = unquoted_twice.replace("\\", "/")
+    expanded = os.path.expanduser(cleaned_path)
+    base_name = Path(expanded).name
+    if ":" in base_name:
+        raise SandboxViolationError(
+            f"Akses ditolak oleh Sandbox AKSA: Alternate Data Stream (ADS) tidak diizinkan pada '{raw_str}'."
+        )
+
+    canonical_root = Path(os.path.realpath(os.path.expanduser(str(authorized_root))))
+
+    # If candidate is relative, anchor it to authorized_root
+    cand = Path(expanded)
+    if not cand.is_absolute():
+        cand = canonical_root / cand
+
+    canonical_candidate = Path(os.path.realpath(cand))
+
+    # Strict boundary check: candidate must be identical to root or a descendant of root
+    if canonical_candidate != canonical_root and not canonical_candidate.is_relative_to(canonical_root):
+        raise SandboxViolationError(
+            "Akses ditolak oleh Sandbox AKSA: Path berada di luar Folder Kerja yang diizinkan."
+        )
+
+    # Special file check (FIFOs, sockets, devices)
+    if canonical_candidate.exists():
+        try:
+            mode = canonical_candidate.stat().st_mode
+            if stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or stat.S_ISCHR(mode) or stat.S_ISBLK(mode):
+                raise SandboxViolationError(
+                    "Akses ditolak oleh Sandbox AKSA: Tipe file khusus (FIFO/Socket/Device) tidak diizinkan."
+                )
+        except OSError:
+            pass
+
+    return canonical_candidate
 
 
 class SandboxManager:
@@ -354,12 +522,20 @@ class SandboxManager:
         Raises SandboxViolationError if outside allowed_paths, UNC network path, ADS, or permission is disabled.
         """
         raw_str = str(target_path).strip()
-        if raw_str.startswith("\\\\") or raw_str.startswith("//"):
+        if "\0" in raw_str:
+            raise SandboxViolationError("Akses ditolak oleh Sandbox AKSA: Path mengandung karakter null byte ilegal.")
+
+        unquoted = urllib.parse.unquote(raw_str)
+        unquoted_twice = urllib.parse.unquote(unquoted)
+        if "\0" in unquoted_twice:
+            raise SandboxViolationError("Akses ditolak oleh Sandbox AKSA: Path mengandung karakter null byte ilegal.")
+
+        if unquoted_twice.startswith("\\\\") or unquoted_twice.startswith("//"):
             raise SandboxViolationError(
                 f"Akses ditolak oleh Sandbox AKSA: Path jaringan UNC '{raw_str}' tidak diizinkan."
             )
 
-        expanded = os.path.expanduser(raw_str)
+        expanded = os.path.expanduser(unquoted_twice)
         if ":" in Path(expanded).name:
             raise SandboxViolationError(
                 f"Akses ditolak oleh Sandbox AKSA: Alternate Data Stream (ADS) tidak diizinkan pada '{raw_str}'."
@@ -380,6 +556,17 @@ class SandboxManager:
             raise SandboxViolationError(
                 f"Akses ditolak oleh Sandbox AKSA: Path '{resolved}' berada di luar Folder Kerja yang diizinkan."
             )
+
+        # Check for special files
+        if resolved.exists():
+            try:
+                st_mode = resolved.stat().st_mode
+                if stat.S_ISFIFO(st_mode) or stat.S_ISSOCK(st_mode) or stat.S_ISCHR(st_mode) or stat.S_ISBLK(st_mode):
+                    raise SandboxViolationError(
+                        "Akses ditolak oleh Sandbox AKSA: Tipe file khusus (FIFO/Socket/Device) tidak diizinkan."
+                    )
+            except OSError:
+                pass
 
         if mode == "read" and not matched_policy.allow_read:
             raise SandboxViolationError(
@@ -445,21 +632,29 @@ class SandboxManager:
         risk_level: RiskLevel = RiskLevel.HIGH,
         target_path: str | None = None,
         agent_name: str = "Operator PC & Automasi Sistem",
+        action_id: str | None = None,
         session_id: str | None = None,
+        workspace_id: str | None = None,
         arguments: dict[str, Any] | None = None,
+        tool_version: str = "1.0.0",
+        principal_id: str = "default_user",
     ) -> HITLApprovalRequest:
         """Create a Human-in-the-Loop approval request and broadcast it to the Desktop UI."""
         req_id = f"hitl_{uuid.uuid4().hex[:10]}"
+        act_id = action_id or f"act_{uuid.uuid4().hex[:10]}"
         now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=300)
         args_payload = arguments or {}
         req = HITLApprovalRequest(
             id=req_id,
+            action_id=act_id,
             tool_name=tool_name,
+            tool_version=tool_version,
             risk_level=risk_level,
             title_id=title_id,
             description_id=description_id,
             target_path=target_path,
+            workspace_id=workspace_id,
             agent_name=agent_name,
             arguments=args_payload,
             arguments_hash=compute_canonical_arguments_hash(args_payload),
@@ -483,6 +678,7 @@ class SandboxManager:
         request_id: str,
         approved: bool,
         session_id: str | None = None,
+        principal_id: str = "default_user",
     ) -> HITLApprovalRequest:
         """Approve or reject a pending HITL request, issue an ApprovalGrant if approved, and notify waiting coroutines."""
         req = self._pending_approvals.get(request_id)
@@ -495,8 +691,12 @@ class SandboxManager:
         if approved:
             grant = execution_policy_gateway.create_grant(
                 tool_name=req.tool_name,
+                tool_version=req.tool_version,
                 arguments=req.arguments,
                 session_id=session_id or req.session_id,
+                workspace_id=req.workspace_id,
+                action_id=req.action_id,
+                principal_id=principal_id,
                 resource_path=req.target_path,
             )
             req.grant_id = grant.id

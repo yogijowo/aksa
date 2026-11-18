@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
+from pathlib import Path
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -52,6 +54,26 @@ async def test_p0_production_auth_and_docs_protection() -> None:
         async with AsyncClient(transport=transport, base_url="http://test", headers=bad_headers) as client:
             resp_bad = await client.get("/api/v1/teams")
             assert resp_bad.status_code == 401
+
+        # 7. Challenge-response HMAC identity verification (P0.3, P1-5)
+        import hashlib
+        import hmac
+        nonce = "d3adbeefcafe0123456789abcdef"
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            resp_challenge = await client.get(f"/api/v1/health?nonce={nonce}")
+            assert resp_challenge.status_code == 200
+            data = resp_challenge.json()
+            assert data["engine"] == "aksa-engine"
+            expected_hmac = hmac.new(
+                settings.auth_token.encode("utf-8"),
+                nonce.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            assert data["nonce_hmac"] == expected_hmac
+
+            # Wrong key must not match HMAC
+            fake_hmac = hmac.new(b"attacker-token", nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+            assert data["nonce_hmac"] != fake_hmac
     finally:
         settings.dev_mode = orig_dev
         settings.auth_token = orig_token
@@ -59,13 +81,28 @@ async def test_p0_production_auth_and_docs_protection() -> None:
 
 def test_p0_engine_refuses_to_start_without_token_in_production() -> None:
     """Verify that launching app.main without an auth token in production mode immediately terminates."""
+    engine_dir = Path(__file__).resolve().parent.parent
+    clean_env = os.environ.copy()
+    clean_env.pop("AKSA_AUTH_TOKEN", None)
+    clean_env.pop("AKSA_DEV_MODE", None)
+    clean_env["PYTHONPATH"] = str(engine_dir)
+
     proc = subprocess.run(
         [sys.executable, "-m", "app.main", "--production"],
-        cwd="services/engine",
+        cwd=str(engine_dir),
         capture_output=True,
         text=True,
-        env={**dict(filter(lambda kv: kv[0] != "AKSA_AUTH_TOKEN" and kv[0] != "AKSA_DEV_MODE", dict().items()))},
+        env=clean_env,
     )
-    assert proc.returncode == 1
-    assert "FATAL" in proc.stderr
-    assert "mode produksi" in proc.stderr
+    assert proc.returncode == 1, (
+        f"Process did not terminate with exit code 1 as expected. Returncode={proc.returncode}\n"
+        f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+    )
+    assert "FATAL" in proc.stderr, (
+        f"Expected 'FATAL' token refusal in stderr.\n"
+        f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+    )
+    assert "mode produksi" in proc.stderr, (
+        f"Expected 'mode produksi' error message in stderr.\n"
+        f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
+    )

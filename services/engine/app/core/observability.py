@@ -113,6 +113,21 @@ class StructuredObservabilityManager:
             self._debug_logs = self._debug_logs[-self._max_entries :]
         return entry
 
+    def record_event(
+        self,
+        event_type: str,
+        severity: str = "ERROR",
+        details: dict[str, Any] | None = None,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.log_event(
+            level=severity,
+            component="engine",
+            message=f"Event: {event_type}",
+            session_id=session_id,
+            details=details,
+        )
+
     def get_debug_logs(self, limit: int = 50) -> list[dict[str, Any]]:
         return list(reversed(self._debug_logs[-limit:]))
 

@@ -7,20 +7,27 @@ import asyncio
 import hashlib
 import hmac
 import os
+import stat
 import subprocess
 import sys
 from typing import Any
 
 import aiosqlite
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.core.llm_router import UnifiedLLMRouter
 from app.core.observability import observability_manager
 from app.core.orchestrator import HierarchicalOrchestrator
-from app.core.sandbox import RiskLevel, SandboxViolationError, WorkspacePolicy, sandbox_manager
+from app.core.sandbox import (
+    RiskLevel,
+    SandboxViolationError,
+    WorkspacePolicy,
+    canonicalize_and_validate_path,
+    sandbox_manager,
+)
 from app.db.models import db_manager
 from app.rag.store import rag_store
 from app.rag.watcher import rag_watcher
@@ -107,6 +114,7 @@ class UpsertWorkspaceRequest(BaseModel):
     allow_write: bool = True
     allow_execute: bool = False
     auto_rag_sync: bool = True
+    owner_id: str | None = None
 
 
 class CreateSessionRequest(BaseModel):
@@ -355,7 +363,7 @@ async def list_workspaces() -> dict[str, Any]:
 
 
 @api_router.post("/workspaces")
-async def register_workspace(req: UpsertWorkspaceRequest) -> dict[str, Any]:
+async def register_workspace(req: UpsertWorkspaceRequest, request: Request) -> dict[str, Any]:
     """Authorize a PC folder for agent access."""
     target = Path(req.folder_path).expanduser()
     if not target.exists() or not target.is_dir():
@@ -363,7 +371,10 @@ async def register_workspace(req: UpsertWorkspaceRequest) -> dict[str, Any]:
             status_code=400,
             detail=f"Folder '{req.folder_path}' tidak ditemukan di komputer ini.",
         )
-    workspace = await db_manager.upsert_workspace(req.model_dump())
+    principal_id = request.headers.get("X-Principal-ID") or req.owner_id or "default_user"
+    payload = req.model_dump()
+    payload["owner_id"] = principal_id
+    workspace = await db_manager.upsert_workspace(payload)
     sandbox_manager.register_workspace(
         WorkspacePolicy(
             folder_path=str(target),
@@ -535,32 +546,77 @@ async def open_system_path(req: OpenPathRequest) -> dict[str, Any]:
 
 
 @api_router.get("/workspaces/{workspace_id}/files")
-async def list_workspace_files(workspace_id: str) -> dict[str, Any]:
+async def list_workspace_files(workspace_id: str, request: Request) -> dict[str, Any]:
     """List top-level files inside an authorized workspace folder."""
-    workspaces = await db_manager.list_workspaces()
-    ws = next((w for w in workspaces if w["id"] == workspace_id), None)
+    principal_id = request.headers.get("X-Principal-ID") or "default_user"
+    ws = await db_manager.get_workspace(workspace_id)
     if not ws:
         raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
 
-    folder = Path(ws["folder_path"])
-    if not folder.exists():
+    if ws.get("owner_id") and ws["owner_id"] != principal_id:
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": "filesystem.workspace.list",
+            "resource_scope": workspace_id,
+            "decision": "deny",
+            "reason_code": "PRINCIPAL_MISMATCH",
+        })
+        raise HTTPException(status_code=403, detail="Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
+
+    if not ws.get("allow_read", True):
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": "filesystem.workspace.list",
+            "resource_scope": workspace_id,
+            "decision": "deny",
+            "reason_code": "READ_PERMISSION_DENIED",
+        })
+        raise HTTPException(status_code=403, detail="Izin baca (read) tidak diaktifkan untuk Folder Kerja ini.")
+
+    canonical_root = Path(os.path.realpath(ws["folder_path"]))
+    if not canonical_root.exists() or not canonical_root.is_dir():
         return {"files": [], "exists": False}
 
     files: list[dict[str, Any]] = []
-    for entry in sorted(folder.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
+    for entry in sorted(canonical_root.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
         if entry.name.startswith("."):
             continue
-        stat = entry.stat()
-        files.append(
-            {
-                "name": entry.name,
-                "path": str(entry),
-                "is_dir": entry.is_dir(),
-                "ext": entry.suffix.lower(),
-                "size_bytes": stat.st_size if entry.is_file() else 0,
-                "modified_at": stat.st_mtime,
-            }
-        )
+        # Symlink check: if entry is a symlink pointing outside, filter it out!
+        if entry.is_symlink():
+            try:
+                target = Path(os.path.realpath(entry))
+                if target != canonical_root and not target.is_relative_to(canonical_root):
+                    continue
+            except Exception:
+                continue
+
+        try:
+            stat_info = entry.stat()
+            if stat.S_ISFIFO(stat_info.st_mode) or stat.S_ISSOCK(stat_info.st_mode):
+                continue
+            files.append(
+                {
+                    "name": entry.name,
+                    "path": str(entry),
+                    "is_dir": entry.is_dir(),
+                    "ext": entry.suffix.lower(),
+                    "size_bytes": stat_info.st_size if entry.is_file() else 0,
+                    "modified_at": stat_info.st_mtime,
+                }
+            )
+        except (PermissionError, FileNotFoundError, OSError):
+            continue
+
+    await db_manager.record_permission_audit({
+        "principal_type": "user",
+        "principal_id": principal_id,
+        "capability_id": "filesystem.workspace.list",
+        "resource_scope": workspace_id,
+        "decision": "allow",
+        "reason_code": "LIST_FILES_SUCCESS",
+    })
     return {"files": files, "exists": True}
 
 
@@ -590,6 +646,11 @@ class CreateHITLRequest(BaseModel):
     risk_level: RiskLevel = RiskLevel.HIGH
     target_path: str | None = None
     agent_name: str = "Operator PC & Automasi Sistem"
+    action_id: str | None = None
+    session_id: str | None = None
+    workspace_id: str | None = None
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    tool_version: str = "1.0.0"
 
 
 class ResolveHITLRequest(BaseModel):
@@ -626,8 +687,9 @@ async def list_hitl_approvals(status: str | None = None) -> dict[str, Any]:
 
 
 @api_router.post("/sandbox/approvals")
-async def create_hitl_approval(req: CreateHITLRequest) -> dict[str, Any]:
+async def create_hitl_approval(req: CreateHITLRequest, request: Request) -> dict[str, Any]:
     """Trigger a new HITL approval prompt for Desktop UI & Telegram."""
+    principal_id = request.headers.get("X-Principal-ID") or "default_user"
     item = await sandbox_manager.create_hitl_request(
         tool_name=req.tool_name,
         title_id=req.title_id,
@@ -635,15 +697,30 @@ async def create_hitl_approval(req: CreateHITLRequest) -> dict[str, Any]:
         risk_level=req.risk_level,
         target_path=req.target_path,
         agent_name=req.agent_name,
+        action_id=req.action_id,
+        session_id=req.session_id,
+        workspace_id=req.workspace_id,
+        arguments=req.arguments,
+        tool_version=req.tool_version,
+        principal_id=principal_id,
     )
     return {"approval": item.model_dump()}
 
 
 @api_router.post("/sandbox/approvals/{request_id}/resolve")
-async def resolve_hitl_approval(request_id: str, req: ResolveHITLRequest) -> dict[str, Any]:
+async def resolve_hitl_approval(
+    request_id: str,
+    req: ResolveHITLRequest,
+    request: Request,
+) -> dict[str, Any]:
     """Approve or reject a pending HITL request."""
+    principal_id = request.headers.get("X-Principal-ID") or "default_user"
     try:
-        resolved = await sandbox_manager.resolve_hitl_request(request_id, approved=req.approved)
+        resolved = await sandbox_manager.resolve_hitl_request(
+            request_id,
+            approved=req.approved,
+            principal_id=principal_id,
+        )
         return {"approval": resolved.model_dump()}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -680,7 +757,7 @@ async def reset_computer_use_emergency_stop() -> dict[str, Any]:
 
 class IndexWorkspaceRequest(BaseModel):
     workspace_id: str
-    folder_path: str
+    folder_path: str | None = None
     enable_watcher: bool = True
 
 
@@ -709,18 +786,101 @@ class SimulateTelegramMessageRequest(BaseModel):
 
 
 @api_router.get("/rag/documents")
-async def list_rag_documents(workspace_id: str | None = None) -> dict[str, Any]:
+async def list_rag_documents(
+    workspace_id: str | None = None,
+    request: Request = None,
+) -> dict[str, Any]:
     """List indexed documents in the Hybrid RAG database."""
+    principal_id = request.headers.get("X-Principal-ID") or "default_user" if request else "default_user"
+    if workspace_id:
+        ws = await db_manager.get_workspace(workspace_id)
+        if not ws:
+            raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
+        if ws.get("owner_id") and ws["owner_id"] != principal_id:
+            raise HTTPException(status_code=403, detail="Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
+        if not ws.get("allow_read", True):
+            raise HTTPException(status_code=403, detail="Izin baca (read) tidak diaktifkan untuk Folder Kerja ini.")
     docs = await rag_store.list_indexed_documents(workspace_id=workspace_id)
     return {"documents": docs}
 
 
 @api_router.post("/rag/index-folder")
-async def index_rag_workspace_folder(req: IndexWorkspaceRequest) -> dict[str, Any]:
-    """Incrementally index all supported documents in a workspace folder and optionally start watchdog."""
-    stats = await rag_store.index_workspace_folder(req.workspace_id, req.folder_path)
+async def index_rag_workspace_folder(
+    req: IndexWorkspaceRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Incrementally index all supported documents in an authorized workspace folder and optionally start watchdog."""
+    principal_id = request.headers.get("X-Principal-ID") or "default_user"
+    ws = await db_manager.get_workspace(req.workspace_id)
+    if not ws:
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": "rag.index",
+            "resource_scope": req.workspace_id,
+            "decision": "deny",
+            "reason_code": "WORKSPACE_NOT_FOUND",
+        })
+        raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
+
+    if ws.get("owner_id") and ws["owner_id"] != principal_id:
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": "rag.index",
+            "resource_scope": req.workspace_id,
+            "decision": "deny",
+            "reason_code": "PRINCIPAL_MISMATCH",
+        })
+        raise HTTPException(status_code=403, detail="Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
+
+    if not ws.get("allow_read", True):
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": "rag.index",
+            "resource_scope": req.workspace_id,
+            "decision": "deny",
+            "reason_code": "READ_PERMISSION_DENIED",
+        })
+        raise HTTPException(status_code=403, detail="Izin baca (read) tidak diaktifkan untuk Folder Kerja ini.")
+
+    canonical_ws_root = Path(os.path.realpath(ws["folder_path"]))
+    target_scan_dir = canonical_ws_root
+    if req.folder_path:
+        try:
+            target_scan_dir = canonicalize_and_validate_path(req.folder_path, canonical_ws_root)
+        except SandboxViolationError:
+            await db_manager.record_permission_audit({
+                "principal_type": "user",
+                "principal_id": principal_id,
+                "capability_id": "rag.index",
+                "resource_scope": req.workspace_id,
+                "decision": "deny",
+                "reason_code": "WORKSPACE_BOUNDARY_VIOLATION",
+            })
+            raise HTTPException(status_code=403, detail="Akses ditolak: Path berada di luar Folder Kerja yang sah.")
+
+    try:
+        stats = await rag_store.index_workspace_folder(
+            workspace_id=req.workspace_id,
+            folder_path=target_scan_dir,
+            principal_id=principal_id,
+        )
+    except (PermissionError, SandboxViolationError) as pe:
+        raise HTTPException(status_code=403, detail=str(pe))
+
     if req.enable_watcher:
-        rag_watcher.start_watching(req.workspace_id, req.folder_path)
+        rag_watcher.start_watching(req.workspace_id, str(canonical_ws_root))
+
+    await db_manager.record_permission_audit({
+        "principal_type": "user",
+        "principal_id": principal_id,
+        "capability_id": "rag.index",
+        "resource_scope": req.workspace_id,
+        "decision": "allow",
+        "reason_code": "RAG_INDEX_SUCCESS",
+    })
     return stats
 
 
@@ -972,6 +1132,7 @@ async def revoke_provider_api_key(provider: str) -> dict[str, Any]:
 @api_router.get("/privacy/settings")
 async def get_privacy_settings() -> dict[str, Any]:
     """Return active LLM provider mode, default data classification, and telemetry status."""
+    await privacy_policy_gate.ensure_loaded_from_db(db_manager)
     return privacy_policy_gate.get_status()
 
 
@@ -979,11 +1140,12 @@ async def get_privacy_settings() -> dict[str, Any]:
 async def update_privacy_settings(req: UpdatePrivacySettingsRequest) -> dict[str, Any]:
     """Update LLM provider mode (local_only, cloud_by_choice, hybrid_with_consent, enterprise_managed)."""
     try:
-        updated = privacy_policy_gate.configure(
+        updated = await privacy_policy_gate.configure_and_persist(
             provider_mode=req.provider_mode,
             default_classification=req.default_classification,
             allowed_providers=req.allowed_providers,
             telemetry_opt_in=req.telemetry_opt_in,
+            db=db_manager,
         )
         return {"updated": True, "settings": updated}
     except ValueError as exc:
@@ -1102,12 +1264,22 @@ async def refresh_provider_models(provider_id: str) -> dict[str, Any]:
 
 @api_router.get("/models/recommend")
 async def recommend_model_for_role(role: str = "general") -> dict[str, Any]:
-    """Recommend best model matching role requirements and capability tags."""
+    """Recommend best model matching role requirements via multi-criteria scoring (P2.1)."""
     keys = await llm_router.get_saved_api_keys()
     discovered = await model_discovery_service.discover_all_active_providers(keys)
     all_models = [m for sublist in discovered.values() for m in sublist]
-    rec = model_discovery_service.recommend_model_for_role(role, all_models)
-    return {"role": role, "recommended_model": rec.model_dump() if rec else None}
+    res = model_discovery_service.recommend_model_with_scoring(role, all_models)
+    return {
+        "role": role,
+        "recommended_model": res.recommended_model.model_dump() if res.recommended_model else None,
+        "score": res.score,
+        "reason": res.reason,
+        "trade_offs": res.trade_offs,
+        "alternatives": res.alternatives,
+        "criteria_scores": res.criteria_scores,
+        "metadata_source": res.metadata_source,
+        "verified_at": res.verified_at,
+    }
 
 
 @api_router.get("/agents/{agent_id}/memory")

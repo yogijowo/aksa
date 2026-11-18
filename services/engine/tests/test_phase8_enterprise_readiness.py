@@ -298,11 +298,11 @@ async def test_p1_websocket_cross_session_hijack_and_host_origin_protection() ->
     ws_a = AsyncMock()
     ws_b = AsyncMock()
 
-    await manager.connect(ws_a, session_id="session_owner_a")
-    await manager.connect(ws_b, session_id="session_owner_b")
+    await manager.connect(ws_a, session_id="session_owner_a", principal_id="principal_a")
+    await manager.connect(ws_b, session_id="session_owner_b", principal_id="principal_b")
 
     # Client B attempting to subscribe to Client A's active session must be denied
-    assert manager.subscribe_session(ws_b, "session_owner_a") is False
+    assert await manager.subscribe_session(ws_b, "session_owner_a", principal_id="principal_b") is False
 
     # HTTP Host & Origin spoofing tests
     transport = ASGITransport(app=app)

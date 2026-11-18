@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import stat
 import uuid
 from pathlib import Path
 from typing import Any
@@ -13,7 +15,11 @@ import aiosqlite
 import numpy as np
 
 from app.config import settings
-from app.core.sandbox import RiskLevel
+from app.core.sandbox import (
+    RiskLevel,
+    SandboxViolationError,
+    canonicalize_and_validate_path,
+)
 from app.db.models import DatabaseManager, _now_iso, db_manager
 from app.rag.ingest import (
     SUPPORTED_RAG_EXTENSIONS,
@@ -147,19 +153,60 @@ class HybridRAGStore:
         tmp_file.write_text(json.dumps(self._vectors), encoding="utf-8")
         tmp_file.replace(vfile)
 
-    async def index_file(self, workspace_id: str, file_path: str | Path) -> dict[str, Any]:
+    async def index_file(
+        self,
+        workspace_id: str,
+        file_path: str | Path,
+        canonical_ws_root: Path | None = None,
+        principal_id: str = "default_user",
+    ) -> dict[str, Any]:
         """Incrementally index a single file using SHA-256 diff check into Dense Vectors + SQLite FTS5."""
         self._ensure_vectors_loaded()
-        resolved = Path(file_path).expanduser().resolve()
+
+        ws = await self.db.get_workspace(workspace_id)
+        if not ws:
+            raise FileNotFoundError("Folder Kerja tidak ditemukan.")
+
+        if ws.get("owner_id") and ws["owner_id"] != principal_id:
+            raise PermissionError("Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
+
+        if not ws.get("allow_read", True):
+            raise PermissionError(f"Izin baca (read) tidak diaktifkan untuk Folder Kerja '{ws.get('name')}'.")
+
+        ws_root = canonical_ws_root or Path(os.path.realpath(ws["folder_path"]))
+
+        # Strictly validate that file_path resides within ws_root without leaking private paths
+        resolved = canonicalize_and_validate_path(file_path, ws_root)
+
         if not resolved.exists() or not resolved.is_file():
-            raise FileNotFoundError(f"File '{resolved}' tidak ditemukan.")
+            raise FileNotFoundError(f"File '{resolved.name}' tidak ditemukan di Folder Kerja.")
 
         ext = resolved.suffix.lower()
         if ext not in SUPPORTED_RAG_EXTENSIONS:
-            return {"status": "skipped_unsupported", "file_path": str(resolved)}
+            return {"status": "skipped_unsupported", "file_name": resolved.name}
 
-        sha256_hash = compute_file_sha256(resolved)
-        stat = resolved.stat()
+        # TOCTOU mitigation: open file descriptor safely and check fstat
+        flags = os.O_RDONLY
+        if hasattr(os, "O_CLOEXEC"):
+            flags |= os.O_CLOEXEC
+        try:
+            fd = os.open(resolved, flags)
+        except OSError as oe:
+            raise PermissionError(f"Akses ditolak: Tidak dapat membuka berkas '{resolved.name}': {oe}")
+
+        try:
+            stat_info = os.fstat(fd)
+            if not stat.S_ISREG(stat_info.st_mode):
+                return {"status": "skipped_not_regular_file", "file_name": resolved.name}
+
+            hasher = hashlib.sha256()
+            with os.fdopen(fd, "rb", closefd=False) as f:
+                while chunk := f.read(65536):
+                    hasher.update(chunk)
+            sha256_hash = hasher.hexdigest()
+            file_size_bytes = stat_info.st_size
+        finally:
+            os.close(fd)
 
         async with aiosqlite.connect(self.db.db_path) as conn:
             conn.row_factory = aiosqlite.Row
@@ -256,7 +303,7 @@ class HybridRAGStore:
                     str(resolved),
                     resolved.name,
                     ext,
-                    stat.st_size,
+                    file_size_bytes,
                     sha256_hash,
                     len(chunks),
                     _now_iso(),
@@ -274,24 +321,103 @@ class HybridRAGStore:
         }
 
     async def index_workspace_folder(
-        self, workspace_id: str, folder_path: str | Path
+        self,
+        workspace_id: str,
+        folder_path: str | Path | None = None,
+        principal_id: str = "default_user",
     ) -> dict[str, Any]:
-        """Scan a workspace folder and incrementally index all supported documents."""
-        root = Path(folder_path).expanduser().resolve()
-        if not root.exists() or not root.is_dir():
+        """Scan an authorized workspace folder and incrementally index all supported documents."""
+        ws = await self.db.get_workspace(workspace_id)
+        if not ws:
+            raise FileNotFoundError("Folder Kerja tidak ditemukan.")
+
+        if ws.get("owner_id") and ws["owner_id"] != principal_id:
+            await self.db.record_permission_audit({
+                "principal_type": "user",
+                "principal_id": principal_id,
+                "capability_id": "rag.index",
+                "resource_scope": workspace_id,
+                "decision": "deny",
+                "reason_code": "PRINCIPAL_MISMATCH",
+            })
+            raise PermissionError("Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
+
+        if not ws.get("allow_read", True):
+            await self.db.record_permission_audit({
+                "principal_type": "user",
+                "principal_id": principal_id,
+                "capability_id": "rag.index",
+                "resource_scope": workspace_id,
+                "decision": "deny",
+                "reason_code": "READ_PERMISSION_DENIED",
+            })
+            raise PermissionError(f"Izin baca (read) tidak diaktifkan untuk Folder Kerja '{ws.get('name')}'.")
+
+        canonical_root = Path(os.path.realpath(ws["folder_path"]))
+        if not canonical_root.exists() or not canonical_root.is_dir():
             return {"indexed": 0, "unchanged": 0, "total_files": 0}
+
+        target_scan_dir = canonical_root
+        if folder_path:
+            # Canonicalize & validate that candidate subfolder is within canonical_root
+            target_scan_dir = canonicalize_and_validate_path(folder_path, canonical_root)
 
         indexed_count = 0
         unchanged_count = 0
-        for entry in sorted(root.rglob("*")):
-            if any(part.startswith(".") for part in entry.parts):
-                continue
-            if entry.is_file() and entry.suffix.lower() in SUPPORTED_RAG_EXTENSIONS:
-                res = await self.index_file(workspace_id, entry)
-                if res.get("status") == "indexed":
-                    indexed_count += 1
-                elif res.get("status") == "unchanged":
-                    unchanged_count += 1
+
+        # Secure traversal: followlinks=False prevents symlink recursion / escape
+        for root_str, dirs, files in os.walk(target_scan_dir, followlinks=False):
+            # Prune hidden dirs and symlinked dirs to avoid loops and symlink escapes
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith(".")
+                and not os.path.islink(os.path.join(root_str, d))
+            ]
+
+            for fname in sorted(files):
+                if fname.startswith("."):
+                    continue
+                file_entry = Path(root_str) / fname
+
+                # Symlink check: if entry is a symlink pointing outside canonical_root, reject and audit
+                if os.path.islink(file_entry):
+                    try:
+                        symlink_target = Path(os.path.realpath(file_entry))
+                        if symlink_target != canonical_root and not symlink_target.is_relative_to(canonical_root):
+                            await self.db.record_permission_audit({
+                                "principal_type": "agent",
+                                "principal_id": principal_id,
+                                "capability_id": "rag.index",
+                                "resource_scope": workspace_id,
+                                "decision": "deny",
+                                "reason_code": "SYMLINK_ESCAPE",
+                            })
+                            continue
+                    except Exception:
+                        continue
+
+                # Ignore special files
+                try:
+                    mode = file_entry.lstat().st_mode
+                    if stat.S_ISFIFO(mode) or stat.S_ISSOCK(mode) or stat.S_ISCHR(mode) or stat.S_ISBLK(mode):
+                        continue
+                except OSError:
+                    continue
+
+                if file_entry.is_file() and file_entry.suffix.lower() in SUPPORTED_RAG_EXTENSIONS:
+                    try:
+                        res = await self.index_file(
+                            workspace_id=workspace_id,
+                            file_path=file_entry,
+                            canonical_ws_root=canonical_root,
+                            principal_id=principal_id,
+                        )
+                        if res.get("status") == "indexed":
+                            indexed_count += 1
+                        elif res.get("status") == "unchanged":
+                            unchanged_count += 1
+                    except (PermissionError, SandboxViolationError):
+                        continue
 
         async with aiosqlite.connect(self.db.db_path) as conn:
             await conn.execute(
@@ -302,7 +428,7 @@ class HybridRAGStore:
 
         return {
             "workspace_id": workspace_id,
-            "folder_path": str(root),
+            "folder_path": str(canonical_root),
             "indexed": indexed_count,
             "unchanged": unchanged_count,
             "total_files": indexed_count + unchanged_count,

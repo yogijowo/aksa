@@ -123,6 +123,11 @@ export const PermissionsAndPCView: React.FC = () => {
                     <td className="py-3 pr-4">
                       <div className="font-semibold text-zinc-100">{cap.display_name}</div>
                       <div className="text-[11px] text-zinc-400 mt-0.5">{cap.description}</div>
+                      {cap.revocation_guide && (
+                        <div className="text-[10px] text-zinc-500 mt-0.5">
+                          Cara Cabut: {cap.revocation_guide}
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 pr-4 whitespace-nowrap">
                       <span className="px-2 py-0.5 rounded text-[10px] bg-[#2A2A28] text-zinc-300 border border-white/5 font-mono">

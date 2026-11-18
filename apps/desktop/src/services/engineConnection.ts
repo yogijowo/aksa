@@ -1,7 +1,9 @@
 /**
  * Engine Connection Manager for AKSA Desktop & Browser Dev mode.
- * Dynamically resolves host, port, auth token, base URL, and WS URL (P0-2, P1-5).
+ * Dynamically resolves host, port, auth token, base URL, and WS URL (P0-2, P1-5, P0.3).
  */
+
+export type SidecarLifecycleState = "starting" | "ready" | "failed" | "stopping";
 
 export interface EngineConnectionConfig {
   baseUrl: string;
@@ -9,7 +11,20 @@ export interface EngineConnectionConfig {
   token: string;
   host: string;
   port: number;
-  verified?: boolean;
+  lifecycleState: SidecarLifecycleState;
+  verified: boolean;
+}
+
+/**
+ * Generate a cryptographically secure random nonce using window.crypto.getRandomValues.
+ */
+export function generateCryptographicNonce(): string {
+  if (typeof window !== "undefined" && window.crypto && window.crypto.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    window.crypto.getRandomValues(bytes);
+    return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+  return Date.now().toString(16) + Math.random().toString(16).substring(2);
 }
 
 /**
@@ -40,29 +55,45 @@ export async function computeHmacSha256(keyStr: string, message: string): Promis
 }
 
 /**
- * Verify genuine AKSA engine identity via challenge-response HMAC handshake (P1-5).
+ * Verify genuine AKSA engine identity via challenge-response HMAC handshake (P1-5, P0.3).
+ * Retries up to maxRetries before declaring the connection failed.
  */
-export async function verifyEngineIdentity(baseUrl: string, token: string): Promise<boolean> {
-  try {
-    const nonce = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    const res = await fetch(`${baseUrl}/api/v1/health?nonce=${encodeURIComponent(nonce)}`, {
-      headers: token ? { "X-AKSA-Auth-Token": token } : {},
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    if (!data.nonce_hmac || data.engine !== "aksa-engine") return false;
-    const expected = await computeHmacSha256(token, nonce);
-    return expected.length > 0 && expected === data.nonce_hmac;
-  } catch {
-    return false;
+export async function verifyEngineIdentity(
+  baseUrl: string,
+  token: string,
+  maxRetries: number = 3,
+  delayMs: number = 250
+): Promise<boolean> {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      const nonce = generateCryptographicNonce();
+      const res = await fetch(`${baseUrl}/api/v1/health?nonce=${encodeURIComponent(nonce)}`, {
+        headers: token ? { "X-AKSA-Auth-Token": token } : {},
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.engine === "aksa-engine" && data.nonce_hmac) {
+          const expected = await computeHmacSha256(token, nonce);
+          if (expected.length > 0 && expected === data.nonce_hmac) {
+            return true;
+          }
+        }
+      }
+    } catch {
+      // Retry if server is warming up
+    }
+    if (attempt < maxRetries) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
   }
+  return false;
 }
 
 let cachedConnection: EngineConnectionConfig | null = null;
 let connectionPromise: Promise<EngineConnectionConfig> | null = null;
 
 export async function getEngineConnection(): Promise<EngineConnectionConfig> {
-  if (cachedConnection) {
+  if (cachedConnection && cachedConnection.verified) {
     return cachedConnection;
   }
   if (connectionPromise) {
@@ -81,7 +112,9 @@ export async function getEngineConnection(): Promise<EngineConnectionConfig> {
           auth_token: string;
           base_url: string;
           ws_url: string;
+          lifecycle_state?: SidecarLifecycleState;
         }>("get_engine_connection_info");
+
         if (info && info.base_url) {
           const isVerified = await verifyEngineIdentity(info.base_url, info.auth_token);
           cachedConnection = {
@@ -90,6 +123,7 @@ export async function getEngineConnection(): Promise<EngineConnectionConfig> {
             token: info.auth_token,
             host: info.host,
             port: info.port,
+            lifecycleState: isVerified ? "ready" : "failed",
             verified: isVerified,
           };
           return cachedConnection;
@@ -106,25 +140,41 @@ export async function getEngineConnection(): Promise<EngineConnectionConfig> {
     const baseUrl = (import.meta as any).env?.VITE_AKSA_BASE_URL || `http://${host}:${port}`;
     const wsUrl = (import.meta as any).env?.VITE_AKSA_WS_URL || `ws://${host}:${port}/ws/stream`;
 
+    const isVerified = await verifyEngineIdentity(baseUrl, token);
     cachedConnection = {
       baseUrl,
       wsUrl,
       token,
       host,
       port,
+      lifecycleState: isVerified ? "ready" : "failed",
+      verified: isVerified,
     };
     return cachedConnection;
   })();
 
-  return connectionPromise;
+  try {
+    return await connectionPromise;
+  } finally {
+    connectionPromise = null;
+  }
 }
 
 /**
  * Universal authenticated fetch wrapper for the AKSA Engine Sidecar.
  * Injects X-AKSA-Auth-Token and Content-Type headers automatically.
+ * Fails closed if the engine identity has not been verified or lifecycle state is not ready (P0.3).
  */
 export async function apiFetch(endpoint: string, init?: RequestInit): Promise<Response> {
+  const isHealthCheck = endpoint.includes("/api/v1/health");
   const conn = await getEngineConnection();
+
+  if (!isHealthCheck && (!conn.verified || conn.lifecycleState !== "ready")) {
+    throw new Error(
+      "[AKSA Fail-Closed] Koneksi ke AKSA Engine gagal diverifikasi atau belum siap. Request privat diblokir."
+    );
+  }
+
   const url = endpoint.startsWith("http")
     ? endpoint
     : `${conn.baseUrl}${endpoint.startsWith("/") ? "" : "/"}${endpoint}`;

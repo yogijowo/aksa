@@ -1,16 +1,22 @@
-"""LLM Provider Mode, Data Classification, and Data Disclosure Gate.
+"""LLM Provider Mode, Data Classification, and Persistent Data Disclosure Gate.
 
-Implements Section 6 of the AKSA Enterprise Readiness Master Specification:
+Implements Section 6 of the AKSA Enterprise Readiness Master Specification & Prompt 10 (P1.4):
 - Explicit Provider Modes: local_only, cloud_by_choice, hybrid_with_consent, enterprise_managed
 - Data Classification: PUBLIC, INTERNAL, CONFIDENTIAL, RESTRICTED
-- DataDisclosureGate: blocks unauthorized cloud data egress and prevents automatic document attachment
+- Persistent policy storage in SQLite (survives restarts)
+- Storage-failure fail-closed blocking of external cloud data egress
 """
 
 from __future__ import annotations
 
+import logging
 from enum import Enum
 from typing import Any
 from pydantic import BaseModel, Field
+
+from app.db.models import db_manager
+
+logger = logging.getLogger(__name__)
 
 
 class ProviderMode(str, Enum):
@@ -55,13 +61,64 @@ class DataDisclosureSummary(BaseModel):
 
 
 class PrivacyPolicyGate:
-    """Enforces provider mode constraints, data classification rules, and disclosure gates."""
+    """Enforces provider mode constraints, persistent policy storage, and disclosure gates (P1.4)."""
 
     def __init__(self) -> None:
         self.provider_mode: ProviderMode = ProviderMode.CLOUD_BY_CHOICE
         self.default_classification: DataClassification = DataClassification.INTERNAL
         self.allowed_enterprise_providers: set[str] = set(LOCAL_PROVIDERS | CLOUD_PROVIDERS)
         self.telemetry_opt_in: bool = False
+        self._is_loaded: bool = False
+        self._storage_error: bool = False
+
+    async def ensure_loaded_from_db(self, db=None) -> None:
+        """Load persistent privacy policy from SQLite app_settings table (P1.4)."""
+        target_db = db or db_manager
+        try:
+            saved = await target_db.get_setting("privacy_policy")
+            if saved and isinstance(saved, dict):
+                if "provider_mode" in saved:
+                    self.provider_mode = ProviderMode(saved["provider_mode"])
+                if "default_classification" in saved:
+                    self.default_classification = DataClassification(saved["default_classification"])
+                if "allowed_enterprise_providers" in saved:
+                    self.allowed_enterprise_providers = set(saved["allowed_enterprise_providers"])
+                if "telemetry_opt_in" in saved:
+                    self.telemetry_opt_in = bool(saved["telemetry_opt_in"])
+            self._is_loaded = True
+            self._storage_error = False
+        except Exception as exc:
+            logger.error("Failed to load privacy policy from database: %s", exc)
+            self._storage_error = True
+
+    async def configure_and_persist(
+        self,
+        provider_mode: str | ProviderMode | None = None,
+        default_classification: str | DataClassification | None = None,
+        allowed_providers: list[str] | None = None,
+        telemetry_opt_in: bool | None = None,
+        db=None,
+    ) -> dict[str, Any]:
+        """Update privacy policy and commit persistently to SQLite app_settings (P1.4)."""
+        target_db = db or db_manager
+        if provider_mode is not None:
+            self.provider_mode = ProviderMode(provider_mode)
+        if default_classification is not None:
+            self.default_classification = DataClassification(default_classification)
+        if allowed_providers is not None:
+            self.allowed_enterprise_providers = set(allowed_providers)
+        if telemetry_opt_in is not None:
+            self.telemetry_opt_in = bool(telemetry_opt_in)
+
+        status = self.get_status()
+        try:
+            await target_db.set_setting("privacy_policy", status)
+            self._storage_error = False
+        except Exception as exc:
+            self._storage_error = True
+            raise RuntimeError(f"Gagal menyimpan kebijakan privasi ke SQLite: {exc}") from exc
+
+        return status
 
     def configure(
         self,
@@ -70,6 +127,7 @@ class PrivacyPolicyGate:
         allowed_providers: list[str] | None = None,
         telemetry_opt_in: bool | None = None,
     ) -> dict[str, Any]:
+        """In-memory configuration fallback for synchronous callers."""
         if provider_mode is not None:
             self.provider_mode = ProviderMode(provider_mode)
         if default_classification is not None:
@@ -86,6 +144,7 @@ class PrivacyPolicyGate:
             "default_classification": self.default_classification.value,
             "allowed_enterprise_providers": sorted(self.allowed_enterprise_providers),
             "telemetry_opt_in": self.telemetry_opt_in,
+            "storage_error": self._storage_error,
         }
 
     def is_local_provider(self, provider: str) -> bool:
@@ -125,7 +184,7 @@ class PrivacyPolicyGate:
         explicit_classification: str | DataClassification | None = None,
         user_consent_granted: bool = False,
     ) -> DataDisclosureSummary:
-        """Evaluate whether a request is allowed to proceed to the target LLM provider."""
+        """Evaluate whether a request is allowed to proceed to the target LLM provider (fail-closed, P1.4)."""
         prov = provider.lower().strip()
         is_local = self.is_local_provider(prov)
         classification = self.classify_request_data(
@@ -148,6 +207,15 @@ class PrivacyPolicyGate:
             data_types=data_types,
             attached_resources=attached_names,
         )
+
+        # Fail-closed guard: if storage failure prevented reading policy, block cloud egress
+        if self._storage_error and not is_local:
+            summary.allowed = False
+            summary.denial_reason = (
+                "Gagal memverifikasi kebijakan privasi dari database lokal (Storage Error). "
+                "Pengiriman data cloud diblokir secara fail-closed demi keamanan."
+            )
+            return summary
 
         # Rule 1: Local providers never send data externally
         if is_local:

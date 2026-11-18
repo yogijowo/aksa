@@ -46,6 +46,19 @@ class DiscoveredModel(BaseModel):
     last_verified_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
+class ModelRecommendationResult(BaseModel):
+    """Structured result of multi-criteria model recommendation (P2.1)."""
+
+    recommended_model: DiscoveredModel | None
+    score: float = 0.0
+    reason: str = ""
+    trade_offs: list[str] = Field(default_factory=list)
+    alternatives: list[dict[str, Any]] = Field(default_factory=list)
+    criteria_scores: dict[str, float] = Field(default_factory=dict)
+    metadata_source: str = "verified_provider_metadata"
+    verified_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
 class BaseProviderAdapter(ABC):
     """Abstract adapter defining live discovery contract per provider."""
 
@@ -242,7 +255,7 @@ class OllamaDiscoveryAdapter(BaseProviderAdapter):
         url = f"{settings.ollama_base_url}/api/tags"
         models: list[DiscoveredModel] = []
         try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
+            async with httpx.AsyncClient(timeout=0.8) as client:
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     data = resp.json().get("models", [])
@@ -282,7 +295,7 @@ class LMStudioDiscoveryAdapter(BaseProviderAdapter):
         url = f"{settings.lmstudio_base_url}/models"
         models: list[DiscoveredModel] = []
         try:
-            async with httpx.AsyncClient(timeout=3.0) as client:
+            async with httpx.AsyncClient(timeout=0.8) as client:
                 resp = await client.get(url)
                 if resp.status_code == 200:
                     data = resp.json().get("data", [])
@@ -393,15 +406,148 @@ class ModelDiscoveryService:
                     results[pid] = self.load_cached_models(pid)
         return results
 
+    def recommend_model_with_scoring(
+        self,
+        role: str,
+        available_models: list[DiscoveredModel],
+        privacy_mode: ProviderMode | None = None,
+        max_cost_per_million: float | None = None,
+    ) -> ModelRecommendationResult:
+        """Evaluate candidates using multi-criteria scoring (capabilities, context, cost, lifecycle, latency)."""
+        if not available_models:
+            return ModelRecommendationResult(
+                recommended_model=None,
+                score=0.0,
+                reason="Tidak ada model yang tersedia untuk dievaluasi.",
+            )
+
+        eff_mode = privacy_mode or privacy_policy_gate.provider_mode
+        needed_caps = self.ROLE_CAPABILITY_REQUIREMENTS.get(role, ["text_input", "text_output"])
+        scored_candidates: list[tuple[float, DiscoveredModel, dict[str, float], list[str]]] = []
+
+        local_provider_ids = {"ollama", "lmstudio"}
+
+        for model in available_models:
+            trade_offs: list[str] = []
+
+            # 1. Privacy filter (P1.4, P2.1)
+            if eff_mode == ProviderMode.LOCAL_ONLY and model.provider_id not in local_provider_ids:
+                continue
+
+            # 2. Availability filter
+            if model.availability == "unavailable":
+                continue
+
+            # 3. Mandatory capability match
+            missing_caps = [c for c in needed_caps if c not in model.capabilities]
+            if missing_caps:
+                continue
+
+            # 4. Cost ceiling filter if specified
+            in_cost = float(model.pricing.get("input_per_million", 0.0) or 0.0)
+            out_cost = float(model.pricing.get("output_per_million", 0.0) or 0.0)
+            total_unit_cost = in_cost + out_cost
+            if max_cost_per_million is not None and total_unit_cost > max_cost_per_million:
+                continue
+
+            # --- Multi-Criteria Score Calculation ---
+            # A. Capability Score (0-100): base 100 + bonus for reasoning/vision/tools
+            cap_score = 100.0
+            bonus_caps = set(model.capabilities) - set(needed_caps)
+            cap_score += min(len(bonus_caps) * 5.0, 20.0)
+
+            # B. Context Window Score (0-100)
+            ctx = model.context_window or 128000
+            ctx_score = min(ctx / 200_000.0, 1.0) * 100.0
+            if ctx < 64000:
+                trade_offs.append(f"Jendela konteks terbatas ({ctx:,} token).")
+
+            # C. Cost Score (0-100): Local is 100, Cloud penalizes high per-million cost
+            if model.provider_id in local_provider_ids or total_unit_cost == 0:
+                cost_score = 100.0
+            else:
+                cost_score = max(0.0, 100.0 - total_unit_cost * 3.0)
+                if total_unit_cost > 10.0:
+                    trade_offs.append(f"Biaya inferensi relatif tinggi (${total_unit_cost:.2f}/M tokens).")
+
+            # D. Lifecycle Score (0-100)
+            life = model.lifecycle.lower()
+            if life == "active":
+                life_score = 100.0
+            elif life == "preview":
+                life_score = 80.0
+                trade_offs.append("Status model masih preview.")
+            else:
+                life_score = 50.0
+                trade_offs.append(f"Status siklus hidup model '{life}'.")
+
+            # E. Reliability Score (0-100)
+            rel_score = 100.0 if model.provider_id in ("gemini", "anthropic", "openai", "deepseek", "ollama") else 85.0
+
+            # Weighted sum: 35% cap, 25% ctx, 20% cost, 10% life, 10% rel
+            total = (
+                0.35 * cap_score
+                + 0.25 * ctx_score
+                + 0.20 * cost_score
+                + 0.10 * life_score
+                + 0.10 * rel_score
+            )
+            criteria = {
+                "capability": round(cap_score, 1),
+                "context_window": round(ctx_score, 1),
+                "cost_efficiency": round(cost_score, 1),
+                "lifecycle": round(life_score, 1),
+                "reliability": round(rel_score, 1),
+            }
+            scored_candidates.append((total, model, criteria, trade_offs))
+
+        if not scored_candidates:
+            # Fallback when all fail filters
+            fallback = available_models[0]
+            return ModelRecommendationResult(
+                recommended_model=fallback,
+                score=40.0,
+                reason=f"Model fallback '{fallback.display_name}' dipilih karena tidak ada model yang sepenuhnya memenuhi kriteria peran '{role}'.",
+                trade_offs=["Tidak semua kapabilitas optimal terpenuhi."],
+            )
+
+        scored_candidates.sort(key=lambda x: x[0], reverse=True)
+        best_score, best_model, best_criteria, best_trade_offs = scored_candidates[0]
+
+        alternatives: list[dict[str, Any]] = []
+        for alt_score, alt_model, alt_crit, alt_to in scored_candidates[1:4]:
+            alternatives.append({
+                "model_id": alt_model.provider_model_id,
+                "display_name": alt_model.display_name,
+                "provider": alt_model.provider_id,
+                "score": round(alt_score, 1),
+                "context_window": alt_model.context_window,
+                "trade_offs": alt_to,
+            })
+
+        reason = (
+            f"Model '{best_model.display_name}' ({best_model.provider_id}) dipilih sebagai rekomendasi terbaik "
+            f"untuk peran '{role}' dengan skor evaluasi {best_score:.1f}/100. "
+            f"Memiliki konteks {best_model.context_window:,} token dan kapabilitas yang terverifikasi."
+        )
+
+        return ModelRecommendationResult(
+            recommended_model=best_model,
+            score=round(best_score, 1),
+            reason=reason,
+            trade_offs=best_trade_offs,
+            alternatives=alternatives,
+            criteria_scores=best_criteria,
+            metadata_source="verified_provider_metadata",
+            verified_at=best_model.last_verified_at,
+        )
+
     def recommend_model_for_role(
         self, role: str, available_models: list[DiscoveredModel]
     ) -> DiscoveredModel | None:
-        """Select optimal model matching role requirements and capability tags."""
-        needed_caps = self.ROLE_CAPABILITY_REQUIREMENTS.get(role, ["text_input", "text_output"])
-        for model in available_models:
-            if all(cap in model.capabilities for cap in needed_caps):
-                return model
-        return available_models[0] if available_models else None
+        """Select optimal model matching role requirements using multi-criteria scoring."""
+        res = self.recommend_model_with_scoring(role, available_models)
+        return res.recommended_model
 
 
 model_discovery_service = ModelDiscoveryService()

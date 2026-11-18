@@ -145,8 +145,17 @@ export interface CapabilityStatus {
   description: string;
   scope_type: string;
   requires_hitl: boolean;
-  os_status: "GRANTED" | "DENIED" | "NEEDS_USER_ACTION" | "UNSUPPORTED" | "NOT_REQUESTED";
+  os_status:
+    | "UNSUPPORTED"
+    | "NOT_REQUESTED"
+    | "NEEDS_USER_ACTION"
+    | "PENDING"
+    | "GRANTED"
+    | "DENIED"
+    | "REVOKED"
+    | "ERROR";
   aksa_status: "granted" | "not_granted" | "automatic_sandbox";
+  revocation_guide?: string;
   grant_id?: string | null;
   granted_at?: string | null;
 }

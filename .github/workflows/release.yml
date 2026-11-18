@@ -1,4 +1,4 @@
-name: Release — Multi-Platform Tauri Build, Checksums & Provenance
+name: Release — Multi-Platform Tauri Build, SBOM, Checksums & Provenance
 
 on:
   push:
@@ -8,6 +8,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build-and-release:
@@ -19,25 +21,27 @@ jobs:
         include:
           - os: macos-latest
             triple: aarch64-apple-darwin
+            ext: ""
           - os: windows-latest
             triple: x86_64-pc-windows-msvc
+            ext: ".exe"
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
         with:
           python-version: "3.12"
 
       - name: Set up Node.js 20
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@60edb5dd545a775178f52524783379cf857dbb06 # v4.0.2
         with:
           node-version: "20"
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@7b7640ea77234a04593cb566060c41097e8e50b7 # stable
         with:
           targets: ${{ matrix.triple }}
 
@@ -56,6 +60,10 @@ jobs:
         run: |
           python scripts/build_sidecar.py --triple ${{ matrix.triple }}
 
+      - name: Smoke test frozen native sidecar binary
+        run: |
+          python scripts/release_tooling.py smoke-test --executable apps/desktop/src-tauri/binaries/aksa-engine-${{ matrix.triple }}${{ matrix.ext }}
+
       - name: Install desktop dependencies
         working-directory: apps/desktop
         run: |
@@ -70,3 +78,36 @@ jobs:
         working-directory: apps/desktop
         run: |
           npx tauri build
+
+      - name: Prepare Release Dist Directory
+        shell: bash
+        run: |
+          mkdir -p dist/release
+          # Copy compiled sidecar binary
+          cp apps/desktop/src-tauri/binaries/aksa-engine-${{ matrix.triple }}${{ matrix.ext }} dist/release/
+          # Copy Tauri bundles if generated
+          find apps/desktop/src-tauri/target/release/bundle -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" \) -exec cp {} dist/release/ \; || true
+
+      - name: Generate CycloneDX SBOM for release
+        run: |
+          python scripts/release_tooling.py sbom --output dist/release/aksa-sbom-${{ matrix.triple }}.cyclonedx.json
+
+      - name: Generate SHA-256 Checksums (SHA256SUMS.txt)
+        shell: bash
+        run: |
+          cd dist/release
+          python ../../scripts/release_tooling.py checksums --artifacts * --output SHA256SUMS.txt
+          python ../../scripts/release_tooling.py verify-checksums --file SHA256SUMS.txt
+
+      - name: Attest Build Provenance (SLSA Level 3)
+        uses: actions/attest-build-provenance@c074443f1a5fb4a493905b08452b42e67c276566 # v1.4.2
+        with:
+          subject-path: "dist/release/*"
+
+      - name: Publish GitHub Release Assets
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            dist/release/*
+          generate_release_notes: true

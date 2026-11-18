@@ -1,6 +1,6 @@
 pub mod sidecar;
 
-use sidecar::{get_engine_connection_info, SidecarState};
+use sidecar::{get_engine_connection_info, get_engine_lifecycle_state, LifecycleState, SidecarState};
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
 
@@ -13,7 +13,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(sidecar_state)
-        .invoke_handler(tauri::generate_handler![get_engine_connection_info])
+        .invoke_handler(tauri::generate_handler![
+            get_engine_connection_info,
+            get_engine_lifecycle_state
+        ])
         .setup(|app| {
             let state = app.state::<SidecarState>();
             let info = state.info.lock().map_err(|e| e.to_string())?.clone();
@@ -30,14 +33,17 @@ pub fn run() {
                             if let Ok(mut lock) = state.child_process.lock() {
                                 *lock = Some(child);
                             }
+                            state.set_state(LifecycleState::Ready);
                             eprintln!("[AKSA Tauri] Sidecar berhasil dijalankan pada port {}", info.port);
                         }
                         Err(e) => {
+                            state.set_state(LifecycleState::Failed);
                             eprintln!("[AKSA Tauri] Peringatan: Sidecar tidak dapat di-spawn (kemungkinan dev runner aktif): {}", e);
                         }
                     }
                 }
                 Err(e) => {
+                    state.set_state(LifecycleState::Failed);
                     eprintln!("[AKSA Tauri] Info: Sidecar aksa-engine command: {}", e);
                 }
             }

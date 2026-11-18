@@ -14,6 +14,7 @@ async def test_p1_rag_synonym_search_and_expansion(tmp_path: Path) -> None:
     """Verify that Indonesian synonyms ('anggaran' <-> 'pagu') retrieve the right chunk via RRF."""
     db = DatabaseManager(db_path=tmp_path / "test_rag.db")
     await db.initialize()
+    await db.upsert_workspace({"id": "ws_rag_test", "name": "Test RAG", "folder_path": str(tmp_path)})
 
     store = HybridRAGStore(db=db, vector_dir=tmp_path / "vectors")
 
@@ -45,6 +46,7 @@ async def test_p1_rag_crash_recovery_from_sqlite_vectors(tmp_path: Path) -> None
     """Verify that if the JSON index is lost/corrupted, vectors are recovered from SQLite rag_vector_chunks."""
     db = DatabaseManager(db_path=tmp_path / "test_rag.db")
     await db.initialize()
+    await db.upsert_workspace({"id": "ws_rag_test", "name": "Test RAG", "folder_path": str(tmp_path)})
 
     vector_dir = tmp_path / "vectors"
     store1 = HybridRAGStore(db=db, vector_dir=vector_dir)

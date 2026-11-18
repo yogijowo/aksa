@@ -1,4 +1,8 @@
-"""Tier 3 Visual Computer Use Engine with Failsafe Corner Abort & Emergency Kill Switch."""
+"""Tier 3 Visual Computer Use Engine with Postcondition Verification & Failsafe Abort.
+
+Enforces honest capability reporting (separating available vs implemented), target-window validation,
+sensitive window shielding, destructive action gates, and postcondition verification (P1.2).
+"""
 
 from __future__ import annotations
 
@@ -11,6 +15,7 @@ from typing import Any
 from PIL import Image, ImageDraw
 
 from app.core.sandbox import RiskLevel, sandbox_manager
+from app.system.permission_broker import PermissionState, permission_broker
 from app.tools.registry import ToolResult, tool_registry
 
 
@@ -42,6 +47,14 @@ SENSITIVE_WINDOW_KEYWORDS = (
     "password",
     "kata sandi",
     "uac",
+    "terminal - sudo",
+)
+
+DESTRUCTIVE_HOTKEYS = (
+    ("ctrl", "alt", "del"),
+    ("alt", "f4"),
+    ("cmd", "q"),
+    ("cmd", "opt", "esc"),
 )
 
 
@@ -50,12 +63,13 @@ class ComputerUseAdapter:
 
     platform_name: str = "generic"
 
-    def get_capabilities(self) -> dict[str, bool]:
+    def get_capabilities(self) -> dict[str, dict[str, bool]]:
+        """Separate capability availability from actual implementation completeness (P1.2)."""
         return {
-            "active_window_inspection": False,
-            "screen_capture": False,
-            "ui_automation_tree": False,
-            "native_input": False,
+            "active_window_inspection": {"available": False, "implemented": False},
+            "screen_capture": {"available": False, "implemented": False},
+            "ui_automation_tree": {"available": False, "implemented": False},
+            "native_input": {"available": False, "implemented": False},
         }
 
     def get_active_window(self) -> dict[str, Any] | None:
@@ -67,18 +81,55 @@ class ComputerUseAdapter:
         lower = window_title.lower()
         return any(kw in lower for kw in SENSITIVE_WINDOW_KEYWORDS)
 
+    def verify_postcondition(
+        self,
+        expected: dict[str, Any] | None,
+        initial_state: dict[str, Any] | None = None,
+    ) -> tuple[bool, str]:
+        """Verify that UI state after action reflects the expected outcome."""
+        if not expected:
+            return False, "Tidak ada kriteria postcondition yang ditentukan (submitted_unverified)."
+
+        current_win = self.get_active_window()
+        current_title = (current_win.get("title") or "") if current_win else ""
+
+        # 1. Expected window title contains
+        if "window_title_contains" in expected:
+            needle = expected["window_title_contains"].lower()
+            if needle in current_title.lower():
+                return True, f"Jendela aktif '{current_title}' sesuai dengan kriteria '{needle}'."
+            return False, f"Jendela aktif '{current_title}' tidak memuat '{needle}'."
+
+        # 2. Expected window closed
+        if expected.get("window_closed") and initial_state:
+            initial_hwnd = initial_state.get("hwnd")
+            current_hwnd = current_win.get("hwnd") if current_win else None
+            if current_hwnd != initial_hwnd:
+                return True, "Jendela sebelumnya telah ditutup/berpindah fokus."
+            return False, "Jendela target masih aktif dan belum tertutup."
+
+        # 3. Expected active window match
+        if "active_window_matches" in expected:
+            target = expected["active_window_matches"]
+            if current_title.strip() == target.strip():
+                return True, f"Jendela aktif persis cocok dengan '{target}'."
+            return False, f"Jendela aktif '{current_title}' tidak cocok dengan '{target}'."
+
+        return False, "Postcondition tidak dapat diverifikasi secara otomatis pada adapter ini."
+
 
 class WindowsComputerUseAdapter(ComputerUseAdapter):
-    """Windows Computer Use adapter using Win32 / UI Automation & Graphics Capture."""
+    """Windows Computer Use adapter using Win32 foreground inspection and GDI."""
 
     platform_name: str = "windows"
 
-    def get_capabilities(self) -> dict[str, bool]:
+    def get_capabilities(self) -> dict[str, dict[str, bool]]:
+        is_win = sys.platform == "win32"
         return {
-            "active_window_inspection": sys.platform == "win32",
-            "screen_capture": sys.platform == "win32",
-            "ui_automation_tree": sys.platform == "win32",
-            "native_input": sys.platform == "win32",
+            "active_window_inspection": {"available": is_win, "implemented": True},
+            "screen_capture": {"available": is_win, "implemented": True},
+            "ui_automation_tree": {"available": is_win, "implemented": False},  # Win32 title only
+            "native_input": {"available": is_win, "implemented": True},
         }
 
     def get_active_window(self) -> dict[str, Any] | None:
@@ -109,19 +160,43 @@ class WindowsComputerUseAdapter(ComputerUseAdapter):
 
 
 class MacOSComputerUseAdapter(ComputerUseAdapter):
-    """macOS Computer Use adapter using Accessibility API / ScreenCaptureKit / NSWorkspace."""
+    """macOS Computer Use adapter using CoreGraphics window information."""
 
     platform_name: str = "macos"
 
-    def get_capabilities(self) -> dict[str, bool]:
+    def get_capabilities(self) -> dict[str, dict[str, bool]]:
+        is_mac = sys.platform == "darwin"
         return {
-            "active_window_inspection": sys.platform == "darwin",
-            "screen_capture": sys.platform == "darwin",
-            "ui_automation_tree": False,  # Requires macOS TCC Accessibility trust
-            "native_input": sys.platform == "darwin",
+            "active_window_inspection": {"available": is_mac, "implemented": True},
+            "screen_capture": {"available": is_mac, "implemented": True},
+            "ui_automation_tree": {"available": is_mac, "implemented": False},  # Requires AX trust
+            "native_input": {"available": is_mac, "implemented": True},
         }
 
     def get_active_window(self) -> dict[str, Any] | None:
+        if sys.platform != "darwin":
+            return None
+        try:
+            # Check frontmost application via CoreGraphics or System Events
+            import subprocess
+
+            cmd = [
+                "/usr/bin/osascript",
+                "-e",
+                'tell application "System Events" to get name of first application process whose frontmost is true',
+            ]
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=1.5)
+            if proc.returncode == 0:
+                title = proc.stdout.strip()
+                if title:
+                    is_sens = self.is_sensitive_window(title)
+                    return {
+                        "role": "application",
+                        "title": "[REDACTED_SENSITIVE_WINDOW]" if is_sens else title,
+                        "is_sensitive": is_sens,
+                    }
+        except Exception:
+            pass
         return None
 
 
@@ -134,7 +209,7 @@ def get_platform_computer_use_adapter() -> ComputerUseAdapter:
 
 
 class ComputerUseController:
-    """Manages screen capture, Accessibility Tree grounding, and GUI actions with emergency kill switch."""
+    """Manages screen capture, Accessibility Tree grounding, and GUI actions with postcondition verification."""
 
     def __init__(self) -> None:
         self.failsafe_enabled: bool = True
@@ -192,7 +267,6 @@ class ComputerUseController:
         is_live = False
         img: Image.Image | None = None
 
-        # 1. Attempt live display capture via mss or ImageGrab
         try:
             import mss  # type: ignore[import-not-found]
 
@@ -215,7 +289,6 @@ class ComputerUseController:
                 pass
 
         if img is None:
-            # Headless / background fallback: generate annotated coordinate grid frame
             img = Image.new("RGB", (1280, 720), color=(15, 17, 26))
             draw = ImageDraw.Draw(img)
             for gx in range(0, 1280, 160):
@@ -225,27 +298,14 @@ class ComputerUseController:
 
         img.save(out_file)
 
-        # 2. Inspect real active window title from OS (no fake UI buttons)
         a11y_elements: list[dict[str, Any]] = []
-        if sys.platform == "win32":
-            try:
-                import ctypes
-
-                user32 = ctypes.windll.user32
-                hwnd = user32.GetForegroundWindow()
-                if hwnd:
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buff = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buff, length + 1)
-                        if buff.value:
-                            a11y_elements.append({
-                                "role": "window",
-                                "title": buff.value,
-                                "bounds": [0, 0, img.width, img.height],
-                            })
-            except Exception:
-                pass
+        active_win = self.adapter.get_active_window()
+        if active_win and not active_win.get("is_sensitive"):
+            a11y_elements.append({
+                "role": active_win.get("role", "window"),
+                "title": active_win.get("title", ""),
+                "bounds": [0, 0, img.width, img.height],
+            })
 
         status_label = "nyata (Live)" if is_live else "simulasi (Headless Grid)"
         summary = (
@@ -261,6 +321,7 @@ class ComputerUseController:
                 "captured_via": captured_via,
                 "is_live": is_live,
                 "platform": sys.platform,
+                "capabilities": self.adapter.get_capabilities(),
                 "a11y_elements": a11y_elements,
             },
             artifacts=[str(out_file)],
@@ -280,8 +341,10 @@ class ComputerUseController:
         hotkey: list[str] | None = None,
         button: str = "left",
         target_window_title: str | None = None,
+        expected_postcondition: dict[str, Any] | None = None,
+        timeout_seconds: float = 5.0,
     ) -> ToolResult:
-        """Execute a Vision-grounded GUI action with sensitive-window blocking and postcondition verification."""
+        """Execute a Vision-grounded GUI action with target validation and verified postcondition (P1.2)."""
         valid_actions = {a.value for a in ComputerActionType}
         if action_type not in valid_actions:
             return ToolResult(
@@ -310,10 +373,13 @@ class ComputerUseController:
                 token_estimate=18,
             )
 
-        # Protect password managers, credential dialogs, and secure windows (Section 9.3)
-        active_win = self.adapter.get_active_window()
+        # Inspect initial active window
+        initial_win = self.adapter.get_active_window()
+        initial_title = (initial_win.get("title") or "") if initial_win else ""
+
+        # 1. Sensitive window shielding (Priority check: immediately block passwords/credential managers)
         if self.adapter.is_sensitive_window(target_window_title) or (
-            active_win and active_win.get("is_sensitive")
+            initial_win and initial_win.get("is_sensitive")
         ):
             return ToolResult(
                 success=False,
@@ -327,18 +393,53 @@ class ComputerUseController:
                 token_estimate=20,
             )
 
+        # 2. Target window validation: inspect initial active window
+        if target_window_title and initial_win:
+            if target_window_title.lower() not in initial_title.lower():
+                return ToolResult(
+                    success=False,
+                    summary=(
+                        f"Validasi Jendela Gagal: Jendela aktif saat ini adalah '{initial_title}', "
+                        f"bukan jendela target '{target_window_title}'."
+                    ),
+                    data={
+                        "status": "target_window_mismatch",
+                        "expected_target": target_window_title,
+                        "actual_active": initial_title,
+                        "precondition_verified": False,
+                        "postcondition_verified": False,
+                    },
+                    token_estimate=20,
+                )
+
+        # 3. Check for destructive hotkey combinations
+        if action_type == "press_hotkey" and hotkey:
+            norm_hk = tuple(k.lower() for k in hotkey)
+            if any(all(k in norm_hk for k in dest) for dest in DESTRUCTIVE_HOTKEYS):
+                return ToolResult(
+                    success=False,
+                    summary=f"Kombinasi hotkey destruktif {hotkey} diblokir. Memerlukan konfirmasi persetujuan pengguna (HITL).",
+                    data={
+                        "status": "destructive_action_blocked",
+                        "hotkey": hotkey,
+                        "precondition_verified": False,
+                        "postcondition_verified": False,
+                    },
+                    token_estimate=20,
+                )
+
         if action_type == "get_active_window":
             return ToolResult(
-                success=active_win is not None,
-                summary="Berhasil memeriksa jendela aktif melalui adapter platform." if active_win else "Tidak ada jendela aktif yang terdeteksi.",
+                success=initial_win is not None,
+                summary="Berhasil memeriksa jendela aktif melalui adapter platform." if initial_win else "Tidak ada jendela aktif yang terdeteksi.",
                 data={
-                    "status": "executed" if active_win else "unsupported",
+                    "status": "executed" if initial_win else "unsupported",
                     "action_type": action_type,
-                    "active_window": active_win,
+                    "active_window": initial_win,
                     "adapter": self.adapter.platform_name,
                     "capabilities": self.adapter.get_capabilities(),
                     "precondition_verified": True,
-                    "postcondition_verified": active_win is not None,
+                    "postcondition_verified": initial_win is not None,
                 },
                 token_estimate=22,
             )
@@ -382,27 +483,7 @@ class ComputerUseController:
             else (f"teks '{text}'" if action_type == "type_text" else f"hotkey {hotkey}")
         )
 
-        if action_executed:
-            summary = f"Tier 3 Computer Use ({executed_driver}): Aksi '{action_type}' pada {detail} berhasil dieksekusi dan terverifikasi."
-            return ToolResult(
-                success=True,
-                summary=summary,
-                data={
-                    "status": "executed",
-                    "action_type": action_type,
-                    "x": x,
-                    "y": y,
-                    "text": text,
-                    "hotkey": hotkey,
-                    "driver": executed_driver,
-                    "adapter": self.adapter.platform_name,
-                    "failsafe_enabled": self.failsafe_enabled,
-                    "precondition_verified": True,
-                    "postcondition_verified": True,
-                },
-                token_estimate=32,
-            )
-        else:
+        if not action_executed:
             summary = (
                 f"Tier 3 Computer Use: Aksi '{action_type}' pada {detail} tidak dapat dieksekusi "
                 f"({action_error or 'Mode Simulasi Tanpa Display Interaktif'})."
@@ -422,6 +503,65 @@ class ComputerUseController:
                 },
                 token_estimate=24,
             )
+
+        # 4. Postcondition verification (P1.2)
+        # Input was executed, now verify UI outcome:
+        if expected_postcondition:
+            post_ok, post_msg = self.adapter.verify_postcondition(expected_postcondition, initial_state=initial_win)
+            if post_ok:
+                summary = f"Tier 3 Computer Use ({executed_driver}): Aksi '{action_type}' berhasil dan postcondition terverifikasi: {post_msg}"
+                return ToolResult(
+                    success=True,
+                    summary=summary,
+                    data={
+                        "status": "executed",
+                        "action_type": action_type,
+                        "driver": executed_driver,
+                        "precondition_verified": True,
+                        "postcondition_verified": True,
+                        "postcondition_message": post_msg,
+                    },
+                    token_estimate=32,
+                )
+            else:
+                summary = f"Tier 3 Computer Use ({executed_driver}): Input terkirim, namun postcondition gagal terbukti: {post_msg}"
+                return ToolResult(
+                    success=False,
+                    summary=summary,
+                    data={
+                        "status": "postcondition_failed",
+                        "action_type": action_type,
+                        "driver": executed_driver,
+                        "precondition_verified": True,
+                        "postcondition_verified": False,
+                        "postcondition_message": post_msg,
+                    },
+                    token_estimate=28,
+                )
+
+        # If no expected postcondition was provided, report honest status: submitted_unverified
+        summary = (
+            f"Tier 3 Computer Use ({executed_driver}): Aksi '{action_type}' pada {detail} telah dikirim ke OS, "
+            "namun postcondition UI belum diverifikasi (submitted_unverified)."
+        )
+        return ToolResult(
+            success=False,
+            summary=summary,
+            data={
+                "status": "submitted_unverified",
+                "action_type": action_type,
+                "x": x,
+                "y": y,
+                "text": text,
+                "hotkey": hotkey,
+                "driver": executed_driver,
+                "adapter": self.adapter.platform_name,
+                "failsafe_enabled": self.failsafe_enabled,
+                "precondition_verified": True,
+                "postcondition_verified": False,
+            },
+            token_estimate=28,
+        )
 
 
 computer_use_controller = ComputerUseController()
@@ -445,4 +585,3 @@ def register_computer_use_tools() -> None:
 
 
 register_computer_use_tools()
-

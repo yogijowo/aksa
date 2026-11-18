@@ -548,26 +548,33 @@ class AgentSkillsManager:
             f"# {curated.display_name}\n\n{curated.instructions_preview}\n",
             encoding="utf-8",
         )
+        is_curated_verified = curated.trust_level in ("curated", "verified_publisher")
         manifest_yaml = (
             f"schema_version: 1\n"
             f"id: {curated.id}\n"
             f"name: \"{curated.display_name}\"\n"
             f"version: \"{curated.version}\"\n"
-            f"publisher:\n  name: \"{curated.publisher}\"\n  verified: true\n"
+            f"publisher:\n  name: \"{curated.publisher}\"\n  verified: {str(is_curated_verified).lower()}\n"
             f"capabilities:\n  network:\n    enabled: {str(curated.has_network).lower()}\n"
             f"  secrets:\n    access: false\n"
         )
         (target_dir / "aksa.skill.yaml").write_text(manifest_yaml, encoding="utf-8")
 
-        fake_hash = hashlib.sha256(skill_id.encode("utf-8")).hexdigest()
+        # Compute genuine cryptographic hash from actual on-disk artifact bytes (P1.6)
+        hasher = hashlib.sha256()
+        for fpath in sorted(target_dir.rglob("*")):
+            if fpath.is_file():
+                hasher.update(fpath.read_bytes())
+        real_package_hash = hasher.hexdigest()
+
         item = await db_manager.upsert_installed_skill({
             "skill_id": curated.id,
             "display_name": curated.display_name,
             "publisher": curated.publisher,
             "installed_version": curated.version,
-            "package_hash": fake_hash,
+            "package_hash": real_package_hash,
             "trust_level": curated.trust_level,
-            "enabled": False,  # DISABLED BY DEFAULT
+            "enabled": False,  # DISABLED BY DEFAULT (P1.6)
         })
 
         await db_manager.log_permission_audit_event({
@@ -578,6 +585,104 @@ class AgentSkillsManager:
         })
 
         return item
+
+    async def install_skill_package(
+        self,
+        zip_path: Path,
+        target_agent_id: str | None = None,
+        expected_hash: str | None = None,
+    ) -> dict[str, Any]:
+        """Safely inspect, verify, stage, and atomically promote a skill ZIP package (P1.6)."""
+        import uuid
+        import shutil
+
+        # 1. Scan package in quarantine
+        report = await self.scan_package_archive(zip_path)
+        if not report.is_valid:
+            warnings_str = "; ".join(report.security_warnings)
+            raise ValueError(f"Paket keahlian ditolak dalam karantina: {warnings_str}")
+
+        # 2. Verify artifact hash if expected hash provided
+        if expected_hash and report.package_hash.lower() != expected_hash.lower():
+            raise ValueError(
+                f"Integritas paket gagal diverifikasi: Hash SHA-256 mismatch ({report.package_hash} != {expected_hash})."
+            )
+
+        skill_id = report.manifest.id
+        staging_dir = self.quarantine_dir / f"staging_{uuid.uuid4().hex[:12]}"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+
+        try:
+            # 3. Extract to staging directory
+            with zipfile.ZipFile(zip_path, "r") as zf:
+                for member in zf.infolist():
+                    target_path = staging_dir / member.filename
+                    # Double-check path traversal
+                    if ".." in member.filename or not target_path.resolve().is_relative_to(staging_dir.resolve()):
+                        raise ValueError(f"Zip-slip traversal attack terdeteksi: '{member.filename}'")
+                    if member.is_dir():
+                        target_path.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target_path.parent.mkdir(parents=True, exist_ok=True)
+                        with zf.open(member) as src, open(target_path, "wb") as dst:
+                            shutil.copyfileobj(src, dst)
+
+            # 4. Atomic promote to destination
+            dest_dir = self.skills_dir / skill_id
+            backup_dir = self.skills_dir / f".backup_{skill_id}_{uuid.uuid4().hex[:8]}"
+
+            if dest_dir.exists():
+                dest_dir.rename(backup_dir)
+
+            staging_dir.rename(dest_dir)
+
+            # 5. Persist to database in DISABLED state
+            item = await db_manager.upsert_installed_skill({
+                "skill_id": skill_id,
+                "display_name": report.manifest.display_name,
+                "publisher": report.manifest.publisher,
+                "installed_version": report.manifest.version,
+                "package_hash": report.package_hash,
+                "trust_level": report.manifest.trust_level,
+                "enabled": False,  # DISABLED BY DEFAULT
+            })
+
+            await db_manager.log_permission_audit_event({
+                "capability_id": "skill_package_promoted",
+                "resource_scope": skill_id,
+                "decision": "allow",
+                "reason_code": "ATOMIC_STAGE_AND_PROMOTE",
+            })
+            return item
+
+        finally:
+            if staging_dir.exists():
+                shutil.rmtree(staging_dir, ignore_errors=True)
+
+    async def rollback_skill(self, skill_id: str) -> dict[str, Any]:
+        """Roll back an updated skill to its previous backup version if present."""
+        import shutil
+
+        dest_dir = self.skills_dir / skill_id
+        # Find latest backup
+        backups = sorted(self.skills_dir.glob(f".backup_{skill_id}_*"))
+        if not backups:
+            raise FileNotFoundError(f"Tidak ada versi cadangan (backup) untuk keahlian '{skill_id}'.")
+
+        latest_backup = backups[-1]
+        if dest_dir.exists():
+            shutil.rmtree(dest_dir, ignore_errors=True)
+        latest_backup.rename(dest_dir)
+
+        # Re-verify and update database
+        item = await db_manager.get_installed_skill(skill_id)
+        await db_manager.log_permission_audit_event({
+            "capability_id": "skill_rolled_back",
+            "resource_scope": skill_id,
+            "decision": "allow",
+            "reason_code": "ROLLBACK_SUCCESSFUL",
+        })
+        return item or {"skill_id": skill_id, "rolled_back": True}
 
     def load_skill_instructions(self, skill_id: str, agent_id: str | None = None) -> str:
         """Progressive disclosure: loads actual markdown instructions on demand."""
