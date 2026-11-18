@@ -48,6 +48,7 @@ class EngineConfig(BaseModel):
     host: str = Field(default="127.0.0.1")
     port: int = Field(default=43120)
     dev_mode: bool = Field(default_factory=_is_dev_mode)
+    testing: bool = Field(default_factory=lambda: "pytest" in sys.modules or os.environ.get("AKSA_TESTING") == "1")
     auth_token: str = Field(default="")
     appdata_dir: Path = Field(default_factory=get_default_appdata_dir)
     aksa_root_dir: Path | None = Field(default=None)

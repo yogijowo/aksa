@@ -44,7 +44,7 @@ class TelegramCommandHandler:
         if stripped.lower().startswith("/pair"):
             parts = stripped.split(maxsplit=1)
             code = parts[1] if len(parts) > 1 else ""
-            ok, reply = self.auth.verify_pairing_code(
+            ok, reply = await self.auth.verify_pairing_code(
                 telegram_user_id=telegram_user_id,
                 submitted_code=code,
                 username=username,

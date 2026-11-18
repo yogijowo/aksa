@@ -307,6 +307,23 @@ CREATE TABLE IF NOT EXISTS approval_requests (
     policy_version INTEGER DEFAULT 1,
     decision_reason TEXT
 );
+
+CREATE TABLE IF NOT EXISTS rag_vector_chunks (
+    chunk_id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL REFERENCES rag_documents(id) ON DELETE CASCADE,
+    workspace_id TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    section_title TEXT,
+    content TEXT NOT NULL,
+    vector_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS telegram_allowed_users (
+    telegram_user_id INTEGER PRIMARY KEY,
+    username TEXT,
+    paired_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    last_active_at TEXT DEFAULT CURRENT_TIMESTAMP
+);
 """
 
 
@@ -1007,6 +1024,36 @@ class DatabaseManager:
     async def delete_credential_metadata(self, provider: str) -> bool:
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute("DELETE FROM credentials_metadata WHERE provider = ?", (provider,))
+            await db.commit()
+            return cursor.rowcount > 0
+
+    async def list_telegram_allowed_users(self) -> list[dict[str, Any]]:
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute("SELECT * FROM telegram_allowed_users ORDER BY paired_at ASC")
+            return [_row_to_dict(r) for r in await cursor.fetchall()]
+
+    async def add_telegram_allowed_user(self, telegram_user_id: int, username: str = "pengguna_telegram") -> dict[str, Any]:
+        now = _now_iso()
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute(
+                """
+                INSERT INTO telegram_allowed_users (telegram_user_id, username, paired_at, last_active_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(telegram_user_id) DO UPDATE SET
+                    username = excluded.username,
+                    last_active_at = excluded.last_active_at
+                """,
+                (telegram_user_id, username, now, now),
+            )
+            await db.commit()
+            cursor = await db.execute("SELECT * FROM telegram_allowed_users WHERE telegram_user_id = ?", (telegram_user_id,))
+            return _row_to_dict(await cursor.fetchone())
+
+    async def remove_telegram_allowed_user(self, telegram_user_id: int) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            cursor = await db.execute("DELETE FROM telegram_allowed_users WHERE telegram_user_id = ?", (telegram_user_id,))
             await db.commit()
             return cursor.rowcount > 0
 

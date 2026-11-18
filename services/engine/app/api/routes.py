@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import hashlib
+import hmac
 import os
 import subprocess
 import sys
@@ -116,13 +118,14 @@ async def _check_ollama_status() -> dict[str, Any]:
 
 
 @api_router.get("/health")
-async def get_health() -> dict[str, Any]:
-    """Return engine status, database path, and local AI availability."""
+async def get_health(nonce: str | None = None) -> dict[str, Any]:
+    """Return engine status, database path, and local AI availability with optional HMAC identity verification."""
     ollama_info = await _check_ollama_status()
     tg_status = telegram_gateway.get_status()
-    return {
+    resp: dict[str, Any] = {
         "status": "ok",
         "version": "1.0.0",
+        "engine": "aksa-engine",
         "appdata_dir": str(settings.appdata_dir),
         "ollama": ollama_info,
         "telegram": {
@@ -130,6 +133,10 @@ async def get_health() -> dict[str, Any]:
             "bot_username": tg_status["bot_username"],
         },
     }
+    if nonce:
+        auth_key = settings.auth_token.encode("utf-8")
+        resp["nonce_hmac"] = hmac.new(auth_key, nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+    return resp
 
 
 @api_router.get("/models/providers")

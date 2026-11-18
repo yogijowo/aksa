@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import base64
+import json
 import uuid
+from pathlib import Path
 from typing import Any
 
 import aiosqlite
@@ -17,12 +18,29 @@ from app.db.models import DatabaseManager, _now_iso
 from app.tools import tool_registry
 
 
+def _generate_non_colliding_path(directory: Path, base_stem: str, extension: str) -> Path:
+    """Generate a unique path in directory that does not collide with existing files."""
+    ext = extension if extension.startswith(".") else f".{extension}"
+    target = directory / f"{base_stem}{ext}"
+    if not target.exists():
+        return target
+    counter = 1
+    while True:
+        candidate = directory / f"{base_stem} ({counter}){ext}"
+        if not candidate.exists():
+            return candidate
+        counter += 1
+
+
 def _create_word_duplicate_from_pdf(source_pdf: Path, target_docx: Path) -> str:
     """Generate a clean Word document duplicated dynamically from source PDF."""
     import docx
     from docx.shared import Pt, Inches
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     import pymupdf as fitz
+
+    if not source_pdf.exists():
+        raise FileNotFoundError(f"Berkas sumber PDF '{source_pdf.name}' tidak ditemukan.")
 
     doc = docx.Document()
     for s in doc.sections:
@@ -33,6 +51,10 @@ def _create_word_duplicate_from_pdf(source_pdf: Path, target_docx: Path) -> str:
 
     try:
         pdf_doc = fitz.open(str(source_pdf))
+    except Exception as exc:
+        raise RuntimeError(f"Gagal membuka berkas PDF '{source_pdf.name}': {exc}") from exc
+
+    try:
         for page_idx, page in enumerate(pdf_doc):
             if page_idx > 0:
                 doc.add_page_break()
@@ -85,11 +107,14 @@ def _create_word_duplicate_from_pdf(source_pdf: Path, target_docx: Path) -> str:
                                 else:
                                     p.add_run("\n".join(lines))
         pdf_doc.close()
+        doc.save(str(target_docx))
     except Exception as exc:
-        p = doc.add_paragraph(f"Dokumen disalin dari berkas: {source_pdf.name}")
-        p.add_run(f"\n(Ekstraksi dokumen otomatis: {exc})")
+        try:
+            pdf_doc.close()
+        except Exception:
+            pass
+        raise RuntimeError(f"Gagal memproses duplikasi PDF '{source_pdf.name}': {exc}") from exc
 
-    doc.save(str(target_docx))
     return f"Duplikasi dokumen '{source_pdf.name}' ke Word ('{target_docx.name}') berhasil dibuat."
 
 
@@ -318,6 +343,7 @@ class HierarchicalOrchestrator:
 
         execution_steps: list[dict[str, Any]] = []
         sub_agent_summaries: list[str] = []
+        artifacts: list[dict[str, Any]] = []
         total_tokens_used = 0
         total_tokens_saved = 0
 
@@ -349,15 +375,69 @@ class HierarchicalOrchestrator:
                 workspace_path=str(ws_dir),
                 relevant_files=[f"{f['name']} ({f['size_label']})" for f in real_files],
             )
+            sub_tools = tool_registry.get_schemas_for_categories(sub.get("tool_categories", []))
             completion = await self.llm_router.complete(
                 provider=sub["provider"],
                 model_id=sub["model_id"],
                 messages=isolated_msgs,
                 temperature=sub.get("temperature", 0.2),
                 max_tokens=sub.get("max_tokens", 2048),
+                tools=sub_tools if sub_tools else None,
                 attachments=attachments,
                 user_consent_granted=allow_external_disclosure,
             )
+
+            # Process any tool calls emitted by the sub-agent
+            sub_tool_calls = completion.get("tool_calls", [])
+            if sub_tool_calls and allow_write:
+                for tc in sub_tool_calls:
+                    fn = tc.get("function", {})
+                    fn_name = fn.get("name")
+                    raw_args = fn.get("arguments", "{}")
+                    try:
+                        fn_args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                    except Exception:
+                        fn_args = {}
+
+                    await ws_manager.broadcast_event(
+                        "tool_started",
+                        {"agent": sub["name"], "tool": fn_name, "arguments": fn_args},
+                        session_id=session_id,
+                    )
+
+                    if "file_path" in fn_args:
+                        fp = Path(fn_args["file_path"])
+                        if not fp.is_absolute():
+                            fn_args["file_path"] = str(ws_dir / fp)
+                    if "csv_source_path" in fn_args:
+                        cp = Path(fn_args["csv_source_path"])
+                        if not cp.is_absolute():
+                            fn_args["csv_source_path"] = str(ws_dir / cp)
+
+                    res = await tool_registry.execute(fn_name, session_id=session_id, **fn_args)
+
+                    await ws_manager.broadcast_event(
+                        "tool_finished",
+                        {"agent": sub["name"], "tool": fn_name, "success": res.success, "summary": res.summary},
+                        session_id=session_id,
+                    )
+
+                    if res.success and res.artifacts:
+                        for art_str in res.artifacts:
+                            art_p = Path(art_str)
+                            if art_p.exists() and art_p.stat().st_size > 0:
+                                kb = round(art_p.stat().st_size / 1024, 1)
+                                size_label = f"{kb} KB" if kb < 1024 else f"{round(kb / 1024, 2)} MB"
+                                artifacts.append({
+                                    "id": f"art_{uuid.uuid4().hex[:8]}",
+                                    "name": art_p.name,
+                                    "file_path": str(art_p),
+                                    "file_type": art_p.suffix.lstrip(".").lower(),
+                                    "size_label": size_label,
+                                    "created_by_agent": sub["name"],
+                                    "created_at_label": "Baru saja",
+                                    "summary": res.summary,
+                                })
 
             handback_summary, metrics = token_optimizer.compact_subagent_handback(
                 raw_subagent_output=completion["content"],
@@ -422,8 +502,12 @@ class HierarchicalOrchestrator:
         )
         wants_doc = (has_create_verb and has_doc_type) or is_duplication
 
-        artifacts: list[dict[str, Any]] = []
         action_confirmation_note = ""
+        is_ambiguous_duplication = False
+        clarification_text = ""
+        tool_failed = False
+        tool_failure_message = ""
+        src_pf = None
 
         if wants_doc and allow_write:
             is_word = "word" in lower_prompt or "surat" in lower_prompt or "docx" in lower_prompt
@@ -432,46 +516,81 @@ class HierarchicalOrchestrator:
 
             ws_candidate = ws_dir
 
-            if is_duplication and pdf_files and is_word:
-                source_candidates = [f for f in pdf_files if not f["name"].lower().startswith("laporan_resmi")]
-                src_pf = source_candidates[0] if source_candidates else pdf_files[0]
-                src_path = Path(src_pf["path"])
-                target_docx_name = f"{src_path.stem}.docx"
-                real_target = ws_dir / target_docx_name
-                artifact_ext = "docx"
-                artifact_name = target_docx_name
-
-                _create_word_duplicate_from_pdf(src_path, real_target)
-                artifact_summary = (
-                    f"Duplikasi dokumen '{src_pf['name']}' ke Word (.docx) berhasil dibuat dengan struktur teks dan tabel yang sesuai."
-                )
-                kb = max(1, round(real_target.stat().st_size / 1024))
-                size_label = f"{kb} KB"
-                artifact_file_path = str(real_target)
-                action_confirmation_note = (
-                    f"PEMBERITAHUAN EKSEKUSI DUPLIKASI:\n"
-                    f"- Dokumen sumber: '{src_pf['name']}'\n"
-                    f"- Berkas Word hasil duplikasi: '{target_docx_name}' (tersimpan di folder kerja '{real_target}')\n"
-                    f"- Status: Berhasil dibuat dengan struktur isi dokumen dan tabel sesuai berkas sumber.\n"
-                    f"- PENTING: JANGAN bertanya atau meminta pengguna memilih file lagi! Konfirmasikan dengan ramah dan percaya diri bahwa file Word duplikasi tersebut sudah siap di panel Artefak."
-                )
-            else:
-                if is_word:
-                    artifact_ext = "docx"
-                    artifact_name = "Dokumen_Resmi_AKSA.docx"
-                elif is_ppt:
-                    artifact_ext = "pptx"
-                    artifact_name = "Presentasi_Eksekutif_AKSA.pptx"
-                elif is_pdf:
-                    artifact_ext = "pdf"
-                    artifact_name = "Laporan_Resmi_AKSA.pdf"
+            if is_duplication and is_word:
+                if not pdf_files:
+                    is_ambiguous_duplication = True
+                    clarification_text = f"Tidak ditemukan berkas PDF di folder kerja '{ws_dir.name}' untuk diduplikasi ke format Word."
                 else:
-                    artifact_ext = "xlsx"
-                    artifact_name = "Rekap_Otomatis_AKSA.xlsx"
+                    matched_sources = [
+                        f for f in pdf_files
+                        if Path(f["name"]).stem.lower() in lower_prompt or f["name"].lower() in lower_prompt
+                    ]
+                    if len(pdf_files) == 1:
+                        src_pf = pdf_files[0]
+                    elif len(matched_sources) == 1:
+                        src_pf = matched_sources[0]
+                    else:
+                        is_ambiguous_duplication = True
+                        pdf_list_bullets = "\n".join(f"- `{pf['name']}`" for pf in pdf_files)
+                        clarification_text = (
+                            f"Ditemukan beberapa berkas PDF di folder kerja Anda:\n{pdf_list_bullets}\n\n"
+                            "Mohon sebutkan nama berkas PDF yang ingin Anda duplikasi ke format Word (.docx) agar saya dapat memprosesnya."
+                        )
 
-                artifact_summary = f"Dihasilkan otomatis oleh Tim Agen AKSA untuk: {prompt[:70]}"
-                size_label = "42 KB"
-                real_target = ws_dir / artifact_name
+                if not is_ambiguous_duplication and src_pf:
+                    src_path = Path(src_pf["path"])
+                    real_target = _generate_non_colliding_path(ws_dir, src_path.stem, "docx")
+                    artifact_ext = "docx"
+                    artifact_name = real_target.name
+
+                    try:
+                        dup_summary = _create_word_duplicate_from_pdf(src_path, real_target)
+                        if real_target.exists() and real_target.stat().st_size > 0:
+                            kb = round(real_target.stat().st_size / 1024, 1)
+                            size_label = f"{kb} KB" if kb < 1024 else f"{round(kb / 1024, 2)} MB"
+                            artifact = {
+                                "id": f"art_{uuid.uuid4().hex[:8]}",
+                                "name": artifact_name,
+                                "file_path": str(real_target),
+                                "file_type": artifact_ext,
+                                "size_label": size_label,
+                                "created_by_agent": delegated_agents[-1]["name"] if delegated_agents else supervisor["name"],
+                                "created_at_label": "Baru saja",
+                                "summary": dup_summary,
+                            }
+                            artifacts.append(artifact)
+                            action_confirmation_note = (
+                                f"PEMBERITAHUAN EKSEKUSI DUPLIKASI:\n"
+                                f"- Dokumen sumber: '{src_pf['name']}'\n"
+                                f"- Berkas Word hasil duplikasi: '{artifact_name}' (tersimpan di folder kerja '{real_target}')\n"
+                                f"- Status: Berhasil dibuat dengan struktur isi dokumen dan tabel sesuai berkas sumber.\n"
+                                f"- Konfirmasikan dengan ramah kepada pengguna bahwa file Word duplikasi tersebut telah siap di panel Artefak."
+                            )
+                        else:
+                            tool_failed = True
+                            tool_failure_message = "Berkas Word hasil duplikasi berukuran 0 byte."
+                    except Exception as exc:
+                        tool_failed = True
+                        tool_failure_message = str(exc)
+
+                    if tool_failed:
+                        if real_target.exists() and real_target.stat().st_size == 0:
+                            try:
+                                real_target.unlink()
+                            except Exception:
+                                pass
+                        action_confirmation_note = (
+                            f"PERINGATAN KEGAGALAN EKSEKUSI:\n"
+                            f"- Gagal menduplikasi berkas '{src_pf['name']}': {tool_failure_message}\n"
+                            f"- JANGAN mengatakan file berhasil dibuat!\n"
+                            f"- Jelaskan secara jujur kepada pengguna bahwa proses duplikasi gagal."
+                        )
+            elif not is_duplication:
+                base_stem = "Dokumen_Resmi" if is_word else ("Presentasi" if is_ppt else ("Laporan_Resmi" if is_pdf else "Rekap_Data"))
+                ext = "docx" if is_word else ("pptx" if is_ppt else ("pdf" if is_pdf else "xlsx"))
+                real_target = _generate_non_colliding_path(ws_dir, base_stem, ext)
+                artifact_ext = ext
+                artifact_name = real_target.name
 
                 if ws_candidate.exists() and ws_candidate.is_dir():
                     if artifact_ext == "docx":
@@ -498,31 +617,39 @@ class HierarchicalOrchestrator:
                             "excel_create_workbook",
                             file_path=str(real_target),
                         )
-                    if res.success and real_target.exists():
-                        artifact_summary = res.summary
-                        kb = max(1, round(real_target.stat().st_size / 1024))
-                        size_label = f"{kb} KB"
-                    artifact_file_path = str(real_target)
-                else:
-                    artifact_file_path = str(ws_dir / artifact_name)
 
-                action_confirmation_note = (
-                    f"PEMBERITAHUAN GENERASI DOKUMEN:\n"
-                    f"- Berkas '{artifact_name}' telah selesai dibuat di folder kerja pengguna.\n"
-                    f"- Konfirmasikan kepada pengguna secara singkat dan profesional."
-                )
-
-            artifact = {
-                "id": f"art_{uuid.uuid4().hex[:8]}",
-                "name": artifact_name,
-                "file_path": artifact_file_path,
-                "file_type": artifact_ext,
-                "size_label": size_label,
-                "created_by_agent": delegated_agents[-1]["name"] if delegated_agents else supervisor["name"],
-                "created_at_label": "Baru saja",
-                "summary": artifact_summary,
-            }
-            artifacts.append(artifact)
+                    if res.success and real_target.exists() and real_target.stat().st_size > 0:
+                        kb = round(real_target.stat().st_size / 1024, 1)
+                        size_label = f"{kb} KB" if kb < 1024 else f"{round(kb / 1024, 2)} MB"
+                        artifacts.append({
+                            "id": f"art_{uuid.uuid4().hex[:8]}",
+                            "name": artifact_name,
+                            "file_path": str(real_target),
+                            "file_type": artifact_ext,
+                            "size_label": size_label,
+                            "created_by_agent": delegated_agents[-1]["name"] if delegated_agents else supervisor["name"],
+                            "created_at_label": "Baru saja",
+                            "summary": res.summary,
+                        })
+                        action_confirmation_note = (
+                            f"PEMBERITAHUAN GENERASI DOKUMEN:\n"
+                            f"- Berkas '{artifact_name}' telah selesai dibuat di folder kerja pengguna.\n"
+                            f"- Konfirmasikan kepada pengguna secara singkat dan profesional."
+                        )
+                    else:
+                        tool_failed = True
+                        tool_failure_message = res.summary if hasattr(res, "summary") else "Eksekusi alat pembuatan berkas gagal."
+                        if real_target.exists() and real_target.stat().st_size == 0:
+                            try:
+                                real_target.unlink()
+                            except Exception:
+                                pass
+                        action_confirmation_note = (
+                            f"PERINGATAN KEGAGALAN EKSEKUSI:\n"
+                            f"- Gagal membuat berkas '{artifact_name}': {tool_failure_message}\n"
+                            f"- JANGAN mengatakan file berhasil dibuat!\n"
+                            f"- Jelaskan secara jujur kepada pengguna bahwa proses pembuatan berkas gagal."
+                        )
 
         grounded_system_prompt = (
             f"{supervisor['system_prompt']}\n\n"
@@ -539,7 +666,7 @@ class HierarchicalOrchestrator:
             f"2. Jika pengguna bertanya apa isi folder atau berkas apa yang ada, langsung sebutkan daftar berkas nyata tersebut secara ramah dan profesional dalam Bahasa Indonesia.\n"
             f"3. Jika ada berkas PDF yang ditanyakan atau diminta dibaca, jelaskan isi dokumen tersebut secara lengkap berdasarkan dokumen yang telah dilampirkan.\n"
             f"4. Jangan pernah mengatakan folder kerja kosong jika pada daftar berkas nyata di atas terdapat berkas!\n"
-            f"5. Jika pengguna meminta duplikasi atau konversi berkas (misalnya PDF ke Word), berkas hasil duplikasi sudah dibuatkan oleh sistem. JANGAN PERNAH menanyakan file mana yang ingin diduplikasi jika berkas sumber sudah ada di folder. Konfirmasikan bahwa duplikasi telah berhasil dibuat sama persis!"
+            f"5. Jika terjadi duplikasi berkas, pastikan memberikan konfirmasi sesuai hasil eksekusi nyata. Jika terdapat ambiguitas berkas, minta klarifikasi kepada pengguna secara jelas.\n"
         )
 
         # Supervisor synthesis call: receive sub-agent summaries if delegated, or answer directly
@@ -569,17 +696,103 @@ class HierarchicalOrchestrator:
                 },
             ]
 
+        sup_tool_schemas = tool_registry.get_schemas_for_categories(supervisor.get("tool_categories", []))
         sup_completion = await self.llm_router.complete(
             provider=supervisor["provider"],
             model_id=supervisor["model_id"],
             messages=supervisor_msgs,
             temperature=supervisor.get("temperature", 0.2),
             max_tokens=supervisor.get("max_tokens", 4096),
+            tools=sup_tool_schemas if sup_tool_schemas else None,
             attachments=attachments,
             user_consent_granted=allow_external_disclosure,
         )
         sup_tokens = sup_completion["input_tokens"] + sup_completion["output_tokens"]
         total_tokens_used += sup_tokens
+
+        # Dynamic tool execution loop for supervisor per P1-1
+        loop_step = 0
+        max_loops = 5
+        while loop_step < max_loops:
+            sup_tool_calls = sup_completion.get("tool_calls", [])
+            if not sup_tool_calls:
+                break
+            loop_step += 1
+
+            supervisor_msgs.append({
+                "role": "assistant",
+                "content": sup_completion.get("content") or "",
+                "tool_calls": sup_tool_calls,
+            })
+
+            for tc in sup_tool_calls:
+                fn = tc.get("function", {})
+                fn_name = fn.get("name")
+                raw_args = fn.get("arguments", "{}")
+                try:
+                    fn_args = json.loads(raw_args) if isinstance(raw_args, str) else (raw_args or {})
+                except Exception:
+                    fn_args = {}
+
+                await ws_manager.broadcast_event(
+                    "tool_started",
+                    {"agent": supervisor["name"], "tool": fn_name, "arguments": fn_args},
+                    session_id=session_id,
+                )
+
+                if "file_path" in fn_args:
+                    fp = Path(fn_args["file_path"])
+                    if not fp.is_absolute():
+                        fn_args["file_path"] = str(ws_dir / fp)
+                if "csv_source_path" in fn_args:
+                    cp = Path(fn_args["csv_source_path"])
+                    if not cp.is_absolute():
+                        fn_args["csv_source_path"] = str(ws_dir / cp)
+
+                res = await tool_registry.execute(fn_name, session_id=session_id, **fn_args)
+
+                await ws_manager.broadcast_event(
+                    "tool_finished",
+                    {"agent": supervisor["name"], "tool": fn_name, "success": res.success, "summary": res.summary},
+                    session_id=session_id,
+                )
+
+                if res.success and res.artifacts:
+                    for art_str in res.artifacts:
+                        art_p = Path(art_str)
+                        if art_p.exists() and art_p.stat().st_size > 0:
+                            kb = round(art_p.stat().st_size / 1024, 1)
+                            size_label = f"{kb} KB" if kb < 1024 else f"{round(kb / 1024, 2)} MB"
+                            artifacts.append({
+                                "id": f"art_{uuid.uuid4().hex[:8]}",
+                                "name": art_p.name,
+                                "file_path": str(art_p),
+                                "file_type": art_p.suffix.lstrip(".").lower(),
+                                "size_label": size_label,
+                                "created_by_agent": supervisor["name"],
+                                "created_at_label": "Baru saja",
+                                "summary": res.summary,
+                            })
+
+                supervisor_msgs.append({
+                    "role": "tool",
+                    "tool_call_id": tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                    "name": fn_name,
+                    "content": res.summary if res.success else f"Error: {res.summary}",
+                })
+
+            sup_completion = await self.llm_router.complete(
+                provider=supervisor["provider"],
+                model_id=supervisor["model_id"],
+                messages=supervisor_msgs,
+                temperature=supervisor.get("temperature", 0.2),
+                max_tokens=supervisor.get("max_tokens", 4096),
+                tools=sup_tool_schemas if sup_tool_schemas else None,
+                attachments=attachments,
+                user_consent_granted=allow_external_disclosure,
+            )
+            sup_tokens = sup_completion["input_tokens"] + sup_completion["output_tokens"]
+            total_tokens_used += sup_tokens
 
         await self._log_token_usage(
             session_id=session_id,
@@ -590,10 +803,15 @@ class HierarchicalOrchestrator:
             cost_usd=0.0012,
         )
 
-        final_reply = sup_completion["content"]
-        if artifacts and not any(a["name"] in final_reply for a in artifacts):
-            art_names = ", ".join(f"**`{a['name']}`**" for a in artifacts)
-            final_reply += f"\n\nFile hasil kerja {art_names} telah siap di panel Artefak."
+        if is_ambiguous_duplication:
+            final_reply = clarification_text
+        elif tool_failed:
+            final_reply = f"Gagal memproses dokumen: {tool_failure_message}. Berkas tidak berhasil dibuat di folder kerja."
+        else:
+            final_reply = sup_completion["content"]
+            if artifacts and not any(a["name"] in final_reply for a in artifacts):
+                art_names = ", ".join(f"**`{a['name']}`**" for a in artifacts)
+                final_reply += f"\n\nFile hasil kerja {art_names} telah siap di panel Artefak."
 
         if not execution_steps:
             execution_steps.append(

@@ -25,21 +25,44 @@ from app.tools.registry import ToolResult, tool_registry
 
 EMBEDDING_DIM = 128
 
+INDONESIAN_SYNONYMS: dict[str, list[str]] = {
+    "anggaran": ["pagu", "dana", "biaya", "keuangan"],
+    "pagu": ["anggaran", "dana", "alokasi"],
+    "rekap": ["ringkasan", "ikhtisar", "rangkuman", "rekapitulasi"],
+    "ringkasan": ["rekap", "ikhtisar", "rangkuman"],
+    "laporan": ["berkas", "dokumen", "pertanggungjawaban"],
+    "tugas": ["pekerjaan", "kegiatan", "kewajiban"],
+    "pembelian": ["pengadaan", "belanja"],
+    "pengadaan": ["pembelian", "belanja", "sounding"],
+    "pegawai": ["karyawan", "aparatur", "staf"],
+}
 
-class MultilingualEmbedder:
-    """Offline-capable multilingual dense vector embedder using character & word n-gram projections."""
+
+class LexicalNgramEmbedder:
+    """Offline lexical vector embedder using character & word n-gram projections.
+
+    Note (P1-7 Audit): This is an offline lexical n-gram projector with synonym-expanded
+    morphology matching, not a deep-learning transformer model. For neural semantic search,
+    Ollama (bge-m3/nomic-embed-text) or cloud embedding models can be configured.
+    """
 
     def __init__(self, dim: int = EMBEDDING_DIM) -> None:
         self.dim = dim
 
-    def embed_text(self, text: str) -> np.ndarray:
+    def embed_text(self, text: str, expand_synonyms: bool = False) -> np.ndarray:
         """Compute a normalized dense embedding vector for Indonesian/English text."""
         vec = np.zeros(self.dim, dtype=np.float32)
         tokens = re.findall(r"[a-zA-Z0-9_\-/]+", text.lower())
         if not tokens:
             return vec
 
-        for tok in tokens:
+        all_tokens = list(tokens)
+        if expand_synonyms:
+            for tok in tokens:
+                syns = INDONESIAN_SYNONYMS.get(tok, [])
+                all_tokens.extend(syns)
+
+        for tok in all_tokens:
             # Word feature + character trigram features for robust Indonesian morphology matching
             grams = [tok] + [tok[i : i + 3] for i in range(max(0, len(tok) - 2))]
             for g in grams:
@@ -54,13 +77,17 @@ class MultilingualEmbedder:
         return vec
 
 
+# Alias for backward compatibility
+MultilingualEmbedder = LexicalNgramEmbedder
+
+
 class HybridRAGStore:
-    """Combines Embedded Dense Vectors (LanceDB directory) and SQLite FTS5 BM25 via Reciprocal Rank Fusion."""
+    """Combines Embedded Dense Vectors (LanceDB directory / SQLite persistent table) and SQLite FTS5 BM25 via Reciprocal Rank Fusion."""
 
     def __init__(self, db: DatabaseManager = db_manager, vector_dir: Path | None = None) -> None:
         self.db = db
         self.vector_dir = vector_dir or settings.lancedb_dir
-        self.embedder = MultilingualEmbedder()
+        self.embedder = LexicalNgramEmbedder()
         self._vectors: dict[str, dict[str, Any]] = {}
         self._loaded = False
 
@@ -69,7 +96,7 @@ class HybridRAGStore:
         return self.vector_dir / "vectors_index.json"
 
     def _ensure_vectors_loaded(self) -> None:
-        if self._loaded:
+        if self._loaded and self._vectors:
             return
         vfile = self._vector_store_file()
         if vfile.exists():
@@ -79,9 +106,46 @@ class HybridRAGStore:
                 self._vectors = {}
         self._loaded = True
 
-    def _persist_vectors(self) -> None:
+    async def _ensure_vectors_loaded_async(self) -> None:
+        if self._loaded and self._vectors:
+            return
         vfile = self._vector_store_file()
-        vfile.write_text(json.dumps(self._vectors), encoding="utf-8")
+        if vfile.exists():
+            try:
+                self._vectors = json.loads(vfile.read_text(encoding="utf-8"))
+                self._loaded = True
+                return
+            except Exception:
+                self._vectors = {}
+
+        # Fallback recovery from SQLite persistent rag_vector_chunks table
+        try:
+            async with aiosqlite.connect(self.db.db_path) as conn:
+                conn.row_factory = aiosqlite.Row
+                cursor = await conn.execute("SELECT * FROM rag_vector_chunks")
+                rows = await cursor.fetchall()
+                for r in rows:
+                    cid = r["chunk_id"]
+                    vec = json.loads(r["vector_json"])
+                    self._vectors[cid] = {
+                        "chunk_id": cid,
+                        "document_id": r["document_id"],
+                        "workspace_id": r["workspace_id"],
+                        "file_name": r["file_name"],
+                        "section_title": r["section_title"],
+                        "content": r["content"],
+                        "vector": vec,
+                    }
+        except Exception:
+            pass
+        self._loaded = True
+
+    def _persist_vectors(self) -> None:
+        """Atomically persist vectors to disk using temp file replacement."""
+        vfile = self._vector_store_file()
+        tmp_file = vfile.with_suffix(".tmp")
+        tmp_file.write_text(json.dumps(self._vectors), encoding="utf-8")
+        tmp_file.replace(vfile)
 
     async def index_file(self, workspace_id: str, file_path: str | Path) -> dict[str, Any]:
         """Incrementally index a single file using SHA-256 diff check into Dense Vectors + SQLite FTS5."""
@@ -117,6 +181,7 @@ class HybridRAGStore:
             # Remove old chunks if updating modified file
             if existing:
                 await conn.execute("DELETE FROM rag_chunks_fts WHERE document_id = ?", (doc_id,))
+                await conn.execute("DELETE FROM rag_vector_chunks WHERE document_id = ?", (doc_id,))
                 stale_keys = [
                     k for k, v in self._vectors.items() if v.get("document_id") == doc_id
                 ]
@@ -142,6 +207,26 @@ class HybridRAGStore:
                     ),
                 )
                 emb = self.embedder.embed_text(f"{resolved.name} {chk.section_title} {chk.content}")
+                emb_list = emb.tolist()
+                await conn.execute(
+                    """
+                    INSERT INTO rag_vector_chunks (
+                        chunk_id, document_id, workspace_id, file_name, section_title, content, vector_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(chunk_id) DO UPDATE SET
+                        content = excluded.content,
+                        vector_json = excluded.vector_json
+                    """,
+                    (
+                        chk.chunk_id,
+                        doc_id,
+                        workspace_id,
+                        resolved.name,
+                        chk.section_title,
+                        chk.content,
+                        json.dumps(emb_list),
+                    ),
+                )
                 self._vectors[chk.chunk_id] = {
                     "chunk_id": chk.chunk_id,
                     "document_id": doc_id,
@@ -149,7 +234,7 @@ class HybridRAGStore:
                     "file_name": resolved.name,
                     "section_title": chk.section_title,
                     "content": chk.content,
-                    "vector": emb.tolist(),
+                    "vector": emb_list,
                 }
 
             await conn.execute(
@@ -245,9 +330,9 @@ class HybridRAGStore:
         top_k: int = 5,
         rrf_k: int = 60,
     ) -> list[dict[str, Any]]:
-        """Perform Hybrid Vector + SQLite FTS5 BM25 search fused with Reciprocal Rank Fusion (RRF)."""
-        self._ensure_vectors_loaded()
-        query_vec = self.embedder.embed_text(query)
+        """Perform Hybrid Vector + SQLite FTS5 BM25 search with synonym expansion fused with Reciprocal Rank Fusion (RRF)."""
+        await self._ensure_vectors_loaded_async()
+        query_vec = self.embedder.embed_text(query, expand_synonyms=True)
 
         # 1. Dense Vector Ranking
         vec_candidates: list[tuple[str, float]] = []
@@ -260,14 +345,19 @@ class HybridRAGStore:
         vec_candidates.sort(key=lambda x: x[1], reverse=True)
         vec_ranks = {cid: rank for rank, (cid, _) in enumerate(vec_candidates[:50], start=1)}
 
-        # 2. SQLite FTS5 Exact / Keyword BM25 Ranking
+        # 2. SQLite FTS5 Exact / Keyword BM25 Ranking with Indonesian Synonym Expansion
         fts_ranks: dict[str, int] = {}
         fts_payloads: dict[str, dict[str, Any]] = {}
-        tokens = [re.sub(r"[^a-zA-Z0-9]", "", t) for t in query.split()]
-        tokens = [t for t in tokens if len(t) >= 2]
+        raw_tokens = [re.sub(r"[^a-zA-Z0-9]", "", t) for t in query.split()]
+        tokens = [t for t in raw_tokens if len(t) >= 2]
 
-        if tokens:
-            fts_query = " OR ".join(f'"{t}"' for t in tokens)
+        expanded_tokens: list[str] = list(tokens)
+        for t in tokens:
+            syns = INDONESIAN_SYNONYMS.get(t.lower(), [])
+            expanded_tokens.extend(syns)
+
+        if expanded_tokens:
+            fts_query = " OR ".join(f'"{t}"' for t in set(expanded_tokens))
             async with aiosqlite.connect(self.db.db_path) as conn:
                 conn.row_factory = aiosqlite.Row
                 sql = (

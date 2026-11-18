@@ -70,6 +70,23 @@ class ToolRegistry:
     def get_tool(self, name: str) -> RegisteredTool | None:
         return self._tools.get(name)
 
+    def get_schemas_for_categories(self, categories: list[str]) -> list[dict[str, Any]]:
+        """Generate OpenAI/Gemini/Anthropic-compatible function schemas for tools matching the specified categories."""
+        tools = self.list_tools(categories=categories)
+        schemas: list[dict[str, Any]] = []
+        for t in tools:
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters_schema if t.parameters_schema else {"type": "object", "properties": {}},
+                    },
+                }
+            )
+        return schemas
+
     async def execute(self, name: str, **kwargs: Any) -> ToolResult:
         """Execute a registered tool by name through the centralized ExecutionPolicyGateway."""
         tool = self._tools.get(name)

@@ -9,6 +9,53 @@ export interface EngineConnectionConfig {
   token: string;
   host: string;
   port: number;
+  verified?: boolean;
+}
+
+/**
+ * Compute HMAC-SHA256 in standard browser / Tauri webview environment.
+ */
+export async function computeHmacSha256(keyStr: string, message: string): Promise<string> {
+  if (typeof window !== "undefined" && window.crypto && window.crypto.subtle) {
+    try {
+      const encoder = new TextEncoder();
+      const keyData = encoder.encode(keyStr);
+      const msgData = encoder.encode(message);
+      const cryptoKey = await window.crypto.subtle.importKey(
+        "raw",
+        keyData,
+        { name: "HMAC", hash: "SHA-256" },
+        false,
+        ["sign"]
+      );
+      const signature = await window.crypto.subtle.sign("HMAC", cryptoKey, msgData);
+      return Array.from(new Uint8Array(signature))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+    } catch (err) {
+      console.warn("[AKSA] Gagal menghitung HMAC:", err);
+    }
+  }
+  return "";
+}
+
+/**
+ * Verify genuine AKSA engine identity via challenge-response HMAC handshake (P1-5).
+ */
+export async function verifyEngineIdentity(baseUrl: string, token: string): Promise<boolean> {
+  try {
+    const nonce = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    const res = await fetch(`${baseUrl}/api/v1/health?nonce=${encodeURIComponent(nonce)}`, {
+      headers: token ? { "X-AKSA-Auth-Token": token } : {},
+    });
+    if (!res.ok) return false;
+    const data = await res.json();
+    if (!data.nonce_hmac || data.engine !== "aksa-engine") return false;
+    const expected = await computeHmacSha256(token, nonce);
+    return expected.length > 0 && expected === data.nonce_hmac;
+  } catch {
+    return false;
+  }
 }
 
 let cachedConnection: EngineConnectionConfig | null = null;
@@ -36,12 +83,14 @@ export async function getEngineConnection(): Promise<EngineConnectionConfig> {
           ws_url: string;
         }>("get_engine_connection_info");
         if (info && info.base_url) {
+          const isVerified = await verifyEngineIdentity(info.base_url, info.auth_token);
           cachedConnection = {
             baseUrl: info.base_url,
             wsUrl: info.ws_url,
             token: info.auth_token,
             host: info.host,
             port: info.port,
+            verified: isVerified,
           };
           return cachedConnection;
         }

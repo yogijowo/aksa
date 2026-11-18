@@ -86,11 +86,49 @@ async def excel_inspect(file_path: str) -> ToolResult:
 def _sync_excel_create_workbook(
     file_path: str,
     sheets_spec: list[dict[str, Any]] | None = None,
+    csv_source_path: str | None = None,
 ) -> ToolResult:
     resolved = sandbox_manager.validate_path(file_path, mode="write")
     resolved.parent.mkdir(parents=True, exist_ok=True)
     if resolved.exists():
         sandbox_manager.backup_before_modify(resolved)
+
+    if csv_source_path:
+        csv_resolved = sandbox_manager.validate_path(csv_source_path, mode="read")
+        import csv
+        with open(csv_resolved, mode="r", encoding="utf-8-sig") as f:
+            reader = list(csv.reader(f))
+            if reader:
+                headers = reader[0]
+                data_rows: list[list[Any]] = []
+                for row_idx, r in enumerate(reader[1:], start=2):
+                    parsed_row = []
+                    for c_val in r:
+                        try:
+                            num = float(c_val)
+                            parsed_row.append(int(num) if num.is_integer() else num)
+                        except ValueError:
+                            parsed_row.append(c_val)
+                    data_rows.append(parsed_row)
+
+                num_data_rows = len(data_rows)
+                sum_row: list[Any] = []
+                for col_idx, _ in enumerate(headers):
+                    col_letter = openpyxl.utils.get_column_letter(col_idx + 1)
+                    has_numbers = any(isinstance(r[col_idx], (int, float)) for r in data_rows if col_idx < len(r))
+                    if has_numbers:
+                        sum_row.append(f"=SUM({col_letter}2:{col_letter}{num_data_rows + 1})")
+                    else:
+                        sum_row.append("TOTAL" if col_idx == 0 or (col_idx == 1 and not any(sum_row)) else "")
+                data_rows.append(sum_row)
+
+                sheets_spec = [
+                    {
+                        "title": Path(csv_source_path).stem[:31],
+                        "headers": headers,
+                        "rows": data_rows,
+                    }
+                ]
 
     if not sheets_spec:
         sheets_spec = [
@@ -231,9 +269,10 @@ def _sync_excel_create_workbook(
 async def excel_create_workbook(
     file_path: str,
     sheets_spec: list[dict[str, Any]] | None = None,
+    csv_source_path: str | None = None,
 ) -> ToolResult:
     """Create a styled Excel (.xlsx) workbook with Rupiah formatting, live formulas, and charts."""
-    return await asyncio.to_thread(_sync_excel_create_workbook, file_path, sheets_spec)
+    return await asyncio.to_thread(_sync_excel_create_workbook, file_path, sheets_spec, csv_source_path)
 
 
 def _sync_excel_modify_cells(
@@ -307,6 +346,16 @@ def register_excel_tools() -> None:
         description="Inspeksi daftar sheet, header, rumus, dan sampel baris dari file Excel (.xlsx).",
         handler=excel_inspect,
         risk_level=RiskLevel.LOW,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Jalur berkas .xlsx yang ingin diperiksa.",
+                }
+            },
+            "required": ["file_path"],
+        },
     )
     tool_registry.register(
         name="excel_create_workbook",
@@ -314,6 +363,25 @@ def register_excel_tools() -> None:
         description="Buat file Microsoft Excel (.xlsx) baru dengan tabel rapi, format Rupiah, rumus aktif, dan grafik.",
         handler=excel_create_workbook,
         risk_level=RiskLevel.LOW,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Jalur berkas .xlsx tujuan di dalam folder kerja.",
+                },
+                "csv_source_path": {
+                    "type": "string",
+                    "description": "Jalur berkas .csv sumber yang ingin dikonversi menjadi tabel Excel dengan baris SUM (opsional).",
+                },
+                "sheets_spec": {
+                    "type": "array",
+                    "description": "Daftar spesifikasi sheet dengan title, headers, rows data, dan chart (opsional).",
+                    "items": {"type": "object"},
+                },
+            },
+            "required": ["file_path"],
+        },
     )
     tool_registry.register(
         name="excel_modify_cells",
@@ -321,6 +389,29 @@ def register_excel_tools() -> None:
         description="Ubah sel atau tambah baris pada file Excel (.xlsx) dengan backup otomatis ke .aksa_backup/.",
         handler=excel_modify_cells,
         risk_level=RiskLevel.MEDIUM,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Jalur berkas .xlsx yang ingin dimodifikasi.",
+                },
+                "sheet_name": {
+                    "type": "string",
+                    "description": "Nama sheet (opsional).",
+                },
+                "cell_updates": {
+                    "type": "object",
+                    "description": "Pemetaan koordinat sel ke nilai baru, contoh: {'A1': 'Nilai Baru'}.",
+                },
+                "append_rows": {
+                    "type": "array",
+                    "description": "Daftar baris baru yang ingin ditambahkan.",
+                    "items": {"type": "array"},
+                },
+            },
+            "required": ["file_path"],
+        },
     )
 
 

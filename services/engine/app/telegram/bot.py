@@ -22,6 +22,7 @@ class TelegramGatewayService:
         self.connected: bool = False
         self._llm_router = UnifiedLLMRouter(db=db_manager)
         self._orchestrator = HierarchicalOrchestrator(db=db_manager, llm_router=self._llm_router)
+        telegram_auth_guard.set_db(db_manager)
         self.handler = TelegramCommandHandler(
             orchestrator=self._orchestrator,
             auth_guard=telegram_auth_guard,

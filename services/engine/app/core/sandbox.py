@@ -283,7 +283,24 @@ class ExecutionPolicyGateway:
             for k, v in arguments.items()
             if k not in ("hitl_grant_id", "session_id", "workspace_id", "tool_version")
         }
-        return await handler(**clean_args)
+        try:
+            return await handler(**clean_args)
+        except SandboxViolationError as sve:
+            return ToolResult(
+                success=False,
+                summary=str(sve),
+                data={"policy_violation": "SANDBOX_VIOLATION"},
+                token_estimate=15,
+            )
+        except Exception as exc:
+            if "Failsafe Corner Abort" in str(exc):
+                raise
+            return ToolResult(
+                success=False,
+                summary=f"Kesalahan eksekusi tool '{tool_name}': {exc}",
+                data={"error": str(exc)},
+                token_estimate=15,
+            )
 
 
 execution_policy_gateway = ExecutionPolicyGateway()

@@ -43,6 +43,10 @@ jobs:
         run: |
           python -m pytest tests -v
 
+      - name: Verify sidecar build configuration
+        run: |
+          python scripts/build_sidecar.py --dry-run
+
       - name: Install Desktop Frontend dependencies
         working-directory: apps/desktop
         run: |

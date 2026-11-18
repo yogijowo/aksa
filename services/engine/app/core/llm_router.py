@@ -316,14 +316,15 @@ class UnifiedLLMRouter:
         self,
         provider: str,
         model_id: str,
-        messages: list[dict[str, str]],
+        messages: list[dict[str, Any]],
         temperature: float = 0.2,
         max_tokens: int = 2048,
         attachments: list[dict[str, Any]] | None = None,
         data_classification: str | DataClassification | None = None,
         user_consent_granted: bool = False,
+        tools: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Execute an async completion enforcing PrivacyPolicyGate and zero local-to-cloud fallback."""
+        """Execute an async completion enforcing PrivacyPolicyGate, tool calling, and zero local-to-cloud fallback."""
         prov = provider.lower().strip()
 
         # 0. Evaluate DataDisclosureGate & ProviderMode BEFORE any network activity
@@ -338,7 +339,8 @@ class UnifiedLLMRouter:
         if not disclosure.allowed:
             return {
                 "content": f"[Diblokir oleh Kebijakan Privasi AKSA] {disclosure.denial_reason}",
-                "input_tokens": sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+                "tool_calls": [],
+                "input_tokens": sum(token_optimizer.estimate_tokens(str(m.get("content") or "")) for m in messages),
                 "output_tokens": 24,
                 "simulated": True,
                 "blocked_by_privacy_gate": True,
@@ -349,24 +351,41 @@ class UnifiedLLMRouter:
         # 1. Local Providers (Ollama / LM Studio) — NEVER fall back to cloud!
         if prov == "ollama":
             try:
+                body: dict[str, Any] = {
+                    "model": model_id.replace("ollama/", ""),
+                    "messages": messages,
+                    "stream": False,
+                    "options": {"temperature": temperature},
+                }
+                if tools:
+                    body["tools"] = tools
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.post(
                         f"{settings.ollama_base_url}/api/chat",
-                        json={
-                            "model": model_id.replace("ollama/", ""),
-                            "messages": messages,
-                            "stream": False,
-                            "options": {"temperature": temperature},
-                        },
+                        json=body,
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        content = data.get("message", {}).get("content", "")
+                        msg = data.get("message", {})
+                        content = msg.get("content", "")
+                        raw_tool_calls = msg.get("tool_calls", [])
+                        tool_calls = []
+                        for tc in raw_tool_calls:
+                            fn = tc.get("function", {})
+                            tool_calls.append({
+                                "id": tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                "type": "function",
+                                "function": {
+                                    "name": fn.get("name"),
+                                    "arguments": json.dumps(fn.get("arguments", {})) if isinstance(fn.get("arguments"), dict) else str(fn.get("arguments", "{}")),
+                                },
+                            })
                         return {
                             "content": content,
+                            "tool_calls": tool_calls,
                             "input_tokens": data.get(
                                 "prompt_eval_count",
-                                sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+                                sum(token_optimizer.estimate_tokens(str(m.get("content") or "")) for m in messages),
                             ),
                             "output_tokens": data.get(
                                 "eval_count", token_optimizer.estimate_tokens(content)
@@ -378,15 +397,16 @@ class UnifiedLLMRouter:
             except Exception:
                 pass
 
-            user_last = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+            user_last = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
             offline_msg = (
                 f"Server AI Lokal (Ollama) untuk model '{model_id}' saat ini tidak dapat dijangkau di {settings.ollama_base_url}. "
                 f"Sesuai kebijakan keamanan AKSA (Tanpa Fallback ke Cloud), data Anda tetap tersimpan 100% lokal dan tidak dikirim ke penyedia cloud mana pun. "
-                f"Konteks tugas lokal: \"{user_last[:120]}\"."
+                f"Konteks tugas lokal: \"{str(user_last)[:120]}\"."
             )
             return {
                 "content": offline_msg,
-                "input_tokens": sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+                "tool_calls": [],
+                "input_tokens": sum(token_optimizer.estimate_tokens(str(m.get("content") or "")) for m in messages),
                 "output_tokens": token_optimizer.estimate_tokens(offline_msg),
                 "simulated": True,
                 "cloud_called": False,
@@ -395,23 +415,29 @@ class UnifiedLLMRouter:
 
         if prov == "lmstudio":
             try:
+                body_lms: dict[str, Any] = {
+                    "model": model_id.replace("lmstudio/", ""),
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if tools:
+                    body_lms["tools"] = tools
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     resp = await client.post(
                         f"{settings.lmstudio_base_url}/chat/completions",
-                        json={
-                            "model": model_id.replace("lmstudio/", ""),
-                            "messages": messages,
-                            "temperature": temperature,
-                            "max_tokens": max_tokens,
-                        },
+                        json=body_lms,
                     )
                     if resp.status_code == 200:
                         data = resp.json()
                         choice = data.get("choices", [{}])[0]
-                        content = choice.get("message", {}).get("content", "")
+                        msg = choice.get("message", {})
+                        content = msg.get("content", "")
+                        tool_calls = msg.get("tool_calls", [])
                         usage = data.get("usage", {})
                         return {
                             "content": content,
+                            "tool_calls": tool_calls,
                             "input_tokens": usage.get("prompt_tokens", 150),
                             "output_tokens": usage.get("completion_tokens", 100),
                             "simulated": False,
@@ -421,15 +447,16 @@ class UnifiedLLMRouter:
             except Exception:
                 pass
 
-            user_last = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+            user_last = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
             offline_msg = (
                 f"Server AI Lokal (LM Studio) untuk model '{model_id}' saat ini tidak aktif di {settings.lmstudio_base_url}. "
                 f"Sesuai kebijakan keamanan AKSA (Tanpa Fallback ke Cloud), tidak ada data yang dikirim keluar perangkat. "
-                f"Konteks tugas lokal: \"{user_last[:120]}\"."
+                f"Konteks tugas lokal: \"{str(user_last)[:120]}\"."
             )
             return {
                 "content": offline_msg,
-                "input_tokens": sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+                "tool_calls": [],
+                "input_tokens": sum(token_optimizer.estimate_tokens(str(m.get("content") or "")) for m in messages),
                 "output_tokens": token_optimizer.estimate_tokens(offline_msg),
                 "simulated": True,
                 "cloud_called": False,
@@ -452,13 +479,13 @@ class UnifiedLLMRouter:
                     "x-goog-api-key": api_key,
                     "Content-Type": "application/json",
                 }
-                system_text = "\n".join(m["content"] for m in messages if m["role"] == "system")
+                system_text = "\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "system")
                 user_contents = []
                 for m in messages:
-                    if m["role"] == "system":
+                    if m.get("role") == "system":
                         continue
-                    role = "user" if m["role"] == "user" else "model"
-                    user_contents.append({"role": role, "parts": [{"text": m["content"]}]})
+                    role = "user" if m.get("role") in ("user", "tool") else "model"
+                    user_contents.append({"role": role, "parts": [{"text": str(m.get("content") or "")}]})
                 if not user_contents:
                     user_contents.append({"role": "user", "parts": [{"text": "Halo"}]})
 
@@ -479,6 +506,19 @@ class UnifiedLLMRouter:
                 if system_text:
                     payload["systemInstruction"] = {"parts": [{"text": system_text}]}
 
+                if tools:
+                    function_declarations = []
+                    for t in tools:
+                        fn = t.get("function", t)
+                        decl: dict[str, Any] = {
+                            "name": fn["name"],
+                            "description": fn.get("description", ""),
+                        }
+                        if fn.get("parameters"):
+                            decl["parameters"] = fn["parameters"]
+                        function_declarations.append(decl)
+                    payload["tools"] = [{"functionDeclarations": function_declarations}]
+
                 try:
                     async with httpx.AsyncClient(timeout=30.0) as client:
                         resp = await client.post(url, json=payload, headers=headers)
@@ -487,10 +527,26 @@ class UnifiedLLMRouter:
                             candidates = data.get("candidates", [])
                             if candidates:
                                 parts = candidates[0].get("content", {}).get("parts", [])
-                                content = "".join(p.get("text", "") for p in parts)
+                                content_parts = []
+                                tool_calls = []
+                                for p in parts:
+                                    if "text" in p:
+                                        content_parts.append(p["text"])
+                                    elif "functionCall" in p:
+                                        fc = p["functionCall"]
+                                        tool_calls.append({
+                                            "id": f"call_{uuid.uuid4().hex[:8]}",
+                                            "type": "function",
+                                            "function": {
+                                                "name": fc.get("name"),
+                                                "arguments": json.dumps(fc.get("args", {})),
+                                            },
+                                        })
+                                content = "".join(content_parts)
                                 usage = data.get("usageMetadata", {})
                                 return {
                                     "content": content,
+                                    "tool_calls": tool_calls,
                                     "input_tokens": usage.get("promptTokenCount", 150),
                                     "output_tokens": usage.get("candidatesTokenCount", 100),
                                     "simulated": False,
@@ -510,25 +566,31 @@ class UnifiedLLMRouter:
             }
             base = base_urls.get(prov, "https://api.openai.com/v1")
             clean_model = model_id.replace(f"{prov}/", "")
+            req_body: dict[str, Any] = {
+                "model": clean_model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            }
+            if tools:
+                req_body["tools"] = tools
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(
                         f"{base}/chat/completions",
                         headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                        json={
-                            "model": clean_model,
-                            "messages": messages,
-                            "temperature": temperature,
-                            "max_tokens": max_tokens,
-                        },
+                        json=req_body,
                     )
                     if resp.status_code == 200:
                         data = resp.json()
                         choice = data.get("choices", [{}])[0]
-                        content = choice.get("message", {}).get("content", "")
+                        msg = choice.get("message", {})
+                        content = msg.get("content", "") or ""
+                        tool_calls = msg.get("tool_calls", [])
                         usage = data.get("usage", {})
                         return {
                             "content": content,
+                            "tool_calls": tool_calls,
                             "input_tokens": usage.get("prompt_tokens", 150),
                             "output_tokens": usage.get("completion_tokens", 100),
                             "simulated": False,
@@ -540,8 +602,25 @@ class UnifiedLLMRouter:
 
         # 2c. Anthropic Claude Native REST API
         if prov == "anthropic" and api_key:
-            system_text = "\n".join(m["content"] for m in messages if m["role"] == "system")
-            chat_msgs = [{"role": m["role"], "content": m["content"]} for m in messages if m["role"] != "system"]
+            system_text = "\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "system")
+            chat_msgs = [{"role": m.get("role", "user"), "content": str(m.get("content") or "")} for m in messages if m.get("role") != "system"]
+            req_body_anthropic: dict[str, Any] = {
+                "model": model_id.replace("anthropic/", ""),
+                "system": system_text,
+                "messages": chat_msgs,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
+            }
+            if tools:
+                anthropic_tools = []
+                for t in tools:
+                    fn = t.get("function", t)
+                    anthropic_tools.append({
+                        "name": fn["name"],
+                        "description": fn.get("description", ""),
+                        "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+                    })
+                req_body_anthropic["tools"] = anthropic_tools
             try:
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     resp = await client.post(
@@ -551,21 +630,30 @@ class UnifiedLLMRouter:
                             "anthropic-version": "2023-06-01",
                             "content-type": "application/json",
                         },
-                        json={
-                            "model": model_id.replace("anthropic/", ""),
-                            "system": system_text,
-                            "messages": chat_msgs,
-                            "max_tokens": max_tokens,
-                            "temperature": temperature,
-                        },
+                        json=req_body_anthropic,
                     )
                     if resp.status_code == 200:
                         data = resp.json()
                         parts = data.get("content", [])
-                        text = "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+                        content_parts = []
+                        tool_calls = []
+                        for p in parts:
+                            if p.get("type") == "text":
+                                content_parts.append(p.get("text", ""))
+                            elif p.get("type") == "tool_use":
+                                tool_calls.append({
+                                    "id": p.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                    "type": "function",
+                                    "function": {
+                                        "name": p.get("name"),
+                                        "arguments": json.dumps(p.get("input", {})),
+                                    },
+                                })
+                        content = "".join(content_parts)
                         usage = data.get("usage", {})
                         return {
-                            "content": text,
+                            "content": content,
+                            "tool_calls": tool_calls,
                             "input_tokens": usage.get("input_tokens", 150),
                             "output_tokens": usage.get("output_tokens", 100),
                             "simulated": False,
@@ -576,14 +664,15 @@ class UnifiedLLMRouter:
                 pass
 
         # Fallback when no valid API key for the requested provider
-        user_last = next((m["content"] for m in reversed(messages) if m["role"] == "user"), "")
+        user_last = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
         simulated_reply = (
             f"Halo! Saya Asisten AKSA. Mohon pastikan Kunci API {prov.upper()} sudah disimpan di menu Pengaturan "
-            f"atau gunakan model lokal untuk memproses instruksi: \"{user_last[:120]}\"."
+            f"atau gunakan model lokal untuk memproses instruksi: \"{str(user_last)[:120]}\"."
         )
         return {
             "content": simulated_reply,
-            "input_tokens": sum(token_optimizer.estimate_tokens(m["content"]) for m in messages),
+            "tool_calls": [],
+            "input_tokens": sum(token_optimizer.estimate_tokens(str(m.get("content") or "")) for m in messages),
             "output_tokens": token_optimizer.estimate_tokens(simulated_reply),
             "simulated": True,
             "cloud_called": False,

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import secrets
 from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
@@ -29,7 +31,8 @@ class ConnectionManager:
             await websocket.close(code=4008, reason="Connection limit exceeded")
             return False
 
-        await websocket.accept()
+        if getattr(websocket.client_state, "name", "") != "CONNECTED":
+            await websocket.accept()
         self.active_connections.append(websocket)
         self.connection_subscriptions[websocket] = set()
         if session_id:
@@ -112,12 +115,37 @@ async def websocket_stream_endpoint(
     token: str | None = Query(default=None),
     session_id: str | None = Query(default=None),
 ) -> None:
-    """Bi-directional real-time WebSocket stream between Desktop UI and Python Engine with session isolation."""
-    if not settings.dev_mode and (not token or token != settings.auth_token):
-        await websocket.close(code=4001, reason="Unauthorized")
-        return
+    """Bi-directional real-time WebSocket stream between Desktop UI and Python Engine with session isolation.
+    
+    Supports both constant-time query token and initial JSON auth frame (within 3 seconds) per P1-3.
+    """
+    authenticated = False
+    if settings.dev_mode:
+        authenticated = True
+    elif token and secrets.compare_digest(token, settings.auth_token):
+        authenticated = True
 
-    await ws_manager.connect(websocket, session_id=session_id)
+    if not authenticated:
+        # Await initial JSON auth frame within 3 seconds
+        await websocket.accept()
+        try:
+            raw_auth = await asyncio.wait_for(websocket.receive_text(), timeout=3.0)
+            auth_data = json.loads(raw_auth)
+            frame_token = auth_data.get("token") or auth_data.get("auth_token")
+            if frame_token and secrets.compare_digest(frame_token, settings.auth_token):
+                authenticated = True
+                if not session_id and auth_data.get("session_id"):
+                    session_id = auth_data.get("session_id")
+            else:
+                await websocket.close(code=4001, reason="Unauthorized")
+                return
+        except Exception:
+            await websocket.close(code=4001, reason="Unauthorized")
+            return
+
+    connected = await ws_manager.connect(websocket, session_id=session_id)
+    if not connected:
+        return
     try:
         await websocket.send_json(
             {

@@ -30,15 +30,28 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-ALLOWED_ORIGINS = [
-    "http://localhost:1420",
-    "http://127.0.0.1:1420",
-    "tauri://localhost",
-    "http://tauri.localhost",
-    "https://tauri.localhost",
-]
+def get_allowed_origins() -> list[str]:
+    """Resolve strictly authorized CORS origins. Test origins only permitted in test/dev mode."""
+    origins = [
+        "http://localhost:1420",
+        "http://127.0.0.1:1420",
+        "tauri://localhost",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+    ]
+    if settings.testing or settings.dev_mode:
+        origins.extend(["http://test", "http://testserver"])
+    return origins
 
-ALLOWED_HOSTS = {"127.0.0.1", "localhost", "::1", "[::1]", "test", "testserver"}
+
+def get_allowed_hosts() -> set[str]:
+    """Resolve strictly authorized Host headers to prevent DNS rebinding attacks."""
+    hosts = {"127.0.0.1", "localhost", "::1", "[::1]"}
+    if settings.testing or settings.dev_mode:
+        hosts.update({"test", "testserver"})
+    return hosts
+
+
 MAX_REQUEST_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
@@ -55,7 +68,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=ALLOWED_ORIGINS,
+        allow_origins=get_allowed_origins(),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-AKSA-Auth-Token", "X-Request-ID"],
@@ -65,7 +78,8 @@ def create_app() -> FastAPI:
     async def verify_security_and_auth(request: Request, call_next):
         # 1. Host header validation (DNS rebinding protection)
         host_header = request.headers.get("host", "127.0.0.1").split(":")[0].strip().lower()
-        if host_header and host_header not in ALLOWED_HOSTS:
+        allowed_hosts = get_allowed_hosts()
+        if host_header and host_header not in allowed_hosts:
             return JSONResponse(
                 status_code=403,
                 content={
@@ -76,7 +90,8 @@ def create_app() -> FastAPI:
 
         # 2. Origin header validation
         origin = request.headers.get("origin")
-        if origin and origin not in ALLOWED_ORIGINS and not origin.startswith("http://test"):
+        allowed_origins = get_allowed_origins()
+        if origin and origin not in allowed_origins:
             return JSONResponse(
                 status_code=403,
                 content={

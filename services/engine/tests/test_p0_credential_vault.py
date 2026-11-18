@@ -96,3 +96,4 @@ def test_p0_no_subprocess_calls_during_vault_operations(tmp_path: Path) -> None:
         assert mock_run.call_count == 0, "subprocess.run was unexpectedly called"
         assert mock_popen.call_count == 0, "subprocess.Popen was unexpectedly called"
         assert retrieved == secret
+
