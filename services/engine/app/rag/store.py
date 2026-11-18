@@ -15,6 +15,7 @@ import aiosqlite
 import numpy as np
 
 from app.config import settings
+from app.core.auth_context import get_default_host_principal
 from app.core.sandbox import (
     RiskLevel,
     SandboxViolationError,
@@ -158,16 +159,17 @@ class HybridRAGStore:
         workspace_id: str,
         file_path: str | Path,
         canonical_ws_root: Path | None = None,
-        principal_id: str = "default_user",
+        principal_id: str | None = None,
     ) -> dict[str, Any]:
         """Incrementally index a single file using SHA-256 diff check into Dense Vectors + SQLite FTS5."""
         self._ensure_vectors_loaded()
+        eff_principal = principal_id or get_default_host_principal()
 
         ws = await self.db.get_workspace(workspace_id)
         if not ws:
             raise FileNotFoundError("Folder Kerja tidak ditemukan.")
 
-        if ws.get("owner_id") and ws["owner_id"] != principal_id:
+        if ws.get("owner_id") and ws["owner_id"] != eff_principal:
             raise PermissionError("Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
 
         if not ws.get("allow_read", True):
@@ -324,17 +326,18 @@ class HybridRAGStore:
         self,
         workspace_id: str,
         folder_path: str | Path | None = None,
-        principal_id: str = "default_user",
+        principal_id: str | None = None,
     ) -> dict[str, Any]:
         """Scan an authorized workspace folder and incrementally index all supported documents."""
+        eff_principal = principal_id or get_default_host_principal()
         ws = await self.db.get_workspace(workspace_id)
         if not ws:
             raise FileNotFoundError("Folder Kerja tidak ditemukan.")
 
-        if ws.get("owner_id") and ws["owner_id"] != principal_id:
+        if ws.get("owner_id") and ws["owner_id"] != eff_principal:
             await self.db.record_permission_audit({
                 "principal_type": "user",
-                "principal_id": principal_id,
+                "principal_id": eff_principal,
                 "capability_id": "rag.index",
                 "resource_scope": workspace_id,
                 "decision": "deny",

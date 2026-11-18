@@ -112,18 +112,67 @@ def generate_npm_components(desktop_dir: Path) -> list[dict[str, Any]]:
     return sorted(components, key=lambda c: c["name"].lower())
 
 
+def generate_cargo_components(tauri_dir: Path) -> list[dict[str, Any]]:
+    """Parse Rust/Cargo dependencies from apps/desktop/src-tauri/Cargo.lock (P2-02)."""
+    components: list[dict[str, Any]] = []
+    lock_file = tauri_dir / "Cargo.lock"
+    if not lock_file.exists():
+        return components
+
+    try:
+        content = lock_file.read_text(encoding="utf-8")
+        current_pkg: dict[str, str] = {}
+        for line in content.splitlines():
+            line = line.strip()
+            if line == "[[package]]":
+                if current_pkg.get("name") and current_pkg.get("version"):
+                    name = current_pkg["name"]
+                    ver = current_pkg["version"]
+                    components.append({
+                        "type": "library",
+                        "name": name,
+                        "version": ver,
+                        "purl": f"pkg:cargo/{name}@{ver}",
+                        "scope": "required",
+                    })
+                current_pkg = {}
+            elif "=" in line:
+                key, val = line.split("=", 1)
+                key = key.strip()
+                val = val.strip().strip('"')
+                if key in ("name", "version", "source", "checksum"):
+                    current_pkg[key] = val
+
+        if current_pkg.get("name") and current_pkg.get("version"):
+            name = current_pkg["name"]
+            ver = current_pkg["version"]
+            components.append({
+                "type": "library",
+                "name": name,
+                "version": ver,
+                "purl": f"pkg:cargo/{name}@{ver}",
+                "scope": "required",
+            })
+    except Exception as e:
+        sys.stderr.write(f"Warning: Failed to parse Cargo.lock for SBOM: {e}\n")
+
+    return sorted(components, key=lambda c: c["name"].lower())
+
+
 def generate_cyclonedx_sbom(
     repo_root: Path | None = None,
     output_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Generate CycloneDX 1.5 JSON SBOM for AKSA full stack."""
+    """Generate CycloneDX 1.5 JSON SBOM for AKSA full stack (Python + npm + Cargo)."""
     root = repo_root or get_repo_root()
     engine_dir = root / "services" / "engine"
     desktop_dir = root / "apps" / "desktop"
+    tauri_dir = root / "apps" / "desktop" / "src-tauri"
 
     py_components = generate_python_components(engine_dir)
     npm_components = generate_npm_components(desktop_dir)
-    all_components = py_components + npm_components
+    cargo_components = generate_cargo_components(tauri_dir)
+    all_components = py_components + npm_components + cargo_components
 
     sbom: dict[str, Any] = {
         "bomFormat": "CycloneDX",

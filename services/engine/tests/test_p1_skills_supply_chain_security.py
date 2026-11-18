@@ -82,3 +82,78 @@ async def test_atomic_stage_and_promote_lifecycle(tmp_path: Path):
     assert uninstalled is True
     assert not dest_dir.exists()
 
+
+@pytest.mark.asyncio
+async def test_publisher_signature_verification_against_trust_store(tmp_path: Path):
+    """Verify digital signature verification against publisher trust store (P1-03)."""
+    from cryptography.hazmat.primitives.asymmetric import ed25519
+    import base64
+    from app.skills.skill_manager import publisher_trust_store
+
+    # Generate custom publisher keypair
+    priv_key = ed25519.Ed25519PrivateKey.generate()
+    pub_key_b64 = base64.b64encode(priv_key.public_key().public_bytes_raw()).decode("ascii")
+
+    publisher_trust_store.register_publisher("trusted_corp", pub_key_b64)
+
+    # Create signed skill ZIP
+    signed_zip = tmp_path / "signed_skill.zip"
+    with zipfile.ZipFile(signed_zip, "w") as zf:
+        zf.writestr("SKILL.md", "---\nname: corporate-skill\npublisher: trusted_corp\n---\n# Corporate Skill")
+
+    # Hash the package
+    hasher = hashlib.sha256()
+    with open(signed_zip, "rb") as f:
+        while chunk := f.read(65536):
+            hasher.update(chunk)
+    pkg_hash = hasher.hexdigest()
+
+    # Sign package hash with publisher private key
+    sig_bytes = priv_key.sign(pkg_hash.encode("ascii"))
+    valid_sig_b64 = base64.b64encode(sig_bytes).decode("ascii")
+
+    # 1. Valid signature -> verified_publisher
+    report = await agent_skills_manager.scan_package_archive(
+        signed_zip,
+        signature_b64=valid_sig_b64,
+        publisher_id="trusted_corp",
+    )
+    assert report.is_valid is True
+    assert report.signature_verified is True
+    assert report.publisher_trusted is True
+    assert report.manifest.trust_level == "verified_publisher"
+
+    # 2. Tampered signature -> rejected
+    tampered_sig = base64.b64encode(b"invalid_signature_bytes_32_bytes!").decode("ascii")
+    report_tampered = await agent_skills_manager.scan_package_archive(
+        signed_zip,
+        signature_b64=tampered_sig,
+        publisher_id="trusted_corp",
+    )
+    assert report_tampered.is_valid is False
+    assert report_tampered.signature_verified is False
+    assert any("Tanda tangan digital" in w for w in report_tampered.security_warnings)
+
+
+@pytest.mark.asyncio
+async def test_disabled_skill_execution_rejected_fail_closed(tmp_path: Path):
+    """Verify executing scripts on disabled skills fails closed with PermissionError (P1-03)."""
+    # Create and install a skill with script
+    skill_zip = tmp_path / "script_skill.zip"
+    with zipfile.ZipFile(skill_zip, "w") as zf:
+        zf.writestr("SKILL.md", "---\nname: runnable-skill\n---\n# Runnable")
+        zf.writestr("scripts/run.py", "print('hello from skill')")
+
+    item = await agent_skills_manager.install_skill_package(skill_zip)
+    assert item["enabled"] is False
+
+    # Attempt to execute while disabled must raise PermissionError
+    with pytest.raises(PermissionError) as exc_info:
+        await agent_skills_manager.execute_skill_script(
+            skill_id="runnable-skill",
+            script_rel_path="scripts/run.py",
+            workspace_path=str(tmp_path),
+        )
+    assert "nonaktif atau belum disetujui" in str(exc_info.value)
+
+

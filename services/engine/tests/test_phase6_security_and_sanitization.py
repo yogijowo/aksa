@@ -43,6 +43,24 @@ async def test_api_key_masking(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_websocket_session_isolation() -> None:
     """Verify that WebSocket broadcast_event isolates messages by session_id."""
+    from app.core.auth_context import get_default_host_principal
+    from app.db.models import db_manager
+
+    await db_manager.initialize()
+    current_user = get_default_host_principal()
+    await db_manager.create_session({
+        "id": "session_1",
+        "title": "Test Session 1",
+        "workspace_folder": "/tmp",
+        "principal_id": current_user,
+    })
+    await db_manager.create_session({
+        "id": "session_2",
+        "title": "Test Session 2",
+        "workspace_folder": "/tmp",
+        "principal_id": current_user,
+    })
+
     manager = ConnectionManager()
 
     # Client A subscribed to session_1

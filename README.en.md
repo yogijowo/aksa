@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Tests-41%2F41%20Verified-10B981?style=for-the-badge" alt="41/41 Verified Tests">
+  <img src="https://img.shields.io/badge/Tests-166%2F166%20Verified-10B981?style=for-the-badge" alt="166/166 Verified Tests">
 </p>
 
 <p align="center">
@@ -54,11 +54,17 @@
 * **16 Ready-to-Install Skills (Uninstalled by Default):** One-click installation for *Excel Financial Modeler*, *Excel Monthly Report*, *Word Legal Contract & MoU*, *Indonesian Official Correspondence*, *PDF Table Extractor*, *Python Exploratory Data Analyst*, *Browser Research Assistant*, *Git Code Reviewer*, *SQL Query Optimizer*, *Indonesian Tax Calculator (PPh 21/TER)*, *Executive Meeting Minutes*, *PowerPoint Pitch Deck*, *Academic Paper Summarizer*, *CSV Bank Reconciliation*, *Security Audit Scanner*, and *System Admin Diagnostics*.
 * **Strict Quarantine & Static Analysis:** Blocks `../` path traversal, symbolic links, case-colliding paths, zip bombs (>25 MB or >50:1 compression ratio), binary executables, environment credential scraping, and `SKILL.md` prompt injection. Skills install in a **DISABLED-by-default** state and automatically revoke all grants upon uninstallation.
 
-### 4. Enterprise Security Baseline (`ExecutionPolicyGateway` & `CredentialVault`)
-* **OS Credential Vault:** API keys are encrypted via **Windows DPAPI (`CryptProtectData`)** / **macOS Keychain** / **Sealed HMAC-SHA256 Vault**. SQLite `credentials_metadata` stores only `credential_ref` and masked previews—never plaintext secrets.
+### 4. Enterprise Security Baseline & Trust Boundary
+* **Zero-Trust Sidecar Handshake:** Sidecar communication uses challenge-response nonce verification. Secret tokens are never sent prior to identity verification. Production mode strictly fails closed with no dev token fallback.
+* **OS Credential Vault & DPAPI:** API keys are encrypted via **Windows DPAPI (`CryptProtectData`)** / **macOS Keychain** / **Sealed HMAC-SHA256 Vault** with strict `0o600` file permissions. Unencrypted fallback keys are rejected in production.
+* **Host Principal Binding & Workspace Sandbox:** Enforces binding to the local OS host identity (`user:<username>`). Untrusted identity headers are rejected with 403. File operations and hybrid RAG searches strictly validate canonical paths against authorized workspaces.
+* **Bound One-Time Approvals (`R0`–`R4`):** High-risk operations require one-time cryptographic `ApprovalGrant`s bound to `action_id`, canonical SHA-256 argument hashes, session ID, workspace ID, tool version, and expiration. Public override fields (`execution_policy_override`, `skip_approval`, `is_admin`) are actively rejected.
+* **Honest OS Permission Broker:** Native OS capabilities (TCC Screen Recording, AVFoundation Camera/Mic, macOS Accessibility, Windows UI Automation & Capture) are reported honestly (`NEEDS_USER_ACTION`, `UNKNOWN`, `GRANTED`). Capabilities are never spoofed from binary existence.
+* **Strict MCP Subprocess Lifecycle:** Validates all parameters against JSON schemas prior to execution, enforces verified `initialize` handshake, and reaps child processes safely.
+* **Skills Marketplace Trust Store & Sandbox:** Publisher Trust Store verifies Ed25519 digital signatures. Scripts execute in a path-jailed, environment-scrubbed sandbox under least privilege.
+* **Privacy Gate & Confidential Data Consent:** Data classified as `CONFIDENTIAL` always requires explicit per-request user consent before transmission to any cloud provider, with automated regex PII sanitization.
 * **Zero Local-to-Cloud Fallback:** Requests assigned to local models (`Ollama` / `LM Studio`) or running under `local_only` mode never fall back to cloud providers under any condition.
-* **Data Disclosure Gate & Classification:** Enforces `PUBLIC`, `INTERNAL`, `CONFIDENTIAL`, and `RESTRICTED` data classification tiers and prevents automatic PDF attachments without explicit user consent.
-* **Bound One-Time Approvals (`R0`–`R4`):** High-risk operations require one-time cryptographic `ApprovalGrant`s bound to canonical SHA-256 argument hashes, session ID, workspace ID, tool version, and expiration. Public override fields (`execution_policy_override`, `skip_approval`, `is_admin`) are actively rejected.
+* **Full Multi-Ecosystem CycloneDX SBOM:** Automated generation of CycloneDX Software Bill of Materials covering Python, npm, and Rust Cargo dependencies.
 
 ---
 
@@ -81,7 +87,7 @@ npm run dev
 # Or run Native Tauri v2 Desktop Window (Requires Rust / Cargo)
 npm run dev:tauri
 
-# Run all 41 backend unit, integration & security regression tests
+# Run all 166 backend unit, integration & security regression tests
 npm run test:backend
 
 # Run TypeScript typecheck & Vite production bundle

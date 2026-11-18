@@ -39,6 +39,10 @@ def test_cyclonedx_sbom_generation() -> None:
         names = {c["name"].lower() for c in components}
         assert any("fastapi" in n or "pydantic" in n or "aksa" in n for n in names)
 
+        # Check for Cargo Rust components (P2-02)
+        cargo_components = [c for c in components if c["purl"].startswith("pkg:cargo/")]
+        assert len(cargo_components) > 0, "SBOM must include Rust/Cargo components from Cargo.lock"
+
         # Check purl formatting
         for comp in components:
             assert "purl" in comp

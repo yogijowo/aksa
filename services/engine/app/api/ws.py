@@ -11,6 +11,7 @@ from typing import Any
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 
 from app.config import settings
+from app.core.auth_context import get_default_host_principal
 from app.core.observability import redact_payload
 from app.db.models import db_manager
 
@@ -35,49 +36,55 @@ class ConnectionManager:
         self,
         websocket: WebSocket,
         session_id: str | None = None,
-        principal_id: str = "default_user",
+        principal_id: str | None = None,
     ) -> bool:
         if len(self.active_connections) >= MAX_ACTIVE_CONNECTIONS:
             await websocket.close(code=4008, reason="Connection limit exceeded")
             return False
 
+        effective_principal = principal_id or get_default_host_principal()
         if getattr(websocket.client_state, "name", "") != "CONNECTED":
             await websocket.accept()
         self.active_connections.append(websocket)
         self.connection_subscriptions[websocket] = set()
-        self.connection_principals[websocket] = principal_id
+        self.connection_principals[websocket] = effective_principal
         self.connection_message_timestamps[websocket] = []
 
         if session_id:
-            await self.subscribe_session(websocket, session_id, principal_id=principal_id)
+            await self.subscribe_session(websocket, session_id, principal_id=effective_principal)
         return True
 
     async def subscribe_session(
         self,
         websocket: WebSocket,
         session_id: str,
-        principal_id: str = "default_user",
+        principal_id: str | None = None,
     ) -> bool:
-        """Authorize and subscribe a WebSocket connection to a session validating persistent ownership."""
+        """Authorize and subscribe a WebSocket connection to a session validating persistent ownership (P1.7, P1-04)."""
         if websocket not in self.connection_subscriptions:
             return False
 
-        # 1. Validate against persistent database session ownership (P1.7)
+        effective_principal = principal_id or self.connection_principals.get(websocket) or get_default_host_principal()
+
+        # 1. Validate against persistent database session ownership (FAIL-CLOSED if missing)
         try:
             db_session = await db_manager.get_session(session_id)
-            if db_session:
-                sess_principal = db_session.get("principal_id") or "default_user"
-                if sess_principal != principal_id:
-                    # Cross-principal session access rejected fail-closed
-                    return False
+            if not db_session:
+                # FAIL-CLOSED: Missing session must be rejected immediately (P1-04)
+                return False
+            sess_principal = db_session.get("principal_id") or get_default_host_principal()
+            if sess_principal != effective_principal:
+                # Cross-principal session access rejected fail-closed
+                return False
         except Exception:
+            # Database lookup failure / timeout -> fail-closed
             return False
 
         # 2. Check in-memory active connection owner
         owner = self.session_owners.get(session_id)
         if owner is not None and owner in self.active_connections and owner is not websocket:
-            owner_principal = self.connection_principals.get(owner, "default_user")
-            if owner_principal != principal_id:
+            owner_principal = self.connection_principals.get(owner) or get_default_host_principal()
+            if owner_principal != effective_principal:
                 return False
 
         self.session_owners[session_id] = websocket
@@ -170,9 +177,10 @@ async def websocket_stream_endpoint(
     token: str | None = Query(default=None),
     session_id: str | None = Query(default=None),
 ) -> None:
-    """Bi-directional real-time WebSocket stream between Desktop UI and Python Engine with session ownership (P1.7)."""
+    """Bi-directional real-time WebSocket stream between Desktop UI and Python Engine with session ownership (P1.7, P0-03)."""
     authenticated = False
-    principal_id = "default_user"
+    trusted_host = get_default_host_principal()
+    principal_id = trusted_host
 
     if settings.dev_mode:
         authenticated = True
@@ -190,6 +198,14 @@ async def websocket_stream_endpoint(
                 authenticated = True
                 if not session_id and auth_data.get("session_id"):
                     session_id = auth_data.get("session_id")
+                # Handle test principal simulation vs production enforcement
+                claimed_principal = auth_data.get("principal_id")
+                if claimed_principal:
+                    if settings.testing or settings.dev_mode:
+                        principal_id = claimed_principal
+                    elif claimed_principal != trusted_host:
+                        await websocket.close(code=4003, reason="Forbidden principal mismatch")
+                        return
             else:
                 await websocket.close(code=4001, reason="Unauthorized")
                 return

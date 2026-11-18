@@ -11,6 +11,7 @@ from typing import Any
 import aiosqlite
 
 from app.config import settings
+from app.core.auth_context import get_default_host_principal
 
 SCHEMA_SQL = """
 PRAGMA journal_mode = WAL;
@@ -502,14 +503,38 @@ class DatabaseManager:
             item["allow_execute"] = bool(item["allow_execute"])
             item["auto_rag_sync"] = bool(item["auto_rag_sync"])
             if "owner_id" not in item or not item["owner_id"]:
-                item["owner_id"] = "default_user"
+                item["owner_id"] = get_default_host_principal()
             return item
 
-    async def list_workspaces(self) -> list[dict[str, Any]]:
-        """List all authorized PC workspace folders."""
+    async def get_workspace_by_path(self, folder_path: str) -> dict[str, Any] | None:
+        """Retrieve a workspace record matching canonical folder path (P0-02)."""
+        resolved = str(Path(folder_path).expanduser().resolve())
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM workspaces ORDER BY created_at DESC")
+            cursor = await db.execute("SELECT * FROM workspaces WHERE folder_path = ?", (resolved,))
+            row = await cursor.fetchone()
+            if not row:
+                return None
+            item = _row_to_dict(row)
+            item["allow_read"] = bool(item["allow_read"])
+            item["allow_write"] = bool(item["allow_write"])
+            item["allow_execute"] = bool(item["allow_execute"])
+            item["auto_rag_sync"] = bool(item["auto_rag_sync"])
+            if "owner_id" not in item or not item["owner_id"]:
+                item["owner_id"] = get_default_host_principal()
+            return item
+
+    async def list_workspaces(self, principal_id: str | None = None) -> list[dict[str, Any]]:
+        """List all authorized PC workspace folders, optionally filtered by principal."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            if principal_id:
+                cursor = await db.execute(
+                    "SELECT * FROM workspaces WHERE owner_id = ? ORDER BY created_at DESC",
+                    (principal_id,),
+                )
+            else:
+                cursor = await db.execute("SELECT * FROM workspaces ORDER BY created_at DESC")
             rows = await cursor.fetchall()
             results = []
             for row in rows:
@@ -519,7 +544,7 @@ class DatabaseManager:
                 item["allow_execute"] = bool(item["allow_execute"])
                 item["auto_rag_sync"] = bool(item["auto_rag_sync"])
                 if "owner_id" not in item or not item["owner_id"]:
-                    item["owner_id"] = "default_user"
+                    item["owner_id"] = get_default_host_principal()
                 results.append(item)
             return results
 
@@ -528,7 +553,7 @@ class DatabaseManager:
         ws_id = payload.get("id") or f"ws_{uuid.uuid4().hex[:10]}"
         resolved_path = str(Path(payload["folder_path"]).expanduser().resolve())
         name = payload.get("name") or Path(resolved_path).name or resolved_path
-        owner_id = payload.get("owner_id") or "default_user"
+        owner_id = payload.get("owner_id") or get_default_host_principal()
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
@@ -593,19 +618,19 @@ class DatabaseManager:
                 return None
             item = _row_to_dict(row)
             if "principal_id" not in item or not item["principal_id"]:
-                item["principal_id"] = "default_user"
+                item["principal_id"] = get_default_host_principal()
             return item
 
     async def create_session(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Create a new chat session."""
         session_id = payload.get("id") or f"sess_{uuid.uuid4().hex[:10]}"
-        principal_id = payload.get("principal_id") or "default_user"
+        principal_id = payload.get("principal_id") or get_default_host_principal()
         now = _now_iso()
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute(
                 """
-                INSERT INTO sessions (id, title, workspace_id, team_id, source, principal_id, created_at, updated_at)
+                INSERT OR REPLACE INTO sessions (id, title, workspace_id, team_id, source, principal_id, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
@@ -838,7 +863,7 @@ class DatabaseManager:
                 (
                     grant_id,
                     payload.get("principal_type", "user"),
-                    payload.get("principal_id", "default_user"),
+                    payload.get("principal_id") or get_default_host_principal(),
                     payload["capability_id"],
                     payload["resource_scope"],
                     payload.get("grant_source", "desktop_ui"),
@@ -1002,11 +1027,15 @@ class DatabaseManager:
             await db.commit()
             return deleted
 
-    async def revoke_all_workspaces(self) -> int:
-        """Revoke all workspace access and remove registered workspace entries."""
+    async def revoke_all_workspaces(self, principal_id: str | None = None) -> int:
+        """Revoke all workspace access and remove registered workspace entries, optionally filtered by principal."""
         now = _now_iso()
+        eff_principal = principal_id or get_default_host_principal()
         async with aiosqlite.connect(self.db_path) as db:
-            cursor = await db.execute("DELETE FROM workspaces")
+            if principal_id:
+                cursor = await db.execute("DELETE FROM workspaces WHERE owner_id = ?", (principal_id,))
+            else:
+                cursor = await db.execute("DELETE FROM workspaces")
             removed = cursor.rowcount
             await db.execute(
                 "UPDATE permission_grants SET revoked_at = ? WHERE capability_id LIKE 'filesystem.%' AND revoked_at IS NULL",
@@ -1016,9 +1045,9 @@ class DatabaseManager:
             await db.execute(
                 """
                 INSERT INTO permission_audit_events (id, principal_type, principal_id, capability_id, resource_scope, decision, reason_code, created_at)
-                VALUES (?, 'user', 'default_user', 'filesystem.workspace.revoke_all', 'all_workspaces', 'deny', 'USER_REVOKE_ALL_WORKSPACES', ?)
+                VALUES (?, 'user', ?, 'filesystem.workspace.revoke_all', 'all_workspaces', 'deny', 'USER_REVOKE_ALL_WORKSPACES', ?)
                 """,
-                (aud_id, now),
+                (aud_id, eff_principal, now),
             )
             await db.commit()
             return removed

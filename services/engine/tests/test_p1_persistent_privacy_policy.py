@@ -96,3 +96,82 @@ async def test_local_only_mode_strictly_blocks_cloud():
     assert local_summary.allowed is True
     assert "Pemrosesan lokal 100%" in local_summary.purpose
 
+
+@pytest.mark.asyncio
+async def test_confidential_data_requires_explicit_consent_even_in_cloud_by_choice():
+    """Verify CONFIDENTIAL data requires explicit per-request consent even in CLOUD_BY_CHOICE mode (P1-05)."""
+    gate = PrivacyPolicyGate()
+    gate.provider_mode = ProviderMode.CLOUD_BY_CHOICE
+
+    # 1. Without per-request consent -> blocked
+    summary = gate.evaluate_disclosure(
+        provider="anthropic",
+        model_id="claude-3-7-sonnet",
+        messages=[{"role": "user", "content": "Berikut rekening koran dan rahasia perusahaan"}],
+        user_consent_granted=False,
+    )
+    assert summary.data_classification == DataClassification.CONFIDENTIAL
+    assert summary.allowed is False
+    assert summary.requires_explicit_consent is True
+    assert "Persetujuan otomatis" not in summary.denial_reason
+    assert "wajib mendapatkan persetujuan eksplisit per-request" in summary.denial_reason
+
+    # 2. With per-request consent -> allowed
+    summary_consented = gate.evaluate_disclosure(
+        provider="anthropic",
+        model_id="claude-3-7-sonnet",
+        messages=[{"role": "user", "content": "Berikut rekening koran dan rahasia perusahaan"}],
+        user_consent_granted=True,
+    )
+    assert summary_consented.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_consent_scope_binding_rejects_mismatched_provider_or_model():
+    """Verify consent scoped to provider A or model A does not allow provider B or model B (P1-05)."""
+    gate = PrivacyPolicyGate()
+
+    # Consent granted specifically for gemini / gemini-2.5-pro
+    consent_scope = {"provider": "gemini", "model_id": "gemini-2.5-pro"}
+
+    # Attempt to send to openai with gemini's consent
+    mismatched = gate.evaluate_disclosure(
+        provider="openai",
+        model_id="gpt-4o",
+        messages=[{"role": "user", "content": "Data rahasia perusahaan"}],
+        user_consent_granted=True,
+        consent_scope=consent_scope,
+    )
+    assert mismatched.allowed is False
+    assert mismatched.requires_explicit_consent is True
+
+    # Matching provider & model -> allowed
+    matched = gate.evaluate_disclosure(
+        provider="gemini",
+        model_id="gemini-2.5-pro",
+        messages=[{"role": "user", "content": "Data rahasia perusahaan"}],
+        user_consent_granted=True,
+        consent_scope=consent_scope,
+    )
+    assert matched.allowed is True
+
+
+@pytest.mark.asyncio
+async def test_regex_pii_detection_and_redacted_preview():
+    """Verify regex-based secret/PII detection and redaction preview generation (P1-05)."""
+    gate = PrivacyPolicyGate()
+
+    raw_text = "Tolong periksa user dengan NIK 3302198877665544 dan key sk-abcdef12345678901234567890"
+    summary = gate.evaluate_disclosure(
+        provider="groq",
+        model_id="llama-3.3-70b",
+        messages=[{"role": "user", "content": raw_text}],
+    )
+    assert summary.data_classification == DataClassification.CONFIDENTIAL
+    assert summary.redaction_applied is True
+    assert "[REDACTED_NIK]" in summary.redacted_preview
+    assert "[REDACTED_API_KEY]" in summary.redacted_preview
+    assert "3302198877665544" not in summary.redacted_preview
+    assert "sk-abcdef12345678901234567890" not in summary.redacted_preview
+
+

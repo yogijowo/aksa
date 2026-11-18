@@ -35,6 +35,41 @@ SUPPORTED_MCP_PROTOCOL_VERSIONS = {"2024-11-05", "2024-10-07", "0.1.0"}
 MAX_PAYLOAD_SIZE = 10 * 1024 * 1024  # 10 MB maximum payload limit
 
 
+def validate_arguments_against_schema(schema: dict[str, Any] | None, arguments: dict[str, Any] | None) -> tuple[bool, str | None]:
+    """Validate tool input arguments against MCP JSON schema (P1-02)."""
+    if not schema or not isinstance(schema, dict):
+        return True, None
+    args = arguments or {}
+    if not isinstance(args, dict):
+        return False, "Argumen harus berupa objek dictionary."
+
+    # Required parameters check
+    required = schema.get("required", [])
+    if isinstance(required, list):
+        for req_field in required:
+            if req_field not in args:
+                return False, f"Parameter wajib '{req_field}' tidak disediakan."
+
+    # Property types check
+    properties = schema.get("properties", {})
+    if isinstance(properties, dict):
+        type_checks = {
+            "string": lambda v: isinstance(v, str),
+            "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
+            "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
+            "boolean": lambda v: isinstance(v, bool),
+            "array": lambda v: isinstance(v, list),
+            "object": lambda v: isinstance(v, dict),
+        }
+        for key, val in args.items():
+            if key in properties and isinstance(properties[key], dict):
+                prop_type = properties[key].get("type")
+                if prop_type in type_checks and not type_checks[prop_type](val):
+                    return False, f"Tipe parameter '{key}' tidak valid. Diharapkan '{prop_type}', diterima '{type(val).__name__}'."
+
+    return True, None
+
+
 def build_isolated_mcp_env(extra_allowlist: list[str] | None = None) -> dict[str, str]:
     """Construct a scrubbed subprocess environment excluding all AKSA API keys and secrets."""
     allowed_keys = set(SAFE_MCP_ENV_ALLOWLIST)
@@ -286,7 +321,19 @@ class MCPClientManager:
                 token_estimate=18,
             )
 
-        # 3. Check mock test handler
+        # 3. Schema validation against tool parameters (P1-02)
+        schema = server.tool_schemas.get(tool_name)
+        if schema:
+            valid, schema_err = validate_arguments_against_schema(schema, arguments)
+            if not valid:
+                return ToolResult(
+                    success=False,
+                    summary=f"Validasi argumen gagal untuk tool MCP '{tool_name}': {schema_err}",
+                    data={"server_id": server.id, "status": "schema_validation_failed", "error": schema_err},
+                    token_estimate=18,
+                )
+
+        # 4. Check mock test handler
         if server_id in self._mock_handlers:
             try:
                 res = self._mock_handlers[server_id](tool_name, arguments)
@@ -415,6 +462,14 @@ class MCPClientManager:
                     summary=f"Server MCP '{server.name}' mengembalikan error protokol pada tool '{tool_name}'.",
                     data={"server_id": server.id, "status": "rpc_error", "error": rpc_error},
                     token_estimate=24,
+                )
+
+            if not handshake_ok:
+                return ToolResult(
+                    success=False,
+                    summary=f"Handshake inisialisasi server MCP '{server.name}' belum tervalidasi atau tidak lengkap (P1-02).",
+                    data={"server_id": server.id, "status": "handshake_failed"},
+                    token_estimate=20,
                 )
 
             if result_data is not None:

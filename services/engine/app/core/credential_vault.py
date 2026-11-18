@@ -46,6 +46,59 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _dpapi_protect(data: bytes) -> bytes | None:
+    """Encrypt data using Windows DPAPI (CryptProtectData)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
+
+        crypt32 = ctypes.windll.crypt32
+        kernel32 = ctypes.windll.kernel32
+
+        blob_in = DATA_BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_byte)))
+        blob_out = DATA_BLOB()
+
+        # CRYPTPROTECT_UI_FORBIDDEN = 0x1
+        if crypt32.CryptProtectData(ctypes.byref(blob_in), "AKSA_VAULT_KEY", None, None, None, 1, ctypes.byref(blob_out)):
+            out_bytes = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+            kernel32.LocalFree(blob_out.pbData)
+            return out_bytes
+        return None
+    except Exception:
+        return None
+
+
+def _dpapi_unprotect(data: bytes) -> bytes | None:
+    """Decrypt data using Windows DPAPI (CryptUnprotectData)."""
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
+
+        crypt32 = ctypes.windll.crypt32
+        kernel32 = ctypes.windll.kernel32
+
+        blob_in = DATA_BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_byte)))
+        blob_out = DATA_BLOB()
+
+        if crypt32.CryptUnprotectData(ctypes.byref(blob_in), None, None, None, None, 1, ctypes.byref(blob_out)):
+            out_bytes = ctypes.string_at(blob_out.pbData, blob_out.cbData)
+            kernel32.LocalFree(blob_out.pbData)
+            return out_bytes
+        return None
+    except Exception:
+        return None
+
+
 def mask_secret(secret: str) -> str:
     """Return a safe display mask for a secret without exposing its value."""
     cleaned = secret.strip()
@@ -106,6 +159,11 @@ class CredentialVault:
         base = self._vault_dir or settings.data_dir
         return base / ".vault_key_v2"
 
+    @property
+    def dpapi_key_file(self) -> Path:
+        base = self._vault_dir or settings.data_dir
+        return base / ".vault_key_v2.dpapi"
+
     def _get_active_master_key(self) -> bytes | None:
         """Get explicitly configured CSPRNG master key (e.g. from env for headless/CI)."""
         if self._master_key:
@@ -116,7 +174,7 @@ class CredentialVault:
         return None
 
     def _get_or_create_os_vault_key(self) -> bytes:
-        """Retrieve or initialize a 256-bit CSPRNG vault key protected by OS user permissions (0o600).
+        """Retrieve or initialize a 256-bit CSPRNG vault key protected by DPAPI (Windows) or strict OS permissions (0o600).
         NEVER uses machine metadata (P1.1).
         """
         explicit = self._get_active_master_key()
@@ -130,8 +188,40 @@ class CredentialVault:
 
         base = self._vault_dir or settings.data_dir
         base.mkdir(parents=True, exist_ok=True)
-        key_path = self.os_key_file
+        if sys.platform != "win32":
+            try:
+                os.chmod(base, 0o700)
+            except Exception:
+                pass
 
+        # 1. On Windows: prioritize DPAPI protection
+        if sys.platform == "win32":
+            if self.dpapi_key_file.exists():
+                try:
+                    decrypted = _dpapi_unprotect(self.dpapi_key_file.read_bytes())
+                    if decrypted and len(decrypted) == 32:
+                        return decrypted
+                except Exception:
+                    pass
+
+            new_key = os.urandom(32)
+            protected = _dpapi_protect(new_key)
+            if protected:
+                self.dpapi_key_file.write_bytes(protected)
+                return new_key
+
+        # 2. Production fail-closed check: refuse unencrypted key on disk unless in dev/testing or explicit opt-in
+        is_dev_or_test = settings.dev_mode or settings.testing
+        allow_insecure_fallback = is_dev_or_test or os.environ.get("AKSA_ALLOW_INSECURE_VAULT_FALLBACK") == "1"
+        if not allow_insecure_fallback:
+            raise KeyringUnavailableError(
+                "Penyimpanan OS Keyring (Keychain/Secret Service/DPAPI) tidak tersedia. "
+                "Pada mode produksi, penyimpanan kunci tidak terenkripsi pada disk ditolak secara fail-closed (P1-01). "
+                "Harap aktifkan Keychain OS atau tentukan AKSA_VAULT_MASTER_KEY."
+            )
+
+        # 3. Check if existing unencrypted key exists (only permitted in dev/test or with explicit opt-in)
+        key_path = self.os_key_file
         if key_path.exists():
             try:
                 if sys.platform != "win32":
@@ -315,6 +405,18 @@ class CredentialVault:
                     self._save_fallback_entries(migrated_entries)
                 else:
                     self._shred_file(self.fallback_vault_file)
+            except Exception:
+                pass
+
+        # 3. On Windows: migrate plaintext os_key_file to DPAPI protected key (P1-01)
+        if sys.platform == "win32" and self.os_key_file.exists() and not self.dpapi_key_file.exists():
+            try:
+                raw_k = self.os_key_file.read_bytes()
+                if len(raw_k) == 32:
+                    protected = _dpapi_protect(raw_k)
+                    if protected:
+                        self.dpapi_key_file.write_bytes(protected)
+                        self._shred_file(self.os_key_file)
             except Exception:
                 pass
 

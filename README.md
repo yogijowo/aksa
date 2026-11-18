@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Tests-41%2F41%20Verified-10B981?style=for-the-badge" alt="41/41 Verified Tests">
+  <img src="https://img.shields.io/badge/Tests-166%2F166%20Verified-10B981?style=for-the-badge" alt="166/166 Verified Tests">
 </p>
 
 <p align="center">
@@ -132,12 +132,16 @@ AKSA menerapkan arsitektur keamanan berlapis yang terdokumentasi di [`SECURITY.m
 
 | Kontrol Keamanan | Implementasi Teknis |
 |---|---|
-| **OS Credential Vault** | Kunci API dienkripsi melalui **Windows DPAPI (`CryptProtectData`)** / **macOS Keychain** / **Sealed HMAC-SHA256 Vault**. Tabel SQLite `credentials_metadata` hanya menyimpan `credential_ref` dan pratinjau tersamar (`AIza••••••••9iYY`). |
-| **Zero Local-to-Cloud Fallback** | Saat menggunakan model lokal (`Ollama` / `LM Studio`) atau mode `local_only`, sistem dijamin tidak pernah mengalihkan request ke penyedia cloud meskipun server lokal sedang mati. |
-| **Data Disclosure Gate** | Tidak ada lampiran PDF otomatis dari folder kerja. Data berklasifikasi `RESTRICTED` diblokir dari cloud; lampiran dokumen wajib melalui persetujuan eksplisit pengguna. |
-| **Bound One-Time Approvals** | Persetujuan berisiko tinggi (`R3`/`R4`) diikat secara kriptografis ke hash argumen `SHA-256`, `session_id`, `workspace_id`, `tool_version`, dan waktu kedaluwarsa, serta hanya dapat dikonsumsi satu kali (anti-replay). Semua field override publik (`execution_policy_override`, `skip_approval`, `is_admin`) ditolak secara aktif. |
-| **Sandbox Path Jail & Revoke-All** | Resolusi kanonis `os.path.realpath`, pemblokiran path jaringan UNC (`\\server\share`) dan NTFS Alternate Data Streams (`:`), pelestarian izin *read-only*, serta pencabutan akses seluruh workspace satu klik (`POST /api/v1/workspaces/revoke-all`). |
-| **Redacted Observability** | Seluruh log terstruktur dan *Support Diagnostic Bundle* (`GET /api/v1/system/diagnostics/support-bundle`) secara otomatis menyensor kunci API, token Bearer, kata sandi, dan isi dokumen. |
+| **Zero-Trust Sidecar Handshake** | Otentikasi token sidecar menggunakan verifikasi tantangan-tanggapan (*challenge-response nonce*). Token rahasia tidak pernah dikirim sebelum identitas engine diverifikasi. Mode produksi *fail-closed* tanpa fallback dev token. |
+| **OS Credential Vault & DPAPI** | Kunci API dienkripsi melalui **Windows DPAPI (`CryptProtectData`)** / **macOS Keychain** / **Sealed HMAC-SHA256 Vault** dengan izin berkas `0o600`. File kunci fallback tanpa enkripsi ditolak di mode produksi. |
+| **Host Principal & Workspace Sandbox** | Otorisasi ketat mengikat seluruh aksi ke identitas akun host OS (`user:<getpass.getuser()>`). Header `X-Principal-ID` palsu ditolak (403). Seluruh akses berkas dan pencarian RAG diverifikasi kanonis (`os.path.realpath`) terhadap daftar folder kerja yang diizinkan. |
+| **Bound One-Time HITL Approvals** | Persetujuan berisiko tinggi (`R3`/`R4`) diikat secara kriptografis ke `action_id`, hash argumen `SHA-256`, `session_id`, `workspace_id`, `tool_version`, dan waktu kedaluwarsa, serta hanya dapat dikonsumsi satu kali (anti-replay). Seluruh parameter override publik ditolak secara aktif. |
+| **Broker Izin OS Non-Spoofing** | Validasi status native OS (TCC Screen Recording, AVFoundation Camera/Mic, macOS Accessibility, Windows UI Automation & Capture) dilaporkan secara jujur (`NEEDS_USER_ACTION` / `UNKNOWN` / `GRANTED`). Izin tidak pernah dipalsukan hanya dari keberadaan binary `osascript` atau `GetDC(0)`. |
+| **Strict MCP Subprocess Lifecycle** | Setiap parameter MCP divalidasi ketat terhadap skema JSON sebelum dieksekusi. Respons tanpa jabat tangan `initialize` diverifikasi ditolak secara *fail-closed*, dan subproses dijamin di-*reap* saat terminasi. |
+| **Marketplace Skills & Sandboxed Runner** | Ekosistem keahlian dilengkapi toko kepercayaan penerbit (*Publisher Trust Store*) berbasis verifikasi tanda tangan digital Ed25519. Skrip keahlian dieksekusi dalam subprocess dengan hak terbatas (*least privilege*), lingkungan tersanitasi, dan ruang kerja terisolasi. |
+| **Privacy Gate & Izin Data Konfidensial** | Data berklasifikasi `CONFIDENTIAL` selalu mewajibkan konsen pengguna eksplisit per-permintaan sebelum dikirim ke cloud. Dilengkapi sensor regex otomatis untuk PII (NIK, NPWP, telepon, email) dan kredensial rahasia. |
+| **Zero Local-to-Cloud Fallback** | Saat menggunakan model lokal (`Ollama` / `LM Studio`) atau mode `local_only`, sistem dijamin tidak pernah mengalihkan request ke penyedia cloud dalam kondisi apa pun. |
+| **Pasokan Rantai Perangkat Lunak (SBOM)** | Penghasilan otomatis CycloneDX Software Bill of Materials (SBOM) multi-ekosistem yang mencakup pustaka Python (`uv`/`pip`), frontend (`npm`), dan dependensi native Rust (`Cargo.lock`). |
 
 ---
 
@@ -175,7 +179,7 @@ npm run dev:tauri
 
 ### 4. Menjalankan Suite Pengujian & Verifikasi Build
 ```bash
-# Jalankan 41 skenario pengujian unit, integrasi, dan regresi keamanan P0/P1/P2
+# Jalankan 166 skenario pengujian unit, integrasi, dan regresi keamanan P0/P1/P2
 npm run test:backend
 
 # Verifikasi kompilasi ketat TypeScript (tsc --noEmit) & bundle produksi Vite

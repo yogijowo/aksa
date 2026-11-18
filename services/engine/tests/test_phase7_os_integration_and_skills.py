@@ -60,27 +60,31 @@ async def test_os_permission_broker_and_audit(tmp_path: Path) -> None:
     )
     assert status_fake == PermissionState.DENIED
 
-    # 3. Request capability grant
-    req_res = await permission_broker.request_capability_grant(
-        capability_id="application.automation",
-        resource_scope="app_excel",
-        grant_source="desktop_ui",
-    )
-    assert req_res["success"] is True
-    grant = req_res["grant"]
-    assert grant["capability_id"] == "application.automation"
+    # 3. Request capability grant (mock verified OS permission for test environment)
+    permission_broker.set_mock_checker("application.automation", lambda: PermissionState.GRANTED)
+    try:
+        req_res = await permission_broker.request_capability_grant(
+            capability_id="application.automation",
+            resource_scope="app_excel",
+            grant_source="desktop_ui",
+        )
+        assert req_res["success"] is True
+        grant = req_res["grant"]
+        assert grant["capability_id"] == "application.automation"
 
-    # 4. Verify grant appears in active grants
-    active_grants = await db_manager.list_permission_grants(active_only=True)
-    assert any(g["id"] == grant["id"] for g in active_grants)
+        # 4. Verify grant appears in active grants
+        active_grants = await db_manager.list_permission_grants(active_only=True)
+        assert any(g["id"] == grant["id"] for g in active_grants)
 
-    # 5. Revoke grant
-    revoked = await permission_broker.revoke_capability_grant(grant["id"])
-    assert revoked is True
+        # 5. Revoke grant
+        revoked = await permission_broker.revoke_capability_grant(grant["id"])
+        assert revoked is True
 
-    # After revocation, grant must not be in active grants
-    remaining_active = await db_manager.list_permission_grants(active_only=True)
-    assert not any(g["id"] == grant["id"] for g in remaining_active)
+        # After revocation, grant must not be in active grants
+        remaining_active = await db_manager.list_permission_grants(active_only=True)
+        assert not any(g["id"] == grant["id"] for g in remaining_active)
+    finally:
+        permission_broker.clear_mock_checkers()
 
     # 6. Audit ledger records the grant and revocation
     audits = await db_manager.list_permission_audit_events(limit=10)

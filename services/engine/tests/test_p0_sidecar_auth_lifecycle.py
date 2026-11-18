@@ -106,3 +106,43 @@ def test_p0_engine_refuses_to_start_without_token_in_production() -> None:
         f"Expected 'mode produksi' error message in stderr.\n"
         f"STDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
     )
+
+
+@pytest.mark.asyncio
+async def test_challenge_health_request_never_requires_or_leaks_token() -> None:
+    """Verify health challenge requires zero auth headers and rogue server cannot forge HMAC (P0-01)."""
+    orig_dev = settings.dev_mode
+    orig_token = settings.auth_token
+    try:
+        settings.dev_mode = False
+        settings.auth_token = "secret-token-known-only-to-tauri-and-engine"
+        app = create_app()
+        transport = ASGITransport(app=app)
+
+        import hashlib
+        import hmac
+
+        nonce = "client-secure-random-nonce-12345"
+        async with AsyncClient(transport=transport, base_url="http://test") as client:
+            # Client sends NO auth headers to prove server identity
+            res = await client.get(f"/api/v1/health?nonce={nonce}")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["engine"] == "aksa-engine"
+            assert "nonce_hmac" in data
+
+            # Client validates HMAC locally with expected token
+            expected = hmac.new(
+                settings.auth_token.encode("utf-8"),
+                nonce.encode("utf-8"),
+                hashlib.sha256,
+            ).hexdigest()
+            assert data["nonce_hmac"] == expected
+
+            # Rogue server that does not know token cannot forge HMAC
+            rogue_token = b"rogue-server-guessed-token"
+            rogue_hmac = hmac.new(rogue_token, nonce.encode("utf-8"), hashlib.sha256).hexdigest()
+            assert data["nonce_hmac"] != rogue_hmac
+    finally:
+        settings.dev_mode = orig_dev
+        settings.auth_token = orig_token

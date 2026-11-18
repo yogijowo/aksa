@@ -67,9 +67,9 @@ export async function verifyEngineIdentity(
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try {
       const nonce = generateCryptographicNonce();
-      const res = await fetch(`${baseUrl}/api/v1/health?nonce=${encodeURIComponent(nonce)}`, {
-        headers: token ? { "X-AKSA-Auth-Token": token } : {},
-      });
+      // SECURITY (P0-01): NEVER send X-AKSA-Auth-Token before server identity is proven!
+      // Challenge the server to prove knowledge of the secret token via HMAC-SHA256 of the random nonce.
+      const res = await fetch(`${baseUrl}/api/v1/health?nonce=${encodeURIComponent(nonce)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.engine === "aksa-engine" && data.nonce_hmac) {
@@ -117,23 +117,47 @@ export async function getEngineConnection(): Promise<EngineConnectionConfig> {
 
         if (info && info.base_url) {
           const isVerified = await verifyEngineIdentity(info.base_url, info.auth_token);
+          const finalState: SidecarLifecycleState = isVerified ? "ready" : "failed";
+
+          try {
+            await invoke("update_engine_lifecycle_state", { newState: finalState });
+          } catch {
+            // Non-critical if update handler fails
+          }
+
           cachedConnection = {
             baseUrl: info.base_url,
             wsUrl: info.ws_url,
             token: info.auth_token,
             host: info.host,
             port: info.port,
-            lifecycleState: isVerified ? "ready" : "failed",
+            lifecycleState: finalState,
             verified: isVerified,
           };
           return cachedConnection;
         }
       } catch (err) {
-        console.warn("[AKSA] Gagal invoke get_engine_connection_info dari Tauri, menggunakan fallback:", err);
+        console.warn("[AKSA] Gagal invoke get_engine_connection_info dari Tauri:", err);
       }
     }
 
-    // 2. Fallback to Vite environment variables or dev defaults
+    // SECURITY (P0-01): Fail-closed in production if running without authenticated Tauri runtime
+    const isProduction = Boolean((import.meta as any).env?.PROD);
+    if (isProduction) {
+      console.error("[AKSA Fail-Closed] Mode produksi aktif tanpa token autentikasi valid dari Tauri runtime. Seluruh koneksi diblokir demi keamanan.");
+      cachedConnection = {
+        baseUrl: "",
+        wsUrl: "",
+        token: "",
+        host: "127.0.0.1",
+        port: 0,
+        lifecycleState: "failed",
+        verified: false,
+      };
+      return cachedConnection;
+    }
+
+    // 2. Development-only Fallback to Vite environment variables or dev defaults
     const host = (import.meta as any).env?.VITE_AKSA_HOST || "127.0.0.1";
     const port = Number((import.meta as any).env?.VITE_AKSA_PORT || 43120);
     const token = (import.meta as any).env?.VITE_AKSA_TOKEN || "dev-aksa-local-token";

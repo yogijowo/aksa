@@ -1,10 +1,10 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
 use std::sync::Mutex;
 use tauri_plugin_shell::process::CommandChild;
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LifecycleState {
     Starting,
@@ -112,4 +112,13 @@ pub fn get_engine_lifecycle_state(
     state: tauri::State<'_, SidecarState>,
 ) -> Result<LifecycleState, String> {
     Ok(state.get_state())
+}
+
+#[tauri::command]
+pub fn update_engine_lifecycle_state(
+    state: tauri::State<'_, SidecarState>,
+    new_state: LifecycleState,
+) -> Result<(), String> {
+    state.set_state(new_state);
+    Ok(())
 }

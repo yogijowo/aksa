@@ -25,7 +25,7 @@ def clean_broker_mocks():
 
 @pytest.mark.asyncio
 async def test_permission_states_enum_coverage():
-    """Verify that all required standardized permission states exist."""
+    """Verify that all required standardized permission states exist (P0-05)."""
     expected_states = {
         "UNSUPPORTED",
         "NOT_REQUESTED",
@@ -34,6 +34,7 @@ async def test_permission_states_enum_coverage():
         "GRANTED",
         "DENIED",
         "REVOKED",
+        "UNKNOWN",
         "ERROR",
     }
     actual_states = {s.value for s in PermissionState}
@@ -128,10 +129,10 @@ async def test_linux_wayland_and_x11_detection(monkeypatch):
     state_x11_headless = permission_broker.check_native_os_permission("screen.capture")
     assert state_x11_headless == PermissionState.DENIED
 
-    # 3. X11 with DISPLAY
+    # 3. X11 with DISPLAY alone does not blindly prove capture capability
     monkeypatch.setenv("DISPLAY", ":0")
-    state_x11_ok = permission_broker.check_native_os_permission("screen.capture")
-    assert state_x11_ok == PermissionState.GRANTED
+    state_x11_display_only = permission_broker.check_native_os_permission("screen.capture")
+    assert state_x11_display_only == PermissionState.UNKNOWN
 
 
 @pytest.mark.asyncio
@@ -139,9 +140,43 @@ async def test_capability_status_contains_revocation_guide():
     """Verify all capabilities report clear revocation guidelines in statuses."""
     statuses = await permission_broker.get_all_capability_statuses()
     assert len(statuses) > 0
+    cap_ids = {s["capability_id"] for s in statuses}
+    assert "audio.microphone" in cap_ids
+    assert "video.camera" in cap_ids
     for s in statuses:
         assert "revocation_guide" in s
         assert len(s["revocation_guide"]) > 0
         assert "os_status" in s
         assert "aksa_status" in s
+
+
+@pytest.mark.asyncio
+async def test_automation_does_not_falsely_claim_granted_from_osascript_or_coinitialize(monkeypatch):
+    """Verify application automation does not claim GRANTED from osascript presence or CoInitialize alone (P0-05)."""
+    permission_broker.clear_mock_checkers()
+
+    # macOS: osascript binary presence alone must return NEEDS_USER_ACTION, not GRANTED
+    monkeypatch.setattr(sys, "platform", "darwin")
+    res_darwin = permission_broker.check_native_os_permission("application.automation")
+    assert res_darwin == PermissionState.NEEDS_USER_ACTION
+
+    # Windows: CoInitialize alone must return UNKNOWN, not GRANTED
+    monkeypatch.setattr(sys, "platform", "win32")
+    res_win = permission_broker.check_native_os_permission("application.automation")
+    assert res_win == PermissionState.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_unknown_os_status_fails_closed_in_request_grant():
+    """Verify that an UNKNOWN OS status fails closed when requesting user consent (P0-05)."""
+    permission_broker.set_mock_checker("audio.microphone", lambda: PermissionState.UNKNOWN)
+
+    res = await permission_broker.request_capability_grant(
+        capability_id="audio.microphone",
+        resource_scope="session",
+        grant_source="desktop_ui",
+    )
+    assert res["success"] is False
+    assert res["os_status"] == PermissionState.UNKNOWN.value
+    assert "belum dapat diverifikasi secara pasti" in res["message"]
 

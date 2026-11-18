@@ -1,6 +1,9 @@
 pub mod sidecar;
 
-use sidecar::{get_engine_connection_info, get_engine_lifecycle_state, LifecycleState, SidecarState};
+use sidecar::{
+    get_engine_connection_info, get_engine_lifecycle_state, update_engine_lifecycle_state,
+    LifecycleState, SidecarState,
+};
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
 
@@ -15,7 +18,8 @@ pub fn run() {
         .manage(sidecar_state)
         .invoke_handler(tauri::generate_handler![
             get_engine_connection_info,
-            get_engine_lifecycle_state
+            get_engine_lifecycle_state,
+            update_engine_lifecycle_state
         ])
         .setup(|app| {
             let state = app.state::<SidecarState>();
@@ -33,8 +37,9 @@ pub fn run() {
                             if let Ok(mut lock) = state.child_process.lock() {
                                 *lock = Some(child);
                             }
-                            state.set_state(LifecycleState::Ready);
-                            eprintln!("[AKSA Tauri] Sidecar berhasil dijalankan pada port {}", info.port);
+                            // Keep in Starting state until health check & HMAC identity are verified
+                            state.set_state(LifecycleState::Starting);
+                            eprintln!("[AKSA Tauri] Sidecar spawned pada port {}, awaiting HMAC identity verification", info.port);
                         }
                         Err(e) => {
                             state.set_state(LifecycleState::Failed);

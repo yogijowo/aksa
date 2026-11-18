@@ -10,6 +10,7 @@ Implements Section 6 of the AKSA Enterprise Readiness Master Specification & Pro
 from __future__ import annotations
 
 import logging
+import re
 from enum import Enum
 from typing import Any
 from pydantic import BaseModel, Field
@@ -17,6 +18,38 @@ from pydantic import BaseModel, Field
 from app.db.models import db_manager
 
 logger = logging.getLogger(__name__)
+
+
+def redact_sensitive_pii_and_secrets(text: str) -> tuple[str, bool]:
+    """Redact API keys, tokens, NIK, NPWP, credit card numbers, and private keys (P1-05)."""
+    redacted = text
+    applied = False
+
+    # 1. API Keys & Secrets
+    key_pattern = r"\b(sk-[a-zA-Z0-9_\-]{20,}|AIzaSy[a-zA-Z0-9_\-]{30,}|gsk_[a-zA-Z0-9_\-]{20,})\b"
+    if re.search(key_pattern, redacted):
+        redacted = re.sub(key_pattern, "[REDACTED_API_KEY]", redacted)
+        applied = True
+
+    # 2. Private Key blocks
+    pk_pattern = r"-----BEGIN\s+[A-Z\s]+PRIVATE\s+KEY-----[\s\S]*?-----END\s+[A-Z\s]+PRIVATE\s+KEY-----"
+    if re.search(pk_pattern, redacted):
+        redacted = re.sub(pk_pattern, "[REDACTED_PRIVATE_KEY]", redacted)
+        applied = True
+
+    # 3. Indonesian NIK (16 digits starting with 1-9)
+    nik_pattern = r"\b[1-9]\d{15}\b"
+    if re.search(nik_pattern, redacted):
+        redacted = re.sub(nik_pattern, "[REDACTED_NIK]", redacted)
+        applied = True
+
+    # 4. Credit cards (13-16 digits)
+    cc_pattern = r"\b(?:4[0-9]{12}(?:[0-9]{3})?|5[1-5][0-9]{14}|3[47][0-9]{13})\b"
+    if re.search(cc_pattern, redacted):
+        redacted = re.sub(cc_pattern, "[REDACTED_CREDIT_CARD]", redacted)
+        applied = True
+
+    return redacted, applied
 
 
 class ProviderMode(str, Enum):
@@ -54,7 +87,10 @@ class DataDisclosureSummary(BaseModel):
     retention_notice: str = (
         "Data dikirim melalui koneksi HTTPS terenkripsi ke penyedia model cloud sesuai kebijakan privasi penyedia."
     )
+    redacted_preview: str = ""
     redaction_applied: bool = False
+    consent_provider: str | None = None
+    consent_model_id: str | None = None
     requires_explicit_consent: bool = False
     allowed: bool = True
     denial_reason: str | None = None
@@ -156,20 +192,29 @@ class PrivacyPolicyGate:
         explicit_classification: str | DataClassification | None = None,
         attachments: list[dict[str, Any]] | None = None,
     ) -> DataClassification:
-        """Determine data classification using deterministic rules and explicit labels."""
+        """Determine data classification using deterministic rules, regex PII/secret scans, and explicit labels (P1-05)."""
         if explicit_classification is not None:
             return DataClassification(explicit_classification)
 
-        combined_text = " ".join(m.get("content", "") for m in messages).lower()
+        raw_combined = " ".join(m.get("content", "") for m in messages)
+        combined_text = raw_combined.lower()
+
+        # 1. Restricted check: state secrets, private keys, passwords
         if any(
             marker in combined_text
             for marker in ("rahasia negara", "sangat rahasia", "top secret", "[restricted]", "password", "private key")
-        ):
+        ) or "-----BEGIN" in raw_combined:
             return DataClassification.RESTRICTED
 
-        if attachments or any(
-            marker in combined_text
-            for marker in ("rahasia perusahaan", "[confidential]", "nik:", "npwp:", "rekening koran")
+        # 2. Confidential check: corporate secrets, API keys, NIK, NPWP, banking, attachments
+        if (
+            attachments
+            or any(
+                marker in combined_text
+                for marker in ("rahasia perusahaan", "[confidential]", "nik:", "npwp:", "rekening koran")
+            )
+            or bool(re.search(r"\b(sk-[a-zA-Z0-9_\-]{20,}|AIzaSy[a-zA-Z0-9_\-]{30,}|gsk_[a-zA-Z0-9_\-]{20,})\b", raw_combined))
+            or bool(re.search(r"\b[1-9]\d{15}\b", raw_combined))
         ):
             return DataClassification.CONFIDENTIAL
 
@@ -183,8 +228,9 @@ class PrivacyPolicyGate:
         attachments: list[dict[str, Any]] | None = None,
         explicit_classification: str | DataClassification | None = None,
         user_consent_granted: bool = False,
+        consent_scope: dict[str, Any] | None = None,
     ) -> DataDisclosureSummary:
-        """Evaluate whether a request is allowed to proceed to the target LLM provider (fail-closed, P1.4)."""
+        """Evaluate whether a request is allowed to proceed to the target LLM provider (fail-closed, P1.4, P1-05)."""
         prov = provider.lower().strip()
         is_local = self.is_local_provider(prov)
         classification = self.classify_request_data(
@@ -199,6 +245,9 @@ class PrivacyPolicyGate:
             data_types.append("document_attachment")
             attached_names = [str(a.get("name", "dokumen")) for a in attachments]
 
+        raw_prompt = " ".join(m.get("content", "") for m in messages)
+        preview_text, was_redacted = redact_sensitive_pii_and_secrets(raw_prompt)
+
         summary = DataDisclosureSummary(
             provider=prov,
             model_id=model_id,
@@ -206,6 +255,10 @@ class PrivacyPolicyGate:
             data_classification=classification,
             data_types=data_types,
             attached_resources=attached_names,
+            redacted_preview=preview_text[:500],
+            redaction_applied=was_redacted,
+            consent_provider=prov if user_consent_granted else None,
+            consent_model_id=model_id if user_consent_granted else None,
         )
 
         # Fail-closed guard: if storage failure prevented reading policy, block cloud egress
@@ -249,19 +302,24 @@ class PrivacyPolicyGate:
             )
             return summary
 
-        # Rule 5: CONFIDENTIAL data or document attachments require explicit consent in HYBRID_WITH_CONSENT mode
-        if (
-            classification == DataClassification.CONFIDENTIAL
-            and self.provider_mode == ProviderMode.HYBRID_WITH_CONSENT
-            and not user_consent_granted
-        ):
-            summary.requires_explicit_consent = True
-            summary.allowed = False
-            summary.denial_reason = (
-                "Data berklasifikasi CONFIDENTIAL atau lampiran dokumen memerlukan persetujuan eksplisit "
-                "(Data Disclosure Gate) sebelum dikirim ke penyedia cloud."
-            )
-            return summary
+        # Rule 5: CONFIDENTIAL data ALWAYS requires explicit per-request user consent for cloud providers (P1-05)
+        # Global mode is NEVER automatic consent for CONFIDENTIAL data!
+        if classification == DataClassification.CONFIDENTIAL:
+            has_scoped_consent = user_consent_granted
+            if consent_scope:
+                if consent_scope.get("provider") and consent_scope["provider"].lower() != prov:
+                    has_scoped_consent = False
+                if consent_scope.get("model_id") and consent_scope["model_id"] != model_id:
+                    has_scoped_consent = False
+
+            if not has_scoped_consent:
+                summary.requires_explicit_consent = True
+                summary.allowed = False
+                summary.denial_reason = (
+                    f"Data berklasifikasi CONFIDENTIAL wajib mendapatkan persetujuan eksplisit per-request "
+                    f"sebelum dikirim ke penyedia cloud '{prov}'. Mode global bukan persetujuan otomatis (P1-05)."
+                )
+                return summary
 
         # Rule 6: Any external document attachment requires explicit user consent
         if attachments and not user_consent_granted:

@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.config import settings
+from app.core.auth_context import get_default_host_principal, resolve_authenticated_principal
 from app.core.llm_router import UnifiedLLMRouter
 from app.core.observability import observability_manager
 from app.core.orchestrator import HierarchicalOrchestrator
@@ -210,8 +211,10 @@ async def test_model_connection(req: TestModelRequest) -> dict[str, Any]:
 
 
 @api_router.post("/orchestrate/execute")
-async def execute_hierarchical_task(req: ExecuteTaskRequest) -> dict[str, Any]:
+async def execute_hierarchical_task(req: ExecuteTaskRequest, request: Request) -> dict[str, Any]:
     """Execute a user instruction with per-session concurrency guard, global limit, and daily budget enforcement (P2-3)."""
+    principal_id = resolve_authenticated_principal(request)
+
     # 1. Daily Token Budget Guard
     allowed, used_today, daily_budget = await _check_daily_token_budget()
     if not allowed:
@@ -241,20 +244,18 @@ async def execute_hierarchical_task(req: ExecuteTaskRequest) -> dict[str, Any]:
 
     resolved_path: str | None = None
     if req.workspace_id:
-        workspaces = await db_manager.list_workspaces()
-        ws = next((w for w in workspaces if w["id"] == req.workspace_id), None)
-        if ws:
+        ws = await authorize_workspace(req.workspace_id, principal_id, required_permission="read")
+        resolved_path = ws["folder_path"]
+    elif req.workspace_path:
+        matching_ws = await db_manager.get_workspace_by_path(req.workspace_path)
+        if matching_ws:
+            ws = await authorize_workspace(matching_ws["id"], principal_id, required_permission="read")
             resolved_path = ws["folder_path"]
         else:
-            raise HTTPException(status_code=404, detail="Workspace ID tidak ditemukan.")
-    elif req.workspace_path:
-        p = Path(req.workspace_path).expanduser().resolve()
-        if not p.exists() or not p.is_dir():
             raise HTTPException(
-                status_code=400,
-                detail=f"Folder workspace '{req.workspace_path}' tidak ditemukan di sistem.",
+                status_code=403,
+                detail=f"Akses Ditolak: Folder '{req.workspace_path}' bukan folder kerja terotorisasi.",
             )
-        resolved_path = str(p)
 
     async with session_lock:
         async with GLOBAL_ORCHESTRATION_SEMAPHORE:
@@ -355,10 +356,97 @@ async def delete_agent(agent_id: str) -> dict[str, Any]:
     return {"deleted": True, "id": agent_id}
 
 
+async def authorize_workspace(
+    workspace_id: str | None,
+    principal_id: str,
+    required_permission: str = "read",  # "read" | "write" | "execute" | "delete" | "index" | "search"
+) -> dict[str, Any]:
+    """Centralized authorization dependency for all workspace operations (P0-02, P0-03).
+    
+    Validates:
+    1. workspace_id is non-empty.
+    2. workspace exists in the persistent registry.
+    3. principal_id owns or has access to the workspace.
+    4. required permission is granted on the workspace policy.
+    """
+    if not workspace_id or not str(workspace_id).strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Validasi Gagal: workspace_id wajib disediakan untuk operasi ini.",
+        )
+
+    ws = await db_manager.get_workspace(str(workspace_id).strip())
+    if not ws:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Folder kerja '{workspace_id}' tidak ditemukan di sistem.",
+        )
+
+    owner_id = ws.get("owner_id")
+    if owner_id and owner_id != principal_id:
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": f"filesystem.workspace.{required_permission}",
+            "resource_scope": workspace_id,
+            "decision": "deny",
+            "reason_code": "PRINCIPAL_MISMATCH",
+        })
+        raise HTTPException(
+            status_code=403,
+            detail=f"Akses Ditolak: Principal tidak memiliki izin untuk mengakses folder kerja '{workspace_id}'.",
+        )
+
+    if required_permission in ("read", "search") and not ws.get("allow_read", True):
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": f"filesystem.workspace.{required_permission}",
+            "resource_scope": workspace_id,
+            "decision": "deny",
+            "reason_code": "ALLOW_READ_DISABLED",
+        })
+        raise HTTPException(
+            status_code=403,
+            detail=f"Akses Ditolak: Izin membaca (allow_read) dinonaktifkan pada folder kerja '{workspace_id}'.",
+        )
+
+    if required_permission in ("write", "index") and not ws.get("allow_write", True):
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": f"filesystem.workspace.{required_permission}",
+            "resource_scope": workspace_id,
+            "decision": "deny",
+            "reason_code": "ALLOW_WRITE_DISABLED",
+        })
+        raise HTTPException(
+            status_code=403,
+            detail=f"Akses Ditolak: Izin menulis (allow_write) dinonaktifkan pada folder kerja '{workspace_id}'.",
+        )
+
+    if required_permission == "execute" and not ws.get("allow_execute", False):
+        await db_manager.record_permission_audit({
+            "principal_type": "user",
+            "principal_id": principal_id,
+            "capability_id": "filesystem.workspace.execute",
+            "resource_scope": workspace_id,
+            "decision": "deny",
+            "reason_code": "ALLOW_EXECUTE_DISABLED",
+        })
+        raise HTTPException(
+            status_code=403,
+            detail=f"Akses Ditolak: Izin eksekusi (allow_execute) dinonaktifkan pada folder kerja '{workspace_id}'.",
+        )
+
+    return ws
+
+
 @api_router.get("/workspaces")
-async def list_workspaces() -> dict[str, Any]:
-    """List all authorized PC workspace folders. Strictly read-only; never auto-grants permissions."""
-    workspaces = await db_manager.list_workspaces()
+async def list_workspaces(request: Request) -> dict[str, Any]:
+    """List all authorized PC workspace folders for the verified caller."""
+    principal_id = resolve_authenticated_principal(request)
+    workspaces = await db_manager.list_workspaces(principal_id=principal_id)
     return {"workspaces": workspaces}
 
 
@@ -371,7 +459,7 @@ async def register_workspace(req: UpsertWorkspaceRequest, request: Request) -> d
             status_code=400,
             detail=f"Folder '{req.folder_path}' tidak ditemukan di komputer ini.",
         )
-    principal_id = request.headers.get("X-Principal-ID") or req.owner_id or "default_user"
+    principal_id = resolve_authenticated_principal(request)
     payload = req.model_dump()
     payload["owner_id"] = principal_id
     workspace = await db_manager.upsert_workspace(payload)
@@ -387,8 +475,10 @@ async def register_workspace(req: UpsertWorkspaceRequest, request: Request) -> d
 
 
 @api_router.delete("/workspaces/{workspace_id}")
-async def delete_workspace(workspace_id: str) -> dict[str, Any]:
-    """Remove an authorized PC workspace folder."""
+async def delete_workspace(workspace_id: str, request: Request) -> dict[str, Any]:
+    """Remove an authorized PC workspace folder with principal authorization (P0-02)."""
+    principal_id = resolve_authenticated_principal(request)
+    await authorize_workspace(workspace_id, principal_id, required_permission="delete")
     deleted = await db_manager.delete_workspace(workspace_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
@@ -548,32 +638,8 @@ async def open_system_path(req: OpenPathRequest) -> dict[str, Any]:
 @api_router.get("/workspaces/{workspace_id}/files")
 async def list_workspace_files(workspace_id: str, request: Request) -> dict[str, Any]:
     """List top-level files inside an authorized workspace folder."""
-    principal_id = request.headers.get("X-Principal-ID") or "default_user"
-    ws = await db_manager.get_workspace(workspace_id)
-    if not ws:
-        raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
-
-    if ws.get("owner_id") and ws["owner_id"] != principal_id:
-        await db_manager.record_permission_audit({
-            "principal_type": "user",
-            "principal_id": principal_id,
-            "capability_id": "filesystem.workspace.list",
-            "resource_scope": workspace_id,
-            "decision": "deny",
-            "reason_code": "PRINCIPAL_MISMATCH",
-        })
-        raise HTTPException(status_code=403, detail="Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
-
-    if not ws.get("allow_read", True):
-        await db_manager.record_permission_audit({
-            "principal_type": "user",
-            "principal_id": principal_id,
-            "capability_id": "filesystem.workspace.list",
-            "resource_scope": workspace_id,
-            "decision": "deny",
-            "reason_code": "READ_PERMISSION_DENIED",
-        })
-        raise HTTPException(status_code=403, detail="Izin baca (read) tidak diaktifkan untuk Folder Kerja ini.")
+    principal_id = resolve_authenticated_principal(request)
+    ws = await authorize_workspace(workspace_id, principal_id, required_permission="read")
 
     canonical_root = Path(os.path.realpath(ws["folder_path"]))
     if not canonical_root.exists() or not canonical_root.is_dir():
@@ -680,16 +746,17 @@ async def execute_registered_tool(req: ExecuteToolRequest) -> dict[str, Any]:
 
 
 @api_router.get("/sandbox/approvals")
-async def list_hitl_approvals(status: str | None = None) -> dict[str, Any]:
-    """List Human-in-the-Loop approval gate items."""
-    items = [i.model_dump() for i in sandbox_manager.list_approvals(status=status)]
+async def list_hitl_approvals(request: Request, status: str | None = None) -> dict[str, Any]:
+    """List Human-in-the-Loop approval gate items for the authenticated caller (P0-03, P0-04)."""
+    principal_id = resolve_authenticated_principal(request)
+    items = [i.model_dump() for i in sandbox_manager.list_approvals(status=status, principal_id=principal_id)]
     return {"approvals": items}
 
 
 @api_router.post("/sandbox/approvals")
 async def create_hitl_approval(req: CreateHITLRequest, request: Request) -> dict[str, Any]:
     """Trigger a new HITL approval prompt for Desktop UI & Telegram."""
-    principal_id = request.headers.get("X-Principal-ID") or "default_user"
+    principal_id = resolve_authenticated_principal(request)
     item = await sandbox_manager.create_hitl_request(
         tool_name=req.tool_name,
         title_id=req.title_id,
@@ -714,7 +781,7 @@ async def resolve_hitl_approval(
     request: Request,
 ) -> dict[str, Any]:
     """Approve or reject a pending HITL request."""
-    principal_id = request.headers.get("X-Principal-ID") or "default_user"
+    principal_id = resolve_authenticated_principal(request)
     try:
         resolved = await sandbox_manager.resolve_hitl_request(
             request_id,
@@ -787,19 +854,13 @@ class SimulateTelegramMessageRequest(BaseModel):
 
 @api_router.get("/rag/documents")
 async def list_rag_documents(
+    request: Request,
     workspace_id: str | None = None,
-    request: Request = None,
 ) -> dict[str, Any]:
-    """List indexed documents in the Hybrid RAG database."""
-    principal_id = request.headers.get("X-Principal-ID") or "default_user" if request else "default_user"
+    """List indexed documents in the Hybrid RAG database (P0-02, P0-03)."""
+    principal_id = resolve_authenticated_principal(request)
     if workspace_id:
-        ws = await db_manager.get_workspace(workspace_id)
-        if not ws:
-            raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
-        if ws.get("owner_id") and ws["owner_id"] != principal_id:
-            raise HTTPException(status_code=403, detail="Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
-        if not ws.get("allow_read", True):
-            raise HTTPException(status_code=403, detail="Izin baca (read) tidak diaktifkan untuk Folder Kerja ini.")
+        await authorize_workspace(workspace_id, principal_id, required_permission="read")
     docs = await rag_store.list_indexed_documents(workspace_id=workspace_id)
     return {"documents": docs}
 
@@ -810,40 +871,8 @@ async def index_rag_workspace_folder(
     request: Request,
 ) -> dict[str, Any]:
     """Incrementally index all supported documents in an authorized workspace folder and optionally start watchdog."""
-    principal_id = request.headers.get("X-Principal-ID") or "default_user"
-    ws = await db_manager.get_workspace(req.workspace_id)
-    if not ws:
-        await db_manager.record_permission_audit({
-            "principal_type": "user",
-            "principal_id": principal_id,
-            "capability_id": "rag.index",
-            "resource_scope": req.workspace_id,
-            "decision": "deny",
-            "reason_code": "WORKSPACE_NOT_FOUND",
-        })
-        raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
-
-    if ws.get("owner_id") and ws["owner_id"] != principal_id:
-        await db_manager.record_permission_audit({
-            "principal_type": "user",
-            "principal_id": principal_id,
-            "capability_id": "rag.index",
-            "resource_scope": req.workspace_id,
-            "decision": "deny",
-            "reason_code": "PRINCIPAL_MISMATCH",
-        })
-        raise HTTPException(status_code=403, detail="Akses ditolak: Principal tidak memiliki izin ke Folder Kerja ini.")
-
-    if not ws.get("allow_read", True):
-        await db_manager.record_permission_audit({
-            "principal_type": "user",
-            "principal_id": principal_id,
-            "capability_id": "rag.index",
-            "resource_scope": req.workspace_id,
-            "decision": "deny",
-            "reason_code": "READ_PERMISSION_DENIED",
-        })
-        raise HTTPException(status_code=403, detail="Izin baca (read) tidak diaktifkan untuk Folder Kerja ini.")
+    principal_id = resolve_authenticated_principal(request)
+    ws = await authorize_workspace(req.workspace_id, principal_id, required_permission="index")
 
     canonical_ws_root = Path(os.path.realpath(ws["folder_path"]))
     target_scan_dir = canonical_ws_root
@@ -885,8 +914,10 @@ async def index_rag_workspace_folder(
 
 
 @api_router.post("/rag/search")
-async def search_rag_hybrid(req: RAGSearchRequest) -> dict[str, Any]:
-    """Search Hybrid Vector + SQLite FTS5 BM25 index using Reciprocal Rank Fusion (RRF)."""
+async def search_rag_hybrid(req: RAGSearchRequest, request: Request) -> dict[str, Any]:
+    """Search Hybrid Vector + SQLite FTS5 BM25 index using Reciprocal Rank Fusion (RRF) with workspace authorization (P0-02)."""
+    principal_id = resolve_authenticated_principal(request)
+    await authorize_workspace(req.workspace_id, principal_id, required_permission="search")
     results = await rag_store.hybrid_search(
         query=req.query,
         workspace_id=req.workspace_id,
@@ -1111,9 +1142,10 @@ class EvaluateDisclosureRequest(BaseModel):
 
 
 @api_router.post("/workspaces/revoke-all")
-async def revoke_all_workspaces_endpoint() -> dict[str, Any]:
-    """Immediately revoke all workspace access in SQLite and in-memory SandboxManager (Section 4.4)."""
-    removed_db = await db_manager.revoke_all_workspaces()
+async def revoke_all_workspaces_endpoint(request: Request) -> dict[str, Any]:
+    """Immediately revoke all workspace access in SQLite and in-memory SandboxManager (Section 4.4, P0-02)."""
+    principal_id = resolve_authenticated_principal(request)
+    removed_db = await db_manager.revoke_all_workspaces(principal_id=principal_id)
     removed_mem = sandbox_manager.clear_all_workspaces()
     return {
         "revoked": True,

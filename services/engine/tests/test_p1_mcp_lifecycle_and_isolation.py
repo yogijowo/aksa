@@ -131,3 +131,53 @@ async def test_rpc_error_handling():
     assert res.data["status"] == "rpc_error"
     assert "Invalid query parameters" in str(res.data["error"])
 
+
+@pytest.mark.asyncio
+async def test_schema_validation_and_argument_mismatch():
+    """Verify tool execution fails closed if arguments mismatch registered schema (P1-02)."""
+    mcp_client_manager.toggle_server("mcp_filesystem", enabled=True)
+    server = mcp_client_manager.get_server("mcp_filesystem")
+    assert server is not None
+
+    # Inject schema for read_file: requires 'path' as string
+    server.tool_schemas["read_file"] = {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+            "path": {"type": "string"},
+            "offset": {"type": "integer"},
+        },
+    }
+
+    # 1. Missing required parameter 'path'
+    res_missing = await mcp_client_manager.invoke_mcp_tool(
+        server_id="mcp_filesystem",
+        tool_name="read_file",
+        arguments={"offset": 0},
+    )
+    assert res_missing.success is False
+    assert res_missing.data["status"] == "schema_validation_failed"
+    assert "Parameter wajib 'path' tidak disediakan" in res_missing.summary
+
+    # 2. Invalid property type: integer expected for offset, got string
+    res_type = await mcp_client_manager.invoke_mcp_tool(
+        server_id="mcp_filesystem",
+        tool_name="read_file",
+        arguments={"path": "/valid/path.txt", "offset": "not_an_int"},
+    )
+    assert res_type.success is False
+    assert res_type.data["status"] == "schema_validation_failed"
+    assert "Tipe parameter 'offset' tidak valid" in res_type.summary
+
+
+@pytest.mark.asyncio
+async def test_handshake_failure_and_timeout():
+    """Verify handshake failure and timeout handling (P1-02)."""
+    mcp_client_manager.toggle_server("mcp_playwright", enabled=True)
+
+    # Mock subprocess communication timeout
+    with pytest.raises(TimeoutError):
+        # discover_tools with unreachable mock or 0.001 timeout
+        await mcp_client_manager.discover_tools("mcp_playwright", timeout=0.0001)
+
+

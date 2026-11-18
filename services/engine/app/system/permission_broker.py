@@ -30,6 +30,7 @@ class PermissionState(str, Enum):
     GRANTED = "GRANTED"
     DENIED = "DENIED"
     REVOKED = "REVOKED"
+    UNKNOWN = "UNKNOWN"
     ERROR = "ERROR"
 
 
@@ -126,7 +127,23 @@ STANDARD_CAPABILITIES: list[CapabilityDefinition] = [
         description="Mengirimkan klik kursor mouse dan ketikan tombol keyboard dengan Failsafe Corner Abort.",
         scope_type="session",
         requires_hitl=True,
-        revocation_guide="Cabut izin Aksesibilitas di OS atau batalkan grant di tab Izin & Akses PC.",
+        revocation_guide="Cabut izin Aksesibilitas di Pengaturan Sistem > Privasi & Keamanan > Aksesibilitas (macOS) atau Settings (Windows).",
+    ),
+    CapabilityDefinition(
+        id="audio.microphone",
+        display_name="Akses Mikrofon & Input Suara",
+        description="Mendengarkan input audio pengguna untuk transkripsi dan perintah suara.",
+        scope_type="session",
+        requires_hitl=True,
+        revocation_guide="Pengaturan Sistem > Privasi & Keamanan > Mikrofon (macOS) / Settings > Privacy & security > Microphone (Windows).",
+    ),
+    CapabilityDefinition(
+        id="video.camera",
+        display_name="Akses Kamera Video",
+        description="Mengambil feed visual kamera untuk pemindaian berkas atau pengenalan dokumen.",
+        scope_type="session",
+        requires_hitl=True,
+        revocation_guide="Pengaturan Sistem > Privasi & Keamanan > Kamera (macOS) / Settings > Privacy & security > Camera (Windows).",
     ),
     CapabilityDefinition(
         id="process.spawn",
@@ -169,8 +186,46 @@ def _check_macos_screen_capture() -> PermissionState:
         return PermissionState.ERROR
 
 
+def _check_macos_media_capture(media_type: str) -> PermissionState:
+    """Verify macOS Camera / Microphone TCC permission via AVFoundation."""
+    try:
+        from ctypes import util
+        objc = ctypes.cdll.LoadLibrary(util.find_library("objc"))
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.objc_msgSend.restype = ctypes.c_long
+        objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+
+        ctypes.cdll.LoadLibrary("/System/Library/Frameworks/AVFoundation.framework/AVFoundation")
+        core_foundation = ctypes.cdll.LoadLibrary(util.find_library("CoreFoundation"))
+        core_foundation.CFStringCreateWithCString.restype = ctypes.c_void_p
+        core_foundation.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+
+        kCFStringEncodingUTF8 = 0x08000100
+        type_str = b"vide" if media_type == "video" else b"soun"
+        cf_type = core_foundation.CFStringCreateWithCString(None, type_str, kCFStringEncodingUTF8)
+
+        cls = objc.objc_getClass(b"AVCaptureDevice")
+        sel = objc.sel_registerName(b"authorizationStatusForMediaType:")
+        status = objc.objc_msgSend(cls, sel, cf_type)
+        # 0 = NotDetermined, 1 = Restricted, 2 = Denied, 3 = Authorized
+        if status == 3:
+            return PermissionState.GRANTED
+        elif status in (1, 2):
+            return PermissionState.DENIED
+        elif status == 0:
+            return PermissionState.NEEDS_USER_ACTION
+        return PermissionState.UNKNOWN
+    except Exception:
+        return PermissionState.UNKNOWN
+
+
 def _check_windows_screen_capture() -> PermissionState:
-    """Verify Windows screen capture capability via GDI Device Context."""
+    """Verify Windows screen capture capability.
+    
+    GetDC(0) alone does not prove permission under modern Windows privacy settings.
+    Returns DENIED if desktop DC cannot be created, otherwise UNKNOWN unless verified.
+    """
     try:
         user32 = ctypes.windll.user32
         gdi32 = ctypes.windll.gdi32
@@ -183,28 +238,35 @@ def _check_windows_screen_capture() -> PermissionState:
             return PermissionState.DENIED
         gdi32.DeleteDC(mem_dc)
         user32.ReleaseDC(0, hdc)
-        return PermissionState.GRANTED
+        # GDI device context works, but Windows Graphics Capture or privacy policy is not proven
+        return PermissionState.UNKNOWN
     except Exception:
         return PermissionState.ERROR
 
 
 def _check_windows_desktop_and_input() -> PermissionState:
-    """Verify Windows desktop access and input injection capability."""
+    """Verify Windows desktop access and input injection capability.
+    
+    GetDesktopWindow() is open to all processes and does not prove SendInput / UIAutomation trust.
+    """
     try:
         user32 = ctypes.windll.user32
         hwnd = user32.GetDesktopWindow()
         if not hwnd or hwnd == 0:
             return PermissionState.DENIED
-        # Check if running in a session with display metrics
         if user32.GetSystemMetrics(0) <= 0:
             return PermissionState.DENIED
-        return PermissionState.GRANTED
+        # Basic desktop window exists, but UIPI / Accessibility capability cannot be confirmed blindly
+        return PermissionState.UNKNOWN
     except Exception:
         return PermissionState.ERROR
 
 
 def _check_linux_screen_and_input() -> PermissionState:
-    """Detect Wayland vs X11 and verify display availability on Linux."""
+    """Detect Wayland vs X11 on Linux.
+    
+    DISPLAY alone does not prove input injection or screen recording capability.
+    """
     session_type = os.environ.get("XDG_SESSION_TYPE", "").lower()
     if session_type == "wayland":
         # Wayland security model requires explicit portal (xdg-desktop-portal)
@@ -212,7 +274,8 @@ def _check_linux_screen_and_input() -> PermissionState:
     display = os.environ.get("DISPLAY")
     if not display:
         return PermissionState.DENIED
-    return PermissionState.GRANTED
+    # DISPLAY is present, but XTest and screen capture permissions are not proven
+    return PermissionState.UNKNOWN
 
 
 class OSPermissionBroker:
@@ -298,23 +361,31 @@ class OSPermissionBroker:
             return PermissionState.UNSUPPORTED
 
         # 6. Live application automation (COM / AppleScript)
+        # Note: CoInitialize on Windows or osascript binary presence on macOS does NOT prove application automation trust (P0-05)
         if capability_id == "application.automation":
             if sys.platform == "win32":
-                try:
-                    import pythoncom
-                    pythoncom.CoInitialize()
-                    return PermissionState.GRANTED
-                except Exception:
-                    return PermissionState.DENIED
+                return PermissionState.UNKNOWN
             elif sys.platform == "darwin":
-                # On macOS, automating other apps requires AppleEvents TCC permission
-                # Test if osascript binary exists and is executable
-                if os.path.exists("/usr/bin/osascript") and os.access("/usr/bin/osascript", os.X_OK):
-                    return PermissionState.GRANTED
+                # AppleEvents requires explicit per-application TCC grant; presence of osascript binary is insufficient
                 return PermissionState.NEEDS_USER_ACTION
             return PermissionState.UNSUPPORTED
 
-        # 7. Process spawning
+        # 7. Audio & Video media capture
+        if capability_id == "audio.microphone":
+            if sys.platform == "darwin":
+                return _check_macos_media_capture("audio")
+            elif sys.platform in ("win32", "linux"):
+                return PermissionState.UNKNOWN
+            return PermissionState.UNSUPPORTED
+
+        if capability_id == "video.camera":
+            if sys.platform == "darwin":
+                return _check_macos_media_capture("video")
+            elif sys.platform in ("win32", "linux"):
+                return PermissionState.UNKNOWN
+            return PermissionState.UNSUPPORTED
+
+        # 8. Process spawning
         if capability_id == "process.spawn":
             # Verify Python interpreter executable is runnable
             if os.access(sys.executable, os.X_OK):
@@ -424,6 +495,8 @@ class OSPermissionBroker:
                 )
             elif os_state == PermissionState.DENIED:
                 msg = f"Sistem Operasi menolak akses untuk kapabilitas '{capability_id}'."
+            elif os_state == PermissionState.UNKNOWN:
+                msg = f"Status izin Sistem Operasi belum dapat diverifikasi secara pasti ({os_state.value}). Pastikan izin aktif di Pengaturan Sistem Operasi."
             elif os_state == PermissionState.UNSUPPORTED:
                 msg = f"Kapabilitas '{capability_id}' tidak didukung pada platform ini."
             else:

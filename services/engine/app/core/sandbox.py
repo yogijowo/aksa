@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.api.ws import ws_manager
+from app.core.auth_context import get_default_host_principal
 
 
 class RiskLevel(str, Enum):
@@ -70,6 +71,8 @@ class HITLApprovalRequest(BaseModel):
     arguments_hash: str = ""
     session_id: str | None = None
     grant_id: str | None = None
+    creator_principal_id: str = Field(default_factory=get_default_host_principal)
+    resolver_principal_id: str | None = None
     status: str = "pending"  # pending | approved | rejected
     created_at: str
     expires_at: str | None = None
@@ -81,9 +84,9 @@ class ApprovalGrant(BaseModel):
 
     id: str
     approval_id: str = ""
-    action_id: str = Field(default_factory=lambda: f"act_{uuid.uuid4().hex[:10]}")
-    principal_id: str = "default_user"
-    user_id: str = "default_user"
+    action_id: str | None = None
+    principal_id: str = Field(default_factory=get_default_host_principal)
+    user_id: str = Field(default_factory=get_default_host_principal)
     tool_name: str
     tool_version: str = "1.0.0"
     arguments: dict[str, Any] = Field(default_factory=dict)
@@ -147,7 +150,7 @@ class ExecutionPolicyGateway:
         session_id: str | None = None,
         workspace_id: str | None = None,
         action_id: str | None = None,
-        principal_id: str = "default_user",
+        principal_id: str | None = None,
         resource_path: str | None = None,
         tool_version: str = "1.0.0",
         risk_level: str = "high",
@@ -158,6 +161,7 @@ class ExecutionPolicyGateway:
         now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=ttl_seconds)
         now_iso = now.isoformat()
+        eff_principal = principal_id or get_default_host_principal()
         filtered_args = {
             k: v
             for k, v in arguments.items()
@@ -180,9 +184,9 @@ class ExecutionPolicyGateway:
         grant = ApprovalGrant(
             id=grant_id,
             approval_id=grant_id,
-            action_id=action_id or f"act_{uuid.uuid4().hex[:10]}",
-            principal_id=principal_id,
-            user_id=principal_id,
+            action_id=action_id,
+            principal_id=eff_principal,
+            user_id=eff_principal,
             tool_name=tool_name,
             tool_version=tool_version,
             arguments=filtered_args,
@@ -256,14 +260,16 @@ class ExecutionPolicyGateway:
             elif workspace_id:
                 return False
 
-            # Fail-closed action binding: if action_id is bound, must match
-            if grant.action_id and action_id:
-                if grant.action_id != action_id:
+            # Fail-closed action binding: if action_id is bound, must match strictly (P0-04)
+            if grant.action_id:
+                if not action_id or grant.action_id != action_id:
                     return False
+            elif action_id:
+                return False
 
             # Fail-closed principal binding
             if grant.principal_id:
-                active_principal = principal_id or "default_user"
+                active_principal = principal_id or get_default_host_principal()
                 if grant.principal_id != active_principal:
                     return False
 
@@ -325,7 +331,7 @@ class ExecutionPolicyGateway:
         grant_id = arguments.get("hitl_grant_id")
         workspace_id = arguments.get("workspace_id")
         action_id = arguments.get("action_id")
-        principal_id = arguments.get("principal_id") or "default_user"
+        principal_id = arguments.get("principal_id") or get_default_host_principal()
         tool_version = arguments.get("tool_version", "1.0.0")
         resource_path = (
             arguments.get("resource_path")
@@ -637,7 +643,7 @@ class SandboxManager:
         workspace_id: str | None = None,
         arguments: dict[str, Any] | None = None,
         tool_version: str = "1.0.0",
-        principal_id: str = "default_user",
+        principal_id: str | None = None,
     ) -> HITLApprovalRequest:
         """Create a Human-in-the-Loop approval request and broadcast it to the Desktop UI."""
         req_id = f"hitl_{uuid.uuid4().hex[:10]}"
@@ -645,6 +651,7 @@ class SandboxManager:
         now = datetime.now(timezone.utc)
         expires = now + timedelta(seconds=300)
         args_payload = arguments or {}
+        eff_principal = principal_id or get_default_host_principal()
         req = HITLApprovalRequest(
             id=req_id,
             action_id=act_id,
@@ -659,6 +666,7 @@ class SandboxManager:
             arguments=args_payload,
             arguments_hash=compute_canonical_arguments_hash(args_payload),
             session_id=session_id,
+            creator_principal_id=eff_principal,
             status="pending",
             created_at=now.isoformat(),
             expires_at=expires.isoformat(),
@@ -678,14 +686,16 @@ class SandboxManager:
         request_id: str,
         approved: bool,
         session_id: str | None = None,
-        principal_id: str = "default_user",
+        principal_id: str | None = None,
     ) -> HITLApprovalRequest:
         """Approve or reject a pending HITL request, issue an ApprovalGrant if approved, and notify waiting coroutines."""
         req = self._pending_approvals.get(request_id)
         if not req:
             raise KeyError(f"Permintaan izin HITL '{request_id}' tidak ditemukan.")
 
+        eff_principal = principal_id or get_default_host_principal()
         req.status = "approved" if approved else "rejected"
+        req.resolver_principal_id = eff_principal
         req.resolved_at = _utc_now_iso()
 
         if approved:
@@ -696,7 +706,7 @@ class SandboxManager:
                 session_id=session_id or req.session_id,
                 workspace_id=req.workspace_id,
                 action_id=req.action_id,
-                principal_id=principal_id,
+                principal_id=eff_principal,
                 resource_path=req.target_path,
             )
             req.grant_id = grant.id
@@ -726,11 +736,17 @@ class SandboxManager:
         req = self._pending_approvals.get(request_id)
         return bool(req and req.status == "approved")
 
-    def list_approvals(self, status: str | None = None) -> list[HITLApprovalRequest]:
-        """List HITL requests filtered optionally by status."""
+    def list_approvals(
+        self,
+        status: str | None = None,
+        principal_id: str | None = None,
+    ) -> list[HITLApprovalRequest]:
+        """List HITL requests filtered optionally by status and principal."""
         items = list(self._pending_approvals.values())
         if status:
             items = [i for i in items if i.status == status]
+        if principal_id:
+            items = [i for i in items if i.creator_principal_id == principal_id or not i.creator_principal_id]
         return sorted(items, key=lambda x: x.created_at, reverse=True)
 
 

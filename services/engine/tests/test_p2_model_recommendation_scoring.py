@@ -20,6 +20,8 @@ def _make_candidate(
     out_cost: float = 2.0,
     avail: str = "available",
     life: str = "active",
+    provenance: str = "provider_verified",
+    source: str = "verified_provider_metadata",
 ) -> DiscoveredModel:
     return DiscoveredModel(
         provider_id=pid,
@@ -30,6 +32,8 @@ def _make_candidate(
         pricing={"input_per_million": in_cost, "output_per_million": out_cost},
         availability=avail,
         lifecycle=life,
+        metadata_provenance=provenance,
+        metadata_source=source,
     )
 
 
@@ -102,4 +106,34 @@ def test_unavailable_models_excluded():
     res = model_discovery_service.recommend_model_with_scoring("general", models)
     assert res.recommended_model is not None
     assert res.recommended_model.provider_id == "groq"
+
+
+def test_cap_score_and_total_score_never_exceed_100():
+    """Verify that capability score and total recommendation score are strictly normalized <= 100.0 (P2-01)."""
+    # Candidate with dozens of capabilities
+    super_caps = [
+        "text_input", "text_output", "reasoning", "tool_calling", "image_input",
+        "pdf_input", "audio_input", "computer_use", "json_schema", "code_interpreter",
+        "web_search", "embeddings",
+    ]
+    model = _make_candidate(
+        "anthropic",
+        "claude-super-model",
+        super_caps,
+        ctx=2_000_000,
+        in_cost=0.0,
+        out_cost=0.0,
+        avail="available",
+        life="active",
+        provenance="provider_verified",
+    )
+
+    res = model_discovery_service.recommend_model_with_scoring("reasoning", [model])
+    assert res.recommended_model is not None
+    assert res.score <= 100.0
+    assert res.criteria_scores["capability"] <= 100.0
+    assert res.criteria_scores["context_window"] <= 100.0
+    assert res.criteria_scores["cost_efficiency"] <= 100.0
+    assert res.metadata_provenance == "provider_verified"
+
 

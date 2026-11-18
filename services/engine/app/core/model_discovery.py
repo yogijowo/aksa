@@ -18,6 +18,18 @@ from app.core.privacy_gate import ProviderMode, privacy_policy_gate
 logger = logging.getLogger("aksa.model_discovery")
 
 
+from enum import Enum
+
+
+class MetadataProvenance(str, Enum):
+    """Provenance level of model metadata and capability attributes (P2-01)."""
+
+    PROVIDER_VERIFIED = "provider_verified"
+    INFERRED = "inferred"
+    USER_OVERRIDE = "user_override"
+    UNKNOWN = "unknown"
+
+
 class DiscoveredModel(BaseModel):
     """Normalized schema for models discovered live from official provider endpoints."""
 
@@ -42,6 +54,9 @@ class DiscoveredModel(BaseModel):
         }
     )
     provider_metadata: dict[str, Any] = Field(default_factory=dict)
+    metadata_provenance: str = MetadataProvenance.INFERRED.value
+    metadata_source: str = "inferred_catalog"
+    metadata_timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     discovered_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     last_verified_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -55,6 +70,7 @@ class ModelRecommendationResult(BaseModel):
     trade_offs: list[str] = Field(default_factory=list)
     alternatives: list[dict[str, Any]] = Field(default_factory=list)
     criteria_scores: dict[str, float] = Field(default_factory=dict)
+    metadata_provenance: str = MetadataProvenance.PROVIDER_VERIFIED.value
     metadata_source: str = "verified_provider_metadata"
     verified_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -451,10 +467,10 @@ class ModelDiscoveryService:
                 continue
 
             # --- Multi-Criteria Score Calculation ---
-            # A. Capability Score (0-100): base 100 + bonus for reasoning/vision/tools
-            cap_score = 100.0
+            # A. Capability Score (0-100): normalized strictly <= 100.0 (P2-01)
+            base_cap = 80.0
             bonus_caps = set(model.capabilities) - set(needed_caps)
-            cap_score += min(len(bonus_caps) * 5.0, 20.0)
+            cap_score = min(100.0, base_cap + min(len(bonus_caps) * 5.0, 20.0))
 
             # B. Context Window Score (0-100)
             ctx = model.context_window or 128000
@@ -484,14 +500,14 @@ class ModelDiscoveryService:
             # E. Reliability Score (0-100)
             rel_score = 100.0 if model.provider_id in ("gemini", "anthropic", "openai", "deepseek", "ollama") else 85.0
 
-            # Weighted sum: 35% cap, 25% ctx, 20% cost, 10% life, 10% rel
-            total = (
+            # Weighted sum: 35% cap, 25% ctx, 20% cost, 10% life, 10% rel, normalized strictly 0-100 (P2-01)
+            total = min(100.0, max(0.0, (
                 0.35 * cap_score
                 + 0.25 * ctx_score
                 + 0.20 * cost_score
                 + 0.10 * life_score
                 + 0.10 * rel_score
-            )
+            )))
             criteria = {
                 "capability": round(cap_score, 1),
                 "context_window": round(ctx_score, 1),
@@ -538,7 +554,8 @@ class ModelDiscoveryService:
             trade_offs=best_trade_offs,
             alternatives=alternatives,
             criteria_scores=best_criteria,
-            metadata_source="verified_provider_metadata",
+            metadata_provenance=best_model.metadata_provenance,
+            metadata_source=best_model.metadata_source,
             verified_at=best_model.last_verified_at,
         )
 
