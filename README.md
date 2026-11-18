@@ -24,6 +24,10 @@
 
 [Fitur Utama](#-fitur-utama) • [Arsitektur Kecerdasan Desktop](#-arsitektur-kecerdasan-desktop-aksa) • [Pembelajaran Per-Agen Adaptif](#-arsitektur-pembelajaran-per-agen-adaptif-adaptive-learning) • [Penemuan Model Dinamis](#-penemuan-model-multiprovider-dinamis-dynamic-discovery) • [Keamanan & Privasi Enterprise](#-keamanan-enterprise-privasi-lokal--tata-kelola-data) • [Panduan Cepat](#-panduan-memulai-cepat-quickstart) • [Dokumentasi Lengkap](#-dokumentasi-teknis--tata-kelola)
 
+<br>
+
+<img src="./docs/assets/desktop.webp" alt="Tampilan Antarmuka AKSA Desktop — Perancang Hirarki Tim Agen Bertingkat" width="100%">
+
 </div>
 
 ---

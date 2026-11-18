@@ -24,6 +24,10 @@
 
 [Key Features](#-key-features) • [Desktop Intelligence Architecture](#-aksa-desktop-intelligence-architecture) • [Enterprise Security & Privacy](#-enterprise-security-local-privacy--data-governance) • [Quickstart](#-quickstart) • [Documentation](#-technical--governance-documentation)
 
+<br>
+
+<img src="./docs/assets/desktop.webp" alt="AKSA Desktop Interface — Hierarchical Multi-Agent Team Builder" width="100%">
+
 </div>
 
 ---

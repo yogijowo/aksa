@@ -88,7 +88,7 @@ export const Sidebar: React.FC = () => {
         <div className="flex items-center justify-between h-12 px-3 border-b border-white/[0.05]">
           {!isSidebarCollapsed && (
             <div className="flex items-center gap-2.5 pl-0.5">
-              <AnimatedBrandIcon size={14} />
+              <AnimatedBrandIcon size={19} />
               <div className="flex items-baseline gap-1.5">
                 <span className="font-semibold tracking-tight text-[13.5px] text-zinc-100">
                   AKSA

@@ -98,9 +98,30 @@ export const WorkspaceChatView: React.FC = () => {
           {messages.length === 0 ? (
             /* Claude Desktop & Linear Inspired Clean Empty State with Desktop Intelligence Architecture */
             <div className="py-8 sm:py-12 flex flex-col items-center text-center space-y-6">
-              {/* Minimal Warm Terracotta Accent Badge */}
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#D97757]/15 border border-[#D97757]/30 text-[#D97757] shadow-lg shadow-[#D97757]/5">
-                <Sparkles size={22} strokeWidth={2} />
+              {/* Minimal Warm Terracotta Accent Badge with Modern Faceted 'A' Mark */}
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#D97757]/12 border border-[#D97757]/35 text-[#D97757] shadow-lg shadow-[#D97757]/5">
+                <svg
+                  width={30}
+                  height={30}
+                  viewBox="0 0 256 256"
+                  fill="none"
+                  xmlns="http://www.w3.org/2000/svg"
+                >
+                  <polygon points="94,164 128,138 128,164 86,194" fill="#FFD0BF" />
+                  <polygon points="128,138 162,164 170,194 128,164" fill="#F09373" />
+                  <path
+                    d="M 128 36 C 135 36 141 40 144 47 L 208 191 C 211 198 206 205 198 205 L 179 205 C 173 205 168 201 166 195 L 128 80 Z"
+                    fill="#C65D3D"
+                  />
+                  <path
+                    d="M 128 36 L 128 80 L 90 195 C 88 201 83 205 77 205 L 58 205 C 50 205 45 198 48 191 L 112 47 C 115 40 121 36 128 36 Z"
+                    fill="#E88464"
+                  />
+                  <path
+                    d="M 128 103 C 129.3 111 131.8 113.5 140 115 C 131.8 116.5 129.3 119 128 127 C 126.7 119 124.2 116.5 116 115 C 124.2 113.5 126.7 111 128 103 Z"
+                    fill="#FFF5F0"
+                  />
+                </svg>
               </div>
 
               <div className="space-y-2">
