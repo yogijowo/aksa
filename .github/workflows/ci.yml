@@ -68,6 +68,7 @@ jobs:
               "test_real_windows_appcontainer_blocks_network_and_outside_writes",
               "test_p1_01_real_windows_child_cannot_inherit_unrelated_parent_handle",
               "test_p2_01_verifier_real_sandbox_blocks_write_network_and_outside_access",
+              "test_p1_01_skill_replay_xlsx_end_to_end_works_inside_os_sandbox",
           }
           statuses = {}
           for tc in root.iter("testcase"):
@@ -91,6 +92,7 @@ jobs:
               "test_real_linux_bwrap_isolates_home_and_network",
               "test_p2_04_real_linux_bwrap_blocks_network_proc_symlinks_and_traversal",
               "test_p2_01_verifier_real_sandbox_blocks_write_network_and_outside_access",
+              "test_p1_01_skill_replay_xlsx_end_to_end_works_inside_os_sandbox",
           }
           statuses = {}
           for tc in root.iter("testcase"):

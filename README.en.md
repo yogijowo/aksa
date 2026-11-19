@@ -14,8 +14,8 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%20%7C%20Linux-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Security%20Audit-Cycle%2010%20Remediated-F59E0B?style=for-the-badge" alt="Security Audit Cycle 10 Remediated">
-  <img src="https://img.shields.io/badge/Tests%20(macOS)-294%20Passed%20%7C%204%20CI--Only%20Skipped-3B82F6?style=for-the-badge" alt="macOS Local Verification">
+  <img src="https://img.shields.io/badge/Security%20Audit-Cycle%2011%20Remediated-F59E0B?style=for-the-badge" alt="Security Audit Cycle 11 Remediated">
+  <img src="https://img.shields.io/badge/Tests%20(macOS)-299%20Passed%20%7C%204%20CI--Only%20Skipped-3B82F6?style=for-the-badge" alt="macOS Local Verification">
 </p>
 
 <p align="center">
@@ -92,7 +92,7 @@ npm run dev
 # Or run Native Tauri v2 Desktop Window (Requires Rust / Cargo)
 npm run dev:tauri
 
-# Run full Python + Frontend + Rust verification suite (298 total tests: 271 Pytest [267 passed on macOS, 4 Windows/Linux-only skipped] + 9 Vitest + 18 Cargo)
+# Run full Python + Frontend + Rust verification suite (303 total tests: 276 Pytest [272 passed on macOS, 4 Windows/Linux-only skipped] + 9 Vitest + 18 Cargo)
 npm test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 # Run TypeScript typecheck & Vite production bundle
@@ -100,15 +100,16 @@ npm run test:frontend
 ```
 
 > **Honest Audit & Cross-Platform Verification Status:**
-> * All **P2 (`P2-01`–`P2-02`)** findings and Section 8 hardening priorities from [`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md`](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md) (alongside Cycles 7–9) have been remediated in source code and verified in [`services/engine/tests/test_reaudit_cycle10_remediation.py`](./services/engine/tests/test_reaudit_cycle10_remediation.py).
-> * **Local Verification (macOS `darwin`):** `pytest` **267 passed, 4 skipped** (native Windows AppContainer & Linux `bwrap` runtime tests), `cargo test` **18 passed**, `vitest` **9 passed**, `cargo check` clean, `tsc --noEmit && vite build` clean, sidecar `--smoke-test` passed, and `npm audit --omit=dev --audit-level=high` **0 vulnerabilities**.
-> * **Public Beta Gate:** Green GitHub Actions CI workflow runs (`.github/workflows/ci.yml` with fixed `dtolnay/rust-toolchain` commit SHA and explicit non-skip enforcement on **`windows-latest`** & **`ubuntu-latest`**) plus **External Independent Re-Audit Cycle 11** remain required before claiming Public Beta certification.
+> * All **P1 (`P1-01` OpenBLAS/`RLIMIT_NPROC`)** and **P2 (`P2-01`–`P2-02` auto-init DB & kernel-atomic `dir_fd` opening)** findings from [`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-11-2026-11-19.md`](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-11-2026-11-19.md) (alongside Cycles 7–10) have been remediated in source code and verified in [`services/engine/tests/test_reaudit_cycle11_remediation.py`](./services/engine/tests/test_reaudit_cycle11_remediation.py).
+> * **Local Verification (macOS `darwin`):** `pytest` **272 passed, 4 skipped** (native Windows AppContainer & Linux `bwrap` runtime tests), `cargo test` **18 passed**, `vitest` **9 passed**, `cargo check` clean, `tsc --noEmit && vite build` clean, sidecar `--smoke-test` passed, and `npm audit --omit=dev --audit-level=high` **0 vulnerabilities**.
+> * **Public Beta Gate:** Green GitHub Actions CI & Security workflow runs across all three OSes (**`windows-latest`**, **`ubuntu-latest`**, **`macos-latest`**) confirming `numpy`/OpenBLAS XLSX replay and native sandbox tests pass cleanly, plus **External Independent Re-Audit Cycle 12**, remain required before claiming Public Beta certification.
 
 ---
 
 ## Technical & Governance Documentation
 
-* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md) — **Latest Independent Re-Audit Cycle 10 Report**.
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-11-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-11-2026-11-19.md) — **Latest Independent Re-Audit Cycle 11 Report**.
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md) — Independent Re-Audit Cycle 10 Report.
 * [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-9-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-9-2026-11-19.md) — Independent Re-Audit Cycle 9 Report & remediation ledger.
 * [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-8-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-8-2026-11-19.md) — Independent Re-Audit Cycle 8 Report & remediation ledger.
 * [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) — Independent Re-Audit Cycle 7 Report & remediation verification ledger.

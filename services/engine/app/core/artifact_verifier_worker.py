@@ -1,12 +1,13 @@
-"""OS-Sandboxed & Streaming-Bounded Artifact Verifier Worker (Cycle 9 P2-03 & Cycle 10 P2-01/P2-02).
+"""OS-Sandboxed & Streaming-Bounded Artifact Verifier Worker (Cycle 9–11 Hardened).
 
 Executes document parsing and postcondition validation inside a kernel-enforced OS sandbox
 (macOS Seatbelt ``(deny default)``, Linux Bubblewrap namespaces with ``--ro-bind`` + ``--remount-ro /``,
 and Windows zero-capability AppContainer + Job Object):
 - Read-only workspace mount/ACL (zero filesystem write capability outside ``/dev/null``).
 - Network completely denied at kernel level.
-- OS resource caps (``RLIMIT_NPROC=0``, ``RLIMIT_FSIZE=0``, ``RLIMIT_CPU``, ``RLIMIT_NOFILE``,
-  ``RLIMIT_AS``/``RLIMIT_DATA``, or Windows Job Object ``ActiveProcessLimit=1`` & ``512 MB``).
+- OS resource caps compatible with multi-threaded native parser dependencies such as OpenBLAS/numpy
+  (positive bounded ``RLIMIT_NPROC`` rather than ``0``, single-threaded BLAS env, ``RLIMIT_FSIZE=0``,
+  ``RLIMIT_CPU``, ``RLIMIT_NOFILE``, ``RLIMIT_AS``/``RLIMIT_DATA``, or Windows Job Object limits).
 - Streaming chunked readers with hard caps on BOTH ``stdout`` and ``stderr`` that kill the
   process group / Job Object immediately upon limit breach before unbounded buffering occurs.
 """
@@ -23,11 +24,44 @@ MAX_WORKER_STDIN_BYTES = 512 * 1024
 MAX_WORKER_STDOUT_BYTES = 512 * 1024
 MAX_WORKER_STDERR_BYTES = 64 * 1024
 MAX_WORKER_STDERR_SNIPPET_BYTES = 2048
-WORKER_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024
+WORKER_MEMORY_LIMIT_BYTES = 768 * 1024 * 1024
+DEFAULT_WORKER_MAX_NPROC_HEADROOM = 32
+
+
+def _estimate_current_uid_tasks() -> int | None:
+    """Count active tasks/threads owned by current UID on Linux for positive bounded RLIMIT_NPROC."""
+    if not sys.platform.startswith("linux"):
+        return None
+    my_uid = os.getuid()
+    total_threads = 0
+    try:
+        for entry in os.scandir("/proc"):
+            if not entry.name.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry.name}/status", "r", encoding="utf-8", errors="ignore") as fp:
+                    uid_line = ""
+                    thr_line = ""
+                    for line in fp:
+                        if line.startswith("Uid:"):
+                            uid_line = line
+                        elif line.startswith("Threads:"):
+                            thr_line = line
+                        if uid_line and thr_line:
+                            break
+                    if uid_line:
+                        real_uid = int(uid_line.split()[1])
+                        if real_uid == my_uid:
+                            total_threads += int(thr_line.split()[1]) if thr_line else 1
+            except OSError:
+                continue
+    except OSError:
+        return None
+    return total_threads if total_threads > 0 else None
 
 
 def _apply_worker_resource_limits(timeout_sec: float = 10.0) -> None:
-    """Apply defense-in-depth POSIX OS resource limits inside the verifier subprocess."""
+    """Apply defense-in-depth POSIX OS resource limits without breaking native thread pools."""
     if sys.platform == "win32":
         return
     try:
@@ -48,12 +82,54 @@ def _apply_worker_resource_limits(timeout_sec: float = 10.0) -> None:
         except Exception:
             return False
 
-    _clamp_set("RLIMIT_NPROC", 0)
+    # Cycle 11 P1-01: NEVER set RLIMIT_NPROC=0 on Linux (causes OpenBLAS pthread_create EAGAIN).
+    # Enforce a strictly positive bounded process/thread ceiling when known, >= 64 otherwise.
+    raw_nproc = os.environ.get("AKSA_VERIFIER_MAX_NPROC", "").strip()
+    try:
+        nproc_limit = max(32, int(raw_nproc)) if raw_nproc else 64
+    except ValueError:
+        nproc_limit = 64
+    _clamp_set("RLIMIT_NPROC", nproc_limit)
+
     _clamp_set("RLIMIT_FSIZE", 0)
     _clamp_set("RLIMIT_CPU", max(5, int(timeout_sec) + 2))
     _clamp_set("RLIMIT_NOFILE", 256)
     if not _clamp_set("RLIMIT_AS", WORKER_MEMORY_LIMIT_BYTES):
         _clamp_set("RLIMIT_DATA", WORKER_MEMORY_LIMIT_BYTES)
+
+
+def _install_worker_process_guards() -> None:
+    """Block Python child-process creation primitives while allowing native library pthreads."""
+    def _blocked_proc(*args: Any, **kwargs: Any) -> Any:
+        raise PermissionError("Pembuatan sub-proses diblokir di worker verifikasi AKSA.")
+
+    for fn_name in (
+        "system",
+        "popen",
+        "fork",
+        "forkpty",
+        "posix_spawn",
+        "posix_spawnp",
+        "spawnl",
+        "spawnlp",
+        "spawnv",
+        "spawnvp",
+        "execl",
+        "execv",
+    ):
+        if hasattr(os, fn_name):
+            try:
+                setattr(os, fn_name, _blocked_proc)
+            except Exception:
+                pass
+    try:
+        import subprocess
+        subprocess.Popen = _blocked_proc  # type: ignore[assignment]
+        subprocess.run = _blocked_proc  # type: ignore[assignment]
+        subprocess.call = _blocked_proc  # type: ignore[assignment]
+    except Exception:
+        pass
+    sys.modules["_posixsubprocess"] = None  # type: ignore[assignment]
 
 
 def _verify_sync_in_subprocess(payload: dict[str, Any]) -> dict[str, Any]:
@@ -166,9 +242,20 @@ async def verify_artifact_in_worker(
     safe_env["PYTHONDONTWRITEBYTECODE"] = "1"
     safe_env["PYTHONNOUSERSITE"] = "1"
     safe_env["AKSA_VERIFIER_TIMEOUT"] = str(float(timeout))
+    # Cap native library thread pools (OpenBLAS/OMP) cleanly before dynamic libraries initialize
+    safe_env["OPENBLAS_NUM_THREADS"] = "1"
+    safe_env["OMP_NUM_THREADS"] = "1"
+    safe_env["MKL_NUM_THREADS"] = "1"
+    safe_env["BLIS_NUM_THREADS"] = "1"
+    safe_env["VECLIB_MAXIMUM_THREADS"] = "1"
+    safe_env["NUMEXPR_NUM_THREADS"] = "1"
+    safe_env["MALLOC_ARENA_MAX"] = "2"
     if sys.platform != "win32":
         safe_env["HOME"] = str(ws_real)
         safe_env["TMPDIR"] = str(ws_real)
+        uid_tasks = _estimate_current_uid_tasks()
+        if uid_tasks is not None:
+            safe_env["AKSA_VERIFIER_MAX_NPROC"] = str(max(64, uid_tasks + DEFAULT_WORKER_MAX_NPROC_HEADROOM))
 
     req_roots, opt_roots = collect_python_runtime_read_roots()
 
@@ -226,6 +313,7 @@ if __name__ == "__main__":
     except (TypeError, ValueError):
         pass
     _apply_worker_resource_limits(timeout_sec=cpu_hint)
+    _install_worker_process_guards()
 
     raw = sys.stdin.buffer.read(MAX_WORKER_STDIN_BYTES + 1)
     if len(raw) > MAX_WORKER_STDIN_BYTES:

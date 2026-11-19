@@ -5,9 +5,11 @@ worker process running inside the OS sandbox (Seatbelt / Bubblewrap / AppContain
 minimal attack surface and zero access to application configuration or home directories.
 
 Security properties:
-- Opens regular files once atomically via ``O_NOFOLLOW`` + ``os.fstat`` (eliminates
-  TOCTOU symlink/file-swap races between stat validation and parser execution).
-- Validates intermediate path components inside an optional workspace for symlinks.
+- Opens regular files atomically via chained directory file descriptors
+  (``dir_fd`` + ``O_DIRECTORY | O_NOFOLLOW`` on every intermediate segment and leaf on
+  POSIX; handle final-path verification via ``GetFinalPathNameByHandleW`` on Windows)
+  followed by ``os.fstat`` + single bounded read into memory (eliminates TOCTOU
+  intermediate-symlink and file-swap races).
 - Enforces server-side ``max_bytes`` clamping and pre-parser OOXML ZIP bomb / sheet /
   dimension / PDF text complexity bounds.
 - Evaluates supported Excel formulas deterministically and fails closed on unsupported
@@ -18,12 +20,15 @@ from __future__ import annotations
 
 import ast
 import csv
+import ctypes
+import errno
 import io
 import json
 import operator
 import os
 import re
 import stat
+import sys
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -61,31 +66,62 @@ def sanitize_verifier_schema(expected_schema: dict[str, Any] | None) -> dict[str
     return schema
 
 
-def check_no_symlink_components(art_path: Path, workspace: Path | None = None) -> tuple[bool, str]:
-    """Ensure ``art_path`` and any relative directory segments under ``workspace`` are not symlinks."""
-    if art_path.is_symlink():
-        return False, f"Artefak symlink ditolak oleh gerbang verifikasi: {art_path}"
+def _resolve_anchor_and_relative_parts(
+    art_path: Path,
+    workspace: Path | None = None,
+) -> tuple[Path | None, tuple[str, ...], str]:
+    """Resolve safe anchor directory and un-dereferenced relative path segments."""
+    if ".." in art_path.parts:
+        return None, (), f"Segmen traversal '..' ditolak pada path artefak: {art_path}"
 
-    if workspace is None:
-        return True, ""
-
-    try:
-        ws_real = workspace.resolve(strict=False)
-        art_real = art_path.resolve(strict=False)
-        if not art_real.is_relative_to(ws_real):
-            return False, f"Artefak berada di luar batas workspace terotorisasi: {art_path}"
-
-        # Walk lexical components from workspace down to art_path to catch intermediate symlinks
+    if workspace is not None:
+        if workspace.is_symlink():
+            return None, (), f"Workspace symlink ditolak oleh gerbang verifikasi: {workspace}"
         ws_abs = Path(os.path.abspath(str(workspace)))
+        ws_real = workspace.resolve(strict=False)
         art_abs = Path(os.path.abspath(str(art_path)))
         try:
             rel = art_abs.relative_to(ws_abs)
-            cursor = ws_abs
+            anchor_dir = ws_real
         except ValueError:
-            rel = art_real.relative_to(ws_real)
-            cursor = ws_real
+            try:
+                rel = art_abs.relative_to(ws_real)
+                anchor_dir = ws_real
+            except ValueError:
+                return None, (), f"Artefak berada di luar batas workspace terotorisasi: {art_path}"
+        if not rel.parts:
+            return None, (), f"Artefak harus berupa file di dalam workspace, bukan direktori root: {art_path}"
+        return anchor_dir, rel.parts, ""
 
-        for part in rel.parts:
+    if art_path.is_symlink():
+        return None, (), f"Artefak symlink ditolak oleh gerbang verifikasi: {art_path}"
+    parent = art_path.parent
+    if parent.is_symlink():
+        return None, (), f"Komponen direktori symlink ditolak oleh gerbang verifikasi: {parent}"
+    if not art_path.name or art_path.name in (".", ".."):
+        return None, (), f"Nama file artefak tidak valid: {art_path}"
+    return parent.resolve(strict=False), (art_path.name,), ""
+
+
+def check_no_symlink_components(art_path: Path, workspace: Path | None = None) -> tuple[bool, str]:
+    """Pre-flight check that ``art_path`` and relative components under ``workspace`` are not symlinks."""
+    if art_path.is_symlink():
+        return False, f"Artefak symlink ditolak oleh gerbang verifikasi: {art_path}"
+
+    anchor_dir, rel_parts, err = _resolve_anchor_and_relative_parts(art_path, workspace=workspace)
+    if anchor_dir is None:
+        return False, err
+
+    try:
+        cursor = Path(os.path.abspath(str(workspace))) if workspace is not None else anchor_dir
+        if not cursor.exists() and workspace is None:
+            return True, ""
+        # Check lexical segments under workspace without dereferencing symlinks
+        if workspace is not None:
+            ws_real = workspace.resolve(strict=False)
+            art_abs = Path(os.path.abspath(str(art_path)))
+            cursor = ws_real if not art_abs.is_relative_to(Path(os.path.abspath(str(workspace)))) else Path(os.path.abspath(str(workspace)))
+        for part in rel_parts:
             cursor = cursor / part
             if cursor.is_symlink():
                 return False, f"Komponen path symlink di dalam workspace ditolak: {cursor}"
@@ -95,24 +131,108 @@ def check_no_symlink_components(art_path: Path, workspace: Path | None = None) -
     return True, ""
 
 
+def _win32_verify_open_handle_path(fd: int, anchor_dir: Path, rel_parts: tuple[str, ...]) -> bool:
+    """Verify via GetFinalPathNameByHandleW on Windows that an open fd stays at exact target inside anchor_dir."""
+    if sys.platform != "win32":
+        return True
+    try:
+        import msvcrt  # type: ignore[import-not-found]
+
+        h_file = msvcrt.get_osfhandle(fd)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        buf = ctypes.create_unicode_buffer(32768)
+        length = kernel32.GetFinalPathNameByHandleW(ctypes.c_void_p(h_file), buf, len(buf), 0)
+        if not length or length >= len(buf):
+            return False
+        final_raw = buf.value
+        if final_raw.startswith("\\\\?\\UNC\\"):
+            final_raw = "\\\\" + final_raw[8:]
+        elif final_raw.startswith("\\\\?\\"):
+            final_raw = final_raw[4:]
+        final_norm = os.path.normcase(os.path.normpath(final_raw))
+        expected_target = os.path.normcase(os.path.normpath(str(anchor_dir.resolve() / Path(*rel_parts))))
+        anchor_norm = os.path.normcase(os.path.normpath(str(anchor_dir.resolve())))
+        return final_norm == expected_target and Path(final_norm).is_relative_to(Path(anchor_norm))
+    except Exception:
+        return False
+
+
+def _open_verified_regular_fd(
+    art_path: Path,
+    workspace: Path | None = None,
+) -> tuple[int | None, str]:
+    """Atomically open target artifact using chained dir_fd (POSIX) or handle path verification (Windows)."""
+    anchor_dir, rel_parts, err = _resolve_anchor_and_relative_parts(art_path, workspace=workspace)
+    if anchor_dir is None:
+        return None, err
+
+    # POSIX: atomic component-by-component traversal pinned via dir_fd + O_DIRECTORY | O_NOFOLLOW
+    if os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW"):
+        dir_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW
+        cur_fd: int | None = None
+        try:
+            cur_fd = os.open(str(anchor_dir), dir_flags)
+            for seg in rel_parts[:-1]:
+                if not seg or seg in (".", ".."):
+                    return None, f"Segmen path artefak tidak valid: {art_path}"
+                next_fd = os.open(seg, dir_flags, dir_fd=cur_fd)
+                os.close(cur_fd)
+                cur_fd = next_fd
+            leaf = rel_parts[-1]
+            if not leaf or leaf in (".", ".."):
+                return None, f"Nama berkas artefak tidak valid: {art_path}"
+            file_fd = os.open(leaf, file_flags, dir_fd=cur_fd)
+            return file_fd, ""
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                return None, f"Komponen path symlink ditolak secara atomik (O_NOFOLLOW): {art_path}"
+            if exc.errno == errno.ENOTDIR:
+                return None, f"Komponen direktori path artefak tidak valid atau symlink (ENOTDIR): {art_path}"
+            if exc.errno == errno.ENOENT:
+                return None, f"File tidak ditemukan: {art_path}"
+            return None, f"Gagal membuka file artefak secara aman: {exc}"
+        finally:
+            if cur_fd is not None:
+                try:
+                    os.close(cur_fd)
+                except OSError:
+                    pass
+
+    # Windows fallback: check reparse points on each component, open, then verify GetFinalPathNameByHandleW
+    cursor = anchor_dir
+    for part in rel_parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            return None, f"Komponen path symlink ditolak oleh gerbang verifikasi: {cursor}"
+    if not art_path.exists():
+        return None, f"File tidak ditemukan: {art_path}"
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    try:
+        file_fd = os.open(str(art_path), flags)
+    except OSError as exc:
+        if exc.errno == errno.ENOENT:
+            return None, f"File tidak ditemukan: {art_path}"
+        return None, f"Gagal membuka file artefak secara aman: {exc}"
+
+    if not _win32_verify_open_handle_path(file_fd, anchor_dir, rel_parts):
+        try:
+            os.close(file_fd)
+        except OSError:
+            pass
+        return None, f"Target handle artefak berubah atau mengandung symlink escape di luar workspace: {art_path}"
+    return file_fd, ""
+
+
 def _read_verified_regular_file(
     art_path: Path,
     max_bytes: int,
     workspace: Path | None = None,
 ) -> tuple[bytes | None, int, str]:
-    """Open ``art_path`` once with ``O_NOFOLLOW`` + ``os.fstat`` to prevent TOCTOU races."""
-    sym_ok, sym_err = check_no_symlink_components(art_path, workspace=workspace)
-    if not sym_ok:
-        return None, 0, sym_err
-
-    if not art_path.exists():
-        return None, 0, f"File tidak ditemukan: {art_path}"
-
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0)
-    try:
-        fd = os.open(str(art_path), flags)
-    except OSError as exc:
-        return None, 0, f"Gagal membuka file artefak secara aman: {exc}"
+    """Open ``art_path`` atomically without TOCTOU symlink races and read bounded bytes once."""
+    fd, open_err = _open_verified_regular_fd(art_path, workspace=workspace)
+    if fd is None:
+        return None, 0, open_err
 
     try:
         st = os.fstat(fd)

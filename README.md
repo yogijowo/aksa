@@ -14,8 +14,8 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%20%7C%20Linux-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Security%20Audit-Cycle%2010%20Remediated-F59E0B?style=for-the-badge" alt="Security Audit Cycle 10 Remediated">
-  <img src="https://img.shields.io/badge/Tests%20(macOS)-294%20Passed%20%7C%204%20CI--Only%20Skipped-3B82F6?style=for-the-badge" alt="macOS Local Verification">
+  <img src="https://img.shields.io/badge/Security%20Audit-Cycle%2011%20Remediated-F59E0B?style=for-the-badge" alt="Security Audit Cycle 11 Remediated">
+  <img src="https://img.shields.io/badge/Tests%20(macOS)-299%20Passed%20%7C%204%20CI--Only%20Skipped-3B82F6?style=for-the-badge" alt="macOS Local Verification">
 </p>
 
 <p align="center">
@@ -186,7 +186,7 @@ npm run dev:tauri
 
 ### 4. Menjalankan Suite Pengujian & Verifikasi Build
 ```bash
-# Jalankan rangkaian uji Python + Frontend + Rust (298 total skenario: 271 Pytest [267 passed & 4 skipped Windows/Linux-only di macOS] + 9 Vitest + 18 Cargo)
+# Jalankan rangkaian uji Python + Frontend + Rust (303 total skenario: 276 Pytest [272 passed & 4 skipped Windows/Linux-only di macOS] + 9 Vitest + 18 Cargo)
 npm test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 # Verifikasi kompilasi ketat TypeScript (tsc --noEmit) & bundle produksi Vite
@@ -194,16 +194,17 @@ npm run test:frontend
 ```
 
 > **Status Kejujuran Audit & Batasan Verifikasi Lintas-OS:**
-> * Seluruh temuan **P2 (`P2-01`–`P2-02`)** dan hardening Section 8 dari [`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md`](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md) (serta Siklus 7–9) telah diremediasi di kode sumber dan diuji via [`services/engine/tests/test_reaudit_cycle10_remediation.py`](./services/engine/tests/test_reaudit_cycle10_remediation.py).
-> * **Verifikasi Lokal (macOS `darwin`):** `pytest` **267 passed, 4 skipped** (test runtime khusus Windows AppContainer & Linux `bwrap`), `cargo test` **18 passed**, `vitest` **9 passed**, `cargo check` bersih, `tsc --noEmit && vite build` bersih, sidecar `--smoke-test` lulus, dan `npm audit --omit=dev --audit-level=high` **0 vulnerabilities**.
-> * **Syarat Menuju Public Beta:** Bukti run **GitHub Actions CI (`.github/workflows/ci.yml`)** hijau pada commit terbaru untuk runner **`windows-latest`**, **`ubuntu-latest`** (termasuk verifikasi non-skip uji sandbox OS nyata), dan **`macos-latest`**, serta **Re-Audit Independen Siklus 11**.
+> * Seluruh temuan **P1 (`P1-01` OpenBLAS/`RLIMIT_NPROC`)** dan **P2 (`P2-01`–`P2-02` auto-init DB & pembukaan atomik `dir_fd`)** dari [`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-11-2026-11-19.md`](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-11-2026-11-19.md) (serta Siklus 7–10) telah diremediasi di kode sumber dan diuji via [`services/engine/tests/test_reaudit_cycle11_remediation.py`](./services/engine/tests/test_reaudit_cycle11_remediation.py).
+> * **Verifikasi Lokal (macOS `darwin`):** `pytest` **272 passed, 4 skipped** (test runtime khusus Windows AppContainer & Linux `bwrap`), `cargo test` **18 passed**, `vitest` **9 passed**, `cargo check` bersih, `tsc --noEmit && vite build` bersih, sidecar `--smoke-test` lulus, dan `npm audit --omit=dev --audit-level=high` **0 vulnerabilities**.
+> * **Syarat Menuju Public Beta:** Bukti run **GitHub Actions CI (`.github/workflows/ci.yml`)** & **Security (`.github/workflows/security.yml`)** hijau pada commit terbaru untuk ketiga runner (**`windows-latest`**, **`ubuntu-latest`**, **`macos-latest`**) termasuk uji `numpy`/OpenBLAS XLSX replay dan uji sandbox OS nyata, diikuti **Re-Audit Independen Siklus 12**.
 
 ---
 
 ## Dokumentasi Teknis & Tata Kelola
 
 ### Dokumen Tata Kelola & Keamanan Utama
-* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md) — **Laporan Re-Audit Independen Siklus 10 (Terkini)** (temuan verifier worker OS sandbox, streaming output limits, dan status CI matrix).
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-11-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-11-2026-11-19.md) — **Laporan Re-Audit Independen Siklus 11 (Terkini)** (regresi OpenBLAS/`RLIMIT_NPROC=0` Linux, kegagalan SQLite clean-runner macOS, dan celah TOCTOU direktori perantara).
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-10-2026-11-19.md) — Laporan Re-Audit Independen Siklus 10 (temuan verifier worker OS sandbox, streaming output limits, dan status CI matrix).
 * [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-9-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-9-2026-11-19.md) — Laporan Re-Audit Independen Siklus 9 beserta log perbaikan worker killable, batas `max_bytes` & payload API, formula unsupported fail-closed, dan guard ZIP bomb OOXML.
 * [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-8-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-8-2026-11-19.md) — Laporan Re-Audit Independen Siklus 8 & log perbaikan isolasi context-local replay & verifier postcondition.
 * [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) — Laporan Re-Audit Independen Siklus 7 & log remediasi OS sandbox.

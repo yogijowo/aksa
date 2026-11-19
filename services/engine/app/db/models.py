@@ -346,6 +346,13 @@ class DatabaseManager:
 
     def __init__(self, db_path: Path | None = None) -> None:
         self.db_path = db_path or settings.sqlite_path
+        self._initialized_path: Path | None = None
+
+    async def ensure_ready(self) -> None:
+        """Ensure parent directory exists and schema is initialized before connecting (idempotent)."""
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        if self._initialized_path != self.db_path or not self.db_path.exists():
+            await self.initialize()
 
     async def initialize(self) -> None:
         """Create database tables and apply versioned migrations transactionally."""
@@ -389,6 +396,7 @@ class DatabaseManager:
                     (ver, name, now),
                 )
             await db.commit()
+        self._initialized_path = self.db_path
 
     async def list_teams_with_agents(self) -> list[dict[str, Any]]:
         """Return all agent teams along with their nested hierarchical agents."""
@@ -901,6 +909,7 @@ class DatabaseManager:
             return cursor.rowcount > 0
 
     async def log_permission_audit_event(self, payload: dict[str, Any]) -> dict[str, Any]:
+        await self.ensure_ready()
         event_id = f"aud_{uuid.uuid4().hex[:12]}"
         now = _now_iso()
         async with aiosqlite.connect(self.db_path) as db:
@@ -941,6 +950,7 @@ class DatabaseManager:
 
     # --- Agent Skills CRUD ---
     async def upsert_installed_skill(self, payload: dict[str, Any]) -> dict[str, Any]:
+        await self.ensure_ready()
         skill_id = payload["skill_id"]
         pk_id = payload.get("id") or f"iskill_{uuid.uuid4().hex[:10]}"
         now = _now_iso()
@@ -986,6 +996,7 @@ class DatabaseManager:
             return d
 
     async def list_installed_skills(self) -> list[dict[str, Any]]:
+        await self.ensure_ready()
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM installed_skills ORDER BY display_name ASC")
@@ -997,6 +1008,7 @@ class DatabaseManager:
             return items
 
     async def get_installed_skill(self, skill_id: str) -> dict[str, Any] | None:
+        await self.ensure_ready()
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute("SELECT * FROM installed_skills WHERE skill_id = ?", (skill_id,))
@@ -1018,6 +1030,7 @@ class DatabaseManager:
             return await self.get_installed_skill(skill_id)
 
     async def delete_installed_skill(self, skill_id: str) -> bool:
+        await self.ensure_ready()
         now = _now_iso()
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute("DELETE FROM installed_skills WHERE skill_id = ?", (skill_id,))

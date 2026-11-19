@@ -209,7 +209,18 @@ async def test_p0_rag_allow_read_false_enforcement(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_p0_rag_rest_endpoints_boundary_and_principal_enforcement(tmp_path: Path) -> None:
+async def test_p0_rag_rest_endpoints_boundary_and_principal_enforcement(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import app.api.routes as routes_mod
+
+    isolated_db = DatabaseManager(db_path=tmp_path / "rag_api_test.db")
+    await isolated_db.initialize()
+    isolated_rag = HybridRAGStore(db=isolated_db, vector_dir=tmp_path / "rag_api_vectors")
+    monkeypatch.setattr(routes_mod, "db_manager", isolated_db)
+    monkeypatch.setattr(routes_mod, "rag_store", isolated_rag)
+
     orig_dev = settings.dev_mode
     orig_token = settings.auth_token
     try:

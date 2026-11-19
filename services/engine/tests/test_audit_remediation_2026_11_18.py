@@ -286,8 +286,18 @@ def test_immutable_skill_version_cannot_be_overwritten(tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_curated_skill_manifest_synchrony_with_scripts():
-    """Verify curated skills materialize declared scripts on disk (AKSA-SKILL-003)."""
+async def test_curated_skill_manifest_synchrony_with_scripts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """Verify curated skills materialize declared scripts on disk using isolated DB/dir (AKSA-SKILL-003)."""
+    import app.skills.skill_manager as skill_mod
+    from app.db.models import DatabaseManager
+
+    iso_db = DatabaseManager(db_path=tmp_path / "data" / "curated_skills.db")
+    await iso_db.initialize()
+    iso_skills_dir = tmp_path / "skills"
+    iso_skills_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(skill_mod, "db_manager", iso_db)
+    monkeypatch.setattr(agent_skills_manager, "skills_dir", iso_skills_dir)
+
     # Pick a curated skill that declares scripts
     tax_skill = next((c for c in CURATED_SKILL_CATALOG if c.id == "indonesian-tax-calculator"), None)
     assert tax_skill is not None
@@ -339,27 +349,33 @@ def test_candidate_skill_extractor_generates_substantive_steps(tmp_path: Path):
         agent_directory_service.set_root_dir(old_root)
 
 
-def test_failed_task_records_success_false():
+def test_failed_task_records_success_false(tmp_path: Path):
     """Verify failed tasks record success=False in episodic memory (AKSA-AGENT-003)."""
-    mem_svc = AgentMemoryService("test-agent-failure-check")
-    entry = mem_svc.record_episodic_task(
-        task_id="task_failed_01",
-        session_id="session_01",
-        intent="Ubah berkas pdf ke docx tanpa izin",
-        summary="Eksekusi gagal: Izin write ditolak di workspace",
-        tools_used=["convert_pdf_to_word"],
-        success=False,
-    )
-    assert entry.success is False
+    old_root = agent_directory_service.root_dir
+    agent_directory_service.set_root_dir(tmp_path)
+    try:
+        agent_directory_service.provision_agent_directory("test-agent-failure-check")
+        mem_svc = AgentMemoryService("test-agent-failure-check")
+        entry = mem_svc.record_episodic_task(
+            task_id="task_failed_01",
+            session_id="session_01",
+            intent="Ubah berkas pdf ke docx tanpa izin",
+            summary="Eksekusi gagal: Izin write ditolak di workspace",
+            tools_used=["convert_pdf_to_word"],
+            success=False,
+        )
+        assert entry.success is False
 
-    # Candidate extractor must ignore failed task unless explicit teach
-    extractor = SkillCandidateExtractor("test-agent-failure-check")
-    cand = extractor.evaluate_task_for_learning(
-        task_id="task_failed_01",
-        intent="Ubah berkas pdf ke docx tanpa izin",
-        tools_used=["convert_pdf_to_word"],
-        success=False,
-        user_explicit_teach=False,
-    )
-    assert cand is None
+        # Candidate extractor must ignore failed task unless explicit teach
+        extractor = SkillCandidateExtractor("test-agent-failure-check")
+        cand = extractor.evaluate_task_for_learning(
+            task_id="task_failed_01",
+            intent="Ubah berkas pdf ke docx tanpa izin",
+            tools_used=["convert_pdf_to_word"],
+            success=False,
+            user_explicit_teach=False,
+        )
+        assert cand is None
+    finally:
+        agent_directory_service.set_root_dir(old_root)
 
