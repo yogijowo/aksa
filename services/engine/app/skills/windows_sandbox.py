@@ -144,14 +144,20 @@ def run_windows_appcontainer_sandboxed(
     *,
     required_read_roots: list[Path] | None = None,
     optional_read_roots: list[Path] | None = None,
+    stdin_bytes: bytes | None = None,
+    read_only_workspace: bool = False,
+    max_stderr_bytes: int | None = None,
+    stderr_retain_bytes: int | None = None,
+    abort_on_output_limit: bool = False,
 ) -> dict[str, Any]:
     """Execute ``cmd`` inside a zero-capability Windows AppContainer + Job Object.
 
     Security invariants:
     - Overly broad roots (drive roots, ``C:\\Users``, ``/``, user home) are rejected fail-closed.
     - All ``required_read_roots`` MUST exist and receive explicit R/X ACL grants (fail-closed).
+    - When ``read_only_workspace=True``, workspace ACL is restricted strictly to ``FILE_READ_EXEC``.
     - ``PROC_THREAD_ATTRIBUTE_HANDLE_LIST`` restricts child handle inheritance strictly to
-      the stdout and stderr write pipe handles.
+      configured stdio pipe handles.
     """
     if sys.platform != "win32":
         raise WindowsSandboxError("Windows AppContainer sandbox hanya dapat dijalankan di Windows.")
@@ -448,9 +454,10 @@ def run_windows_appcontainer_sandboxed(
         else:
             raise WindowsSandboxError(f"CreateAppContainerProfile gagal: HRESULT {hr:#x}")
 
-        # 2. Grant workspace R/W ACL (mandatory), required_read_roots R/X ACL (fail-closed),
-        #    and optional_read_roots R/X ACL (audited non-fatally).
-        if not _modify_acl(ws_resolved, FILE_ALL_ACCESS, GRANT_ACCESS):
+        # 2. Grant workspace R/W (or strictly R/X when read_only_workspace=True),
+        #    required_read_roots R/X ACL (fail-closed), and optional_read_roots R/X ACL.
+        ws_access_mask = FILE_READ_EXEC if read_only_workspace else FILE_ALL_ACCESS
+        if not _modify_acl(ws_resolved, ws_access_mask, GRANT_ACCESS):
             logger.warning(
                 "windows_sandbox.acl_workspace_denied target=%s",
                 redact_path_for_log(ws_resolved),
@@ -520,16 +527,21 @@ def run_windows_appcontainer_sandboxed(
         ):
             raise WindowsSandboxError(f"SetInformationJobObject gagal: err={_win_last_error()}")
 
-        # 4. Inheritable pipes for stdout/stderr ONLY (restrict child handle inheritance explicitly)
+        # 4. Inheritable pipes for configured stdio ONLY (restrict child handle inheritance explicitly)
         sa = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), None, True)
         h_out_r, h_out_w = wintypes.HANDLE(), wintypes.HANDLE()
         h_err_r, h_err_w = wintypes.HANDLE(), wintypes.HANDLE()
+        h_in_r, h_in_w = wintypes.HANDLE(), wintypes.HANDLE()
         if not kernel32.CreatePipe(ctypes.byref(h_out_r), ctypes.byref(h_out_w), ctypes.byref(sa), 0):
             raise WindowsSandboxError("Gagal membuat stdout pipe.")
         handles_to_close.extend([h_out_r, h_out_w])
         if not kernel32.CreatePipe(ctypes.byref(h_err_r), ctypes.byref(h_err_w), ctypes.byref(sa), 0):
             raise WindowsSandboxError("Gagal membuat stderr pipe.")
         handles_to_close.extend([h_err_r, h_err_w])
+        if stdin_bytes is not None:
+            if not kernel32.CreatePipe(ctypes.byref(h_in_r), ctypes.byref(h_in_w), ctypes.byref(sa), 0):
+                raise WindowsSandboxError("Gagal membuat stdin pipe.")
+            handles_to_close.extend([h_in_r, h_in_w])
 
         for read_h in (h_out_r, h_err_r):
             if not kernel32.SetHandleInformation(read_h, HANDLE_FLAG_INHERIT, 0):
@@ -537,6 +549,11 @@ def run_windows_appcontainer_sandboxed(
         for write_h in (h_out_w, h_err_w):
             if not kernel32.SetHandleInformation(write_h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT):
                 raise WindowsSandboxError(f"SetHandleInformation write pipe gagal: err={_win_last_error()}")
+        if stdin_bytes is not None:
+            if not kernel32.SetHandleInformation(h_in_w, HANDLE_FLAG_INHERIT, 0):
+                raise WindowsSandboxError(f"SetHandleInformation stdin write pipe gagal: err={_win_last_error()}")
+            if not kernel32.SetHandleInformation(h_in_r, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT):
+                raise WindowsSandboxError(f"SetHandleInformation stdin read pipe gagal: err={_win_last_error()}")
 
         # 5. Build StartupInfoEx with BOTH AppContainer SECURITY_CAPABILITIES and explicit HANDLE_LIST
         attr_size = ctypes.c_size_t(0)
@@ -556,7 +573,10 @@ def run_windows_appcontainer_sandboxed(
             raise WindowsSandboxError(f"UpdateProcThreadAttribute SECURITY_CAPABILITIES gagal: err={_win_last_error()}")
 
         # Keep inherit_handle_list referenced until CreateProcessW + DeleteProcThreadAttributeList complete
-        inherit_handle_list = (wintypes.HANDLE * 2)(h_out_w.value, h_err_w.value)
+        if stdin_bytes is not None:
+            inherit_handle_list = (wintypes.HANDLE * 3)(h_in_r.value, h_out_w.value, h_err_w.value)
+        else:
+            inherit_handle_list = (wintypes.HANDLE * 2)(h_out_w.value, h_err_w.value)
         if not kernel32.UpdateProcThreadAttribute(
             attr_buf,
             0,
@@ -571,7 +591,7 @@ def run_windows_appcontainer_sandboxed(
         si_ex = STARTUPINFOEXW()
         si_ex.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEXW)
         si_ex.StartupInfo.dwFlags = STARTF_USESTDHANDLES
-        si_ex.StartupInfo.hStdInput = wintypes.HANDLE(0)
+        si_ex.StartupInfo.hStdInput = h_in_r if stdin_bytes is not None else wintypes.HANDLE(0)
         si_ex.StartupInfo.hStdOutput = h_out_w
         si_ex.StartupInfo.hStdError = h_err_w
         si_ex.lpAttributeList = ctypes.cast(attr_buf, ctypes.c_void_p)
@@ -587,10 +607,13 @@ def run_windows_appcontainer_sandboxed(
             None, ctypes.create_unicode_buffer(cmdline), None, None, True,
             creation_flags, env_block, str(cwd), ctypes.byref(si_ex), ctypes.byref(pi),
         )
-        # Close child write pipe ends in parent immediately
+        # Close child-owned pipe ends in parent immediately
         kernel32.CloseHandle(h_out_w)
         kernel32.CloseHandle(h_err_w)
         handles_to_close = [h_out_r, h_err_r]
+        if stdin_bytes is not None:
+            kernel32.CloseHandle(h_in_r)
+            handles_to_close.append(h_in_w)
 
         if not ok:
             raise WindowsSandboxError(f"CreateProcessW AppContainer gagal: err={_win_last_error()}")
@@ -601,13 +624,18 @@ def run_windows_appcontainer_sandboxed(
             kernel32.TerminateProcess(pi.hProcess, 1)
             raise WindowsSandboxError(f"AssignProcessToJobObject gagal (proses dihentikan): err={err}")
 
-        # 8. Drain pipes asynchronously and ResumeThread
+        # 8. Drain pipes via streaming threads (enforcing hard output limits) and ResumeThread
         out_chunks: list[bytes] = []
         err_chunks: list[bytes] = []
+        eff_stderr_hard = max_output_bytes if max_stderr_bytes is None else max(1, int(max_stderr_bytes))
+        eff_stderr_retain = eff_stderr_hard if stderr_retain_bytes is None else min(eff_stderr_hard, max(0, int(stderr_retain_bytes)))
+        exceeded: dict[str, Any] = {}
+        exceed_lock = threading.Lock()
 
-        def _drain(handle: int, sink: list[bytes]) -> None:
+        def _drain(handle: int, sink: list[bytes], stream_name: str, retain_limit: int, hard_limit: int) -> None:
             import msvcrt  # type: ignore[import-not-found]
             fd = msvcrt.open_osfhandle(handle, os.O_RDONLY)
+            kept = 0
             total = 0
             # open_osfhandle transfers OS handle ownership to the CRT file descriptor
             with os.fdopen(fd, "rb", closefd=True) as fp:
@@ -615,16 +643,52 @@ def run_windows_appcontainer_sandboxed(
                     chunk = fp.read(8192)
                     if not chunk:
                         break
-                    if total < max_output_bytes:
-                        sink.append(chunk[: max_output_bytes - total])
-                        total += len(chunk)
+                    total += len(chunk)
+                    if kept < retain_limit:
+                        slice_b = chunk[: retain_limit - kept]
+                        sink.append(slice_b)
+                        kept += len(slice_b)
+                    if abort_on_output_limit and total > hard_limit:
+                        with exceed_lock:
+                            if "stream" not in exceeded:
+                                exceeded["stream"] = stream_name
+                                exceeded["limit"] = hard_limit
+                                kernel32.TerminateJobObject(h_job, 1)
+                        break
 
-        # Ownership of h_out_r / h_err_r is transferred to reader threads (closed via fdopen)
+        def _feed_stdin(handle: int, data: bytes) -> None:
+            import msvcrt  # type: ignore[import-not-found]
+            fd = msvcrt.open_osfhandle(handle, os.O_WRONLY)
+            with os.fdopen(fd, "wb", closefd=True) as fp:
+                try:
+                    if data:
+                        fp.write(data)
+                        fp.flush()
+                except OSError:
+                    pass
+
+        # Ownership of parent read/write pipe handles is transferred to worker threads (closed via fdopen)
         handles_to_close = []
-        t_out = threading.Thread(target=_drain, args=(int(h_out_r.value), out_chunks), daemon=True)
-        t_err = threading.Thread(target=_drain, args=(int(h_err_r.value), err_chunks), daemon=True)
+        t_out = threading.Thread(
+            target=_drain,
+            args=(int(h_out_r.value), out_chunks, "stdout", max_output_bytes, max_output_bytes),
+            daemon=True,
+        )
+        t_err = threading.Thread(
+            target=_drain,
+            args=(int(h_err_r.value), err_chunks, "stderr", eff_stderr_retain, eff_stderr_hard),
+            daemon=True,
+        )
         t_out.start()
         t_err.start()
+        t_in: threading.Thread | None = None
+        if stdin_bytes is not None:
+            t_in = threading.Thread(
+                target=_feed_stdin,
+                args=(int(h_in_w.value), stdin_bytes),
+                daemon=True,
+            )
+            t_in.start()
 
         if kernel32.ResumeThread(pi.hThread) == 0xFFFFFFFF:
             err = _win_last_error()
@@ -633,21 +697,27 @@ def run_windows_appcontainer_sandboxed(
 
         # 9. Wait for completion under Job Object handle kept alive
         wait_res = kernel32.WaitForSingleObject(pi.hProcess, max(1, int(timeout * 1000)))
-        if wait_res == WAIT_TIMEOUT:
+        if wait_res == WAIT_TIMEOUT and "stream" not in exceeded:
             kernel32.TerminateJobObject(h_job, 1)
             t_out.join(timeout=2)
             t_err.join(timeout=2)
+            if t_in is not None:
+                t_in.join(timeout=1)
             raise TimeoutError(f"Eksekusi sandbox Windows melebihi batas waktu ({timeout}s).")
 
         exit_code = wintypes.DWORD(1)
         kernel32.GetExitCodeProcess(pi.hProcess, ctypes.byref(exit_code))
         t_out.join(timeout=2)
         t_err.join(timeout=2)
+        if t_in is not None:
+            t_in.join(timeout=1)
 
         return {
             "exit_code": int(exit_code.value),
             "stdout": b"".join(out_chunks),
             "stderr": b"".join(err_chunks),
+            "output_limit_exceeded": exceeded.get("stream"),
+            "output_limit_bytes": exceeded.get("limit"),
         }
     finally:
         if attr_initialized and attr_buf is not None:

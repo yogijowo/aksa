@@ -18,11 +18,47 @@ import shutil
 import signal
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 class SandboxUnavailableError(PermissionError):
     """Raised when no OS-enforced sandbox exists or setup fails (fail-closed)."""
+
+
+class SandboxOutputLimitError(RuntimeError):
+    """Raised when a sandboxed child exceeds its streaming stdout/stderr byte cap."""
+
+    def __init__(self, stream: str, limit: int, message: str | None = None) -> None:
+        self.stream = stream
+        self.limit = limit
+        super().__init__(
+            message or f"Output {stream} proses sandbox melebihi batas aman ({limit} bytes); proses dihentikan."
+        )
+
+
+def collect_python_runtime_read_roots(
+    extra_required: list[Path] | None = None,
+) -> tuple[list[Path], list[Path]]:
+    """Collect ``(required_read_roots, optional_read_roots)`` needed to run Python workers cleanly."""
+    engine_root = Path(__file__).resolve().parent.parent.parent
+    prefix_path = Path(sys.prefix)
+    base_prefix_path = Path(sys.base_prefix)
+    exe_dir_path = Path(sys.executable).resolve().parent
+
+    def _is_system_protected_dir(p: Path) -> bool:
+        norm = str(p).replace("\\", "/").lower()
+        return any(tok in norm for tok in ("/program files", "/windows/", ":\\program files", ":\\windows"))
+
+    required_read_roots: list[Path] = [engine_root, *(extra_required or [])]
+    optional_read_roots: list[Path] = []
+    if prefix_path != base_prefix_path and not _is_system_protected_dir(prefix_path):
+        required_read_roots.append(prefix_path)
+    else:
+        optional_read_roots.append(prefix_path)
+    for candidate in (base_prefix_path, exe_dir_path):
+        if candidate not in required_read_roots and candidate not in optional_read_roots:
+            optional_read_roots.append(candidate)
+    return required_read_roots, optional_read_roots
 
 
 def _seatbelt_quote(path: str) -> str:
@@ -94,7 +130,12 @@ def _collect_macos_python_runtime_roots(read_roots: list[Path]) -> tuple[list[Pa
     return exec_literals, subpaths
 
 
-def build_seatbelt_profile(workspace: Path, read_roots: list[Path]) -> str:
+def build_seatbelt_profile(
+    workspace: Path,
+    read_roots: list[Path],
+    *,
+    read_only_workspace: bool = False,
+) -> str:
     """Build a strict macOS Seatbelt least-privilege ``(deny default)`` profile."""
     from app.skills.windows_sandbox import validate_sandbox_read_root
 
@@ -121,6 +162,7 @@ def build_seatbelt_profile(workspace: Path, read_roots: list[Path]) -> str:
             map_rules_list.append(f"    (subpath {_seatbelt_quote(s)})")
     map_rules = "\n".join(map_rules_list)
 
+    write_rules = '    (literal "/dev/null")' if read_only_workspace else f'    (subpath {ws})\n    (literal "/dev/null")'
     return f"""(version 1)
 (deny default)
 (deny network*)
@@ -153,13 +195,18 @@ def build_seatbelt_profile(workspace: Path, read_roots: list[Path]) -> str:
 {read_rules}
 )
 (allow file-write*
-    (subpath {ws})
-    (literal "/dev/null")
+{write_rules}
 )
 """
 
 
-def build_linux_bwrap_args(workspace: Path, read_roots: list[Path], cmd: list[str]) -> list[str]:
+def build_linux_bwrap_args(
+    workspace: Path,
+    read_roots: list[Path],
+    cmd: list[str],
+    *,
+    read_only_workspace: bool = False,
+) -> list[str]:
     """Build hardened bubblewrap namespace arguments avoiding full host root or /usr/local exposure."""
     from app.skills.windows_sandbox import validate_sandbox_read_root
 
@@ -203,10 +250,11 @@ def build_linux_bwrap_args(workspace: Path, read_roots: list[Path], cmd: list[st
             # Skip /usr itself so /usr/local is never implicitly exposed when sys.base_prefix == '/usr'
             continue
         args.extend(["--ro-bind-try", resolved, resolved])
-    # Mount writable workspace BEFORE locking container root `/` read-only (`--remount-ro /`)
-    # so parent directories such as `/tmp` or synthetic `/home` stubs cannot accept outside writes.
+    # Mount workspace (ro when read_only_workspace=True, rw otherwise) BEFORE locking
+    # container root `/` read-only (`--remount-ro /`) so outside dirs like `/tmp` reject writes.
+    ws_bind_flag = "--ro-bind" if read_only_workspace else "--bind"
     args.extend([
-        "--bind", ws, ws,
+        ws_bind_flag, ws, ws,
         "--remount-ro", "/",
         "--chdir", ws,
         "--setenv", "TMPDIR", ws,
@@ -215,16 +263,22 @@ def build_linux_bwrap_args(workspace: Path, read_roots: list[Path], cmd: list[st
     return args
 
 
-def wrap_command(cmd: list[str], workspace: Path, read_roots: list[Path]) -> list[str]:
+def wrap_command(
+    cmd: list[str],
+    workspace: Path,
+    read_roots: list[Path],
+    *,
+    read_only_workspace: bool = False,
+) -> list[str]:
     """Return ``cmd`` wrapped in a CLI OS sandbox (macOS/Linux), or fail closed."""
     if sys.platform == "darwin":
         exe = shutil.which("sandbox-exec") or "/usr/bin/sandbox-exec"
         if not Path(exe).exists():
             raise SandboxUnavailableError("sandbox-exec tidak tersedia; eksekusi skrip ditolak (fail-closed).")
-        return [exe, "-p", build_seatbelt_profile(workspace, read_roots), *cmd]
+        return [exe, "-p", build_seatbelt_profile(workspace, read_roots, read_only_workspace=read_only_workspace), *cmd]
 
     if sys.platform.startswith("linux"):
-        return build_linux_bwrap_args(workspace, read_roots, cmd)
+        return build_linux_bwrap_args(workspace, read_roots, cmd, read_only_workspace=read_only_workspace)
 
     if sys.platform == "win32":
         # Windows does not use a CLI command wrapper; callers must use execute_in_os_sandbox()
@@ -239,6 +293,50 @@ def wrap_command(cmd: list[str], workspace: Path, read_roots: list[Path]) -> lis
     )
 
 
+def _kill_posix_process_tree(proc: asyncio.subprocess.Process) -> None:
+    try:
+        if proc.pid:
+            pgid = os.getpgid(proc.pid)
+            os.killpg(pgid, signal.SIGKILL)
+            return
+    except Exception:
+        pass
+    try:
+        proc.kill()
+    except Exception:
+        pass
+
+
+async def _read_bounded_stream(
+    stream: asyncio.StreamReader | None,
+    stream_name: str,
+    *,
+    retain_limit: int,
+    hard_limit: int | None,
+    abort_on_exceed: bool,
+    on_exceed: Callable[[str, int], None],
+) -> bytes:
+    """Drain an asyncio pipe in bounded 8 KB chunks, aborting immediately on hard_limit."""
+    if stream is None:
+        return b""
+    chunks: list[bytes] = []
+    kept = 0
+    total = 0
+    while True:
+        chunk = await stream.read(8192)
+        if not chunk:
+            break
+        total += len(chunk)
+        if kept < retain_limit:
+            slice_b = chunk[: retain_limit - kept]
+            chunks.append(slice_b)
+            kept += len(slice_b)
+        if abort_on_exceed and hard_limit is not None and total > hard_limit:
+            on_exceed(stream_name, hard_limit)
+            break
+    return b"".join(chunks)
+
+
 async def execute_in_os_sandbox(
     cmd: list[str],
     cwd: Path,
@@ -250,8 +348,20 @@ async def execute_in_os_sandbox(
     *,
     required_read_roots: list[Path] | None = None,
     optional_read_roots: list[Path] | None = None,
+    stdin_bytes: bytes | None = None,
+    read_only_workspace: bool = False,
+    max_stderr_bytes: int | None = None,
+    stderr_retain_bytes: int | None = None,
+    abort_on_output_limit: bool = False,
 ) -> dict[str, Any]:
-    """Unified OS-enforced sandboxed subprocess execution across macOS, Linux, and Windows."""
+    """Unified OS-enforced sandboxed subprocess execution with streaming bounded I/O."""
+    eff_stderr_hard = max_output_bytes if max_stderr_bytes is None else max(1, int(max_stderr_bytes))
+    eff_stderr_retain = (
+        eff_stderr_hard
+        if stderr_retain_bytes is None
+        else min(eff_stderr_hard, max(0, int(stderr_retain_bytes)))
+    )
+
     if sys.platform == "win32":
         from app.skills.windows_sandbox import run_windows_appcontainer_sandboxed
         raw = await asyncio.to_thread(
@@ -265,7 +375,17 @@ async def execute_in_os_sandbox(
             max_output_bytes,
             required_read_roots=required_read_roots,
             optional_read_roots=optional_read_roots,
+            stdin_bytes=stdin_bytes,
+            read_only_workspace=read_only_workspace,
+            max_stderr_bytes=eff_stderr_hard,
+            stderr_retain_bytes=eff_stderr_retain,
+            abort_on_output_limit=abort_on_output_limit,
         )
+        if raw.get("output_limit_exceeded"):
+            raise SandboxOutputLimitError(
+                str(raw["output_limit_exceeded"]),
+                int(raw.get("output_limit_bytes") or max_output_bytes),
+            )
         return {
             "exit_code": raw["exit_code"],
             "stdout": raw["stdout"].decode("utf-8", errors="replace"),
@@ -277,33 +397,90 @@ async def execute_in_os_sandbox(
         *(required_read_roots or []),
         *(optional_read_roots or []),
     ]
-    wrapped_cmd = wrap_command(cmd, workspace, combined_roots)
+    wrapped_cmd = wrap_command(
+        cmd,
+        workspace,
+        combined_roots,
+        read_only_workspace=read_only_workspace,
+    )
     proc = await asyncio.create_subprocess_exec(
         *wrapped_cmd,
         cwd=str(cwd),
         env=env,
+        stdin=asyncio.subprocess.PIPE if stdin_bytes is not None else asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
     )
-    try:
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-        return {
-            "exit_code": proc.returncode,
-            "stdout": stdout[:max_output_bytes].decode("utf-8", errors="replace"),
-            "stderr": stderr[:max_output_bytes].decode("utf-8", errors="replace"),
-        }
-    except asyncio.TimeoutError:
+
+    exceeded: dict[str, Any] = {}
+
+    def _on_exceed(stream_name: str, limit: int) -> None:
+        if "stream" not in exceeded:
+            exceeded["stream"] = stream_name
+            exceeded["limit"] = limit
+            _kill_posix_process_tree(proc)
+
+    async def _feed_stdin() -> None:
+        if proc.stdin is None:
+            return
         try:
-            pgid = os.getpgid(proc.pid)
-            os.killpg(pgid, signal.SIGKILL)
-        except Exception:
+            if stdin_bytes:
+                proc.stdin.write(stdin_bytes)
+                await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
+        finally:
             try:
-                proc.kill()
+                proc.stdin.close()
             except Exception:
                 pass
+
+    t_in = asyncio.create_task(_feed_stdin())
+    t_out = asyncio.create_task(
+        _read_bounded_stream(
+            proc.stdout,
+            "stdout",
+            retain_limit=max_output_bytes,
+            hard_limit=max_output_bytes,
+            abort_on_exceed=abort_on_output_limit,
+            on_exceed=_on_exceed,
+        )
+    )
+    t_err = asyncio.create_task(
+        _read_bounded_stream(
+            proc.stderr,
+            "stderr",
+            retain_limit=eff_stderr_retain,
+            hard_limit=eff_stderr_hard,
+            abort_on_exceed=abort_on_output_limit,
+            on_exceed=_on_exceed,
+        )
+    )
+    t_wait = asyncio.create_task(proc.wait())
+
+    try:
+        _, stdout_b, stderr_b, exit_code = await asyncio.wait_for(
+            asyncio.gather(t_in, t_out, t_err, t_wait),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        _kill_posix_process_tree(proc)
+        for task in (t_in, t_out, t_err, t_wait):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(t_in, t_out, t_err, t_wait, return_exceptions=True)
         try:
             await proc.wait()
         except Exception:
             pass
         raise TimeoutError(f"Eksekusi skrip sandbox melebihi batas waktu ({timeout}s).")
+
+    if exceeded.get("stream"):
+        raise SandboxOutputLimitError(str(exceeded["stream"]), int(exceeded["limit"]))
+
+    return {
+        "exit_code": int(exit_code or 0) if exit_code is not None else 0,
+        "stdout": stdout_b.decode("utf-8", errors="replace"),
+        "stderr": stderr_b.decode("utf-8", errors="replace"),
+    }

@@ -1262,25 +1262,13 @@ class AgentSkillsManager:
 
         # AKSA-SEC-003-R5: OS-enforced sandbox is the security boundary across macOS, Linux, and Windows.
         # Any sandbox setup failure aborts fail-closed without executing untrusted code.
-        from app.skills.os_sandbox import execute_in_os_sandbox
-        engine_root = Path(__file__).resolve().parent.parent.parent
-        prefix_path = Path(sys.prefix)
-        base_prefix_path = Path(sys.base_prefix)
-        exe_dir_path = Path(sys.executable).resolve().parent
-
-        def _is_system_protected_dir(p: Path) -> bool:
-            norm = str(p).replace("\\", "/").lower()
-            return any(tok in norm for tok in ("/program files", "/windows/", ":\\program files", ":\\windows"))
-
-        required_read_roots: list[Path] = [engine_root, script_file.parent]
-        optional_read_roots: list[Path] = []
-        if prefix_path != base_prefix_path and not _is_system_protected_dir(prefix_path):
-            required_read_roots.append(prefix_path)
-        else:
-            optional_read_roots.append(prefix_path)
-        for candidate in (base_prefix_path, exe_dir_path):
-            if candidate not in required_read_roots and candidate not in optional_read_roots:
-                optional_read_roots.append(candidate)
+        from app.skills.os_sandbox import (
+            collect_python_runtime_read_roots,
+            execute_in_os_sandbox,
+        )
+        required_read_roots, optional_read_roots = collect_python_runtime_read_roots(
+            extra_required=[script_file.parent],
+        )
 
         try:
             exec_res = await execute_in_os_sandbox(

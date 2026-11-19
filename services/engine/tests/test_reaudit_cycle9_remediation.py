@@ -195,15 +195,36 @@ def test_p2_02_extended_supported_formulas_evaluate_accurately(tmp_path: Path):
 
 @pytest.mark.asyncio
 async def test_p2_03_worker_subprocess_kills_stalled_parser_process(monkeypatch, tmp_path: Path):
-    """When parser stalls beyond timeout, verify_artifact_in_worker kills child PID immediately."""
+    """When parser stalls beyond timeout, verify_artifact_in_worker kills child process immediately."""
     art = tmp_path / "sample.txt"
     art.write_text("Valid document text content.", encoding="utf-8")
 
-    # Verify normal execution succeeds via real isolated subprocess
+    # Verify normal execution succeeds via real OS-sandboxed subprocess
     ok_real, detail_real = await verify_artifact_in_worker(art, workspace=tmp_path, timeout=8.0)
     assert ok_real is True, detail_real
 
-    # Spawn a real sleeping child process through create_subprocess_exec spy to assert hard OS kill on timeout
+    if sys.platform == "win32":
+        import app.skills.windows_sandbox as win_sb_mod
+
+        orig_win_run = win_sb_mod.run_windows_appcontainer_sandboxed
+        invoked: list[bool] = []
+
+        def slow_win_run(cmd, *args, **kwargs):
+            invoked.append(True)
+            return orig_win_run(
+                [sys.executable, "-c", "import time; time.sleep(30)"],
+                *args,
+                **kwargs,
+            )
+
+        monkeypatch.setattr(win_sb_mod, "run_windows_appcontainer_sandboxed", slow_win_run)
+        ok_to, msg_to = await verify_artifact_in_worker(art, workspace=tmp_path, timeout=0.25)
+        assert ok_to is False
+        assert "timeout" in msg_to.lower() or "dihentikan" in msg_to.lower()
+        assert invoked == [True]
+        return
+
+    # POSIX: spy on create_subprocess_exec to assert hard SIGKILL + reap on timeout
     spawned_pids: list[int] = []
     orig_exec = asyncio.create_subprocess_exec
 
@@ -227,9 +248,8 @@ async def test_p2_03_worker_subprocess_kills_stalled_parser_process(monkeypatch,
     assert len(spawned_pids) == 1
 
     # Confirm child process is genuinely dead (reaped, no orphaned background thread lingering)
-    if sys.platform != "win32":
-        with pytest.raises(ProcessLookupError):
-            os.kill(spawned_pids[0], 0)
+    with pytest.raises(ProcessLookupError):
+        os.kill(spawned_pids[0], 0)
 
 
 # ===========================================================================

@@ -1,27 +1,65 @@
-"""Killable Subprocess Worker for Bounded Artifact Postcondition Verification (Cycle 9 P2-03).
+"""OS-Sandboxed & Streaming-Bounded Artifact Verifier Worker (Cycle 9 P2-03 & Cycle 10 P2-01/P2-02).
 
-Executes document parsing and postcondition validation in an isolated child process so
-a hard timeout terminates the parser via SIGKILL / TerminateProcess rather than leaving
-an unkillable background thread running in the FastAPI/orchestrator process.
+Executes document parsing and postcondition validation inside a kernel-enforced OS sandbox
+(macOS Seatbelt ``(deny default)``, Linux Bubblewrap namespaces with ``--ro-bind`` + ``--remount-ro /``,
+and Windows zero-capability AppContainer + Job Object):
+- Read-only workspace mount/ACL (zero filesystem write capability outside ``/dev/null``).
+- Network completely denied at kernel level.
+- OS resource caps (``RLIMIT_NPROC=0``, ``RLIMIT_FSIZE=0``, ``RLIMIT_CPU``, ``RLIMIT_NOFILE``,
+  ``RLIMIT_AS``/``RLIMIT_DATA``, or Windows Job Object ``ActiveProcessLimit=1`` & ``512 MB``).
+- Streaming chunked readers with hard caps on BOTH ``stdout`` and ``stderr`` that kill the
+  process group / Job Object immediately upon limit breach before unbounded buffering occurs.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
-import signal
 import sys
 from pathlib import Path
 from typing import Any
 
 MAX_WORKER_STDIN_BYTES = 512 * 1024
 MAX_WORKER_STDOUT_BYTES = 512 * 1024
+MAX_WORKER_STDERR_BYTES = 64 * 1024
+MAX_WORKER_STDERR_SNIPPET_BYTES = 2048
+WORKER_MEMORY_LIMIT_BYTES = 512 * 1024 * 1024
+
+
+def _apply_worker_resource_limits(timeout_sec: float = 10.0) -> None:
+    """Apply defense-in-depth POSIX OS resource limits inside the verifier subprocess."""
+    if sys.platform == "win32":
+        return
+    try:
+        import resource
+    except Exception:
+        return
+
+    def _clamp_set(rsrc_name: str, target: int) -> bool:
+        rsrc = getattr(resource, rsrc_name, None)
+        if rsrc is None:
+            return False
+        try:
+            cur_soft, cur_hard = resource.getrlimit(rsrc)
+            eff = target if cur_hard == resource.RLIM_INFINITY else min(target, cur_hard)
+            eff_soft = eff if cur_soft == resource.RLIM_INFINITY else min(eff, cur_soft)
+            resource.setrlimit(rsrc, (eff_soft, eff))
+            return True
+        except Exception:
+            return False
+
+    _clamp_set("RLIMIT_NPROC", 0)
+    _clamp_set("RLIMIT_FSIZE", 0)
+    _clamp_set("RLIMIT_CPU", max(5, int(timeout_sec) + 2))
+    _clamp_set("RLIMIT_NOFILE", 256)
+    if not _clamp_set("RLIMIT_AS", WORKER_MEMORY_LIMIT_BYTES):
+        _clamp_set("RLIMIT_DATA", WORKER_MEMORY_LIMIT_BYTES)
 
 
 def _verify_sync_in_subprocess(payload: dict[str, Any]) -> dict[str, Any]:
-    from app.core.orchestrator import (
+    from app.core.artifact_verifier import (
         MAX_ARTIFACT_VERIFY_BYTES,
+        check_no_symlink_components,
         get_artifact_postcondition_breakdown,
         sanitize_verifier_schema,
     )
@@ -32,18 +70,20 @@ def _verify_sync_in_subprocess(payload: dict[str, Any]) -> dict[str, Any]:
         return {"ok": False, "detail": "Path artefak worker kosong.", "breakdown": {}}
 
     art_path = Path(art_raw)
-    if ws_raw:
-        ws_real = Path(ws_raw).resolve(strict=False)
-        try:
-            resolved_art = art_path.resolve(strict=False)
-        except Exception as exc:
-            return {"ok": False, "detail": f"Gagal me-resolve path artefak: {exc}", "breakdown": {}}
-        if art_path.is_symlink() or not resolved_art.is_relative_to(ws_real):
-            return {"ok": False, "detail": "Artefak di luar workspace ditolak di worker verifikasi.", "breakdown": {}}
+    ws_path: Path | None = Path(ws_raw) if ws_raw else None
+    sym_ok, sym_err = check_no_symlink_components(art_path, workspace=ws_path)
+    if not sym_ok:
+        return {"ok": False, "detail": sym_err, "breakdown": {}}
 
     schema = sanitize_verifier_schema(payload.get("expected_schema"))
-    schema["max_bytes"] = MAX_ARTIFACT_VERIFY_BYTES if "expected_schema" not in payload else schema["max_bytes"]
-    breakdown = get_artifact_postcondition_breakdown(art_path, expected_schema=schema)
+    if "expected_schema" not in payload:
+        schema["max_bytes"] = MAX_ARTIFACT_VERIFY_BYTES
+
+    breakdown = get_artifact_postcondition_breakdown(
+        art_path,
+        expected_schema=schema,
+        workspace=ws_path,
+    )
     ok = bool(
         breakdown.get("file_created")
         and breakdown.get("format_valid")
@@ -55,20 +95,6 @@ def _verify_sync_in_subprocess(payload: dict[str, Any]) -> dict[str, Any]:
     return {"ok": ok, "detail": str(breakdown.get("detail", "")), "breakdown": breakdown}
 
 
-def _kill_process_tree(proc: asyncio.subprocess.Process) -> None:
-    try:
-        if sys.platform != "win32" and proc.pid:
-            pgid = os.getpgid(proc.pid)
-            os.killpg(pgid, signal.SIGKILL)
-            return
-    except Exception:
-        pass
-    try:
-        proc.kill()
-    except Exception:
-        pass
-
-
 async def verify_artifact_in_worker(
     art_path: Path,
     *,
@@ -76,7 +102,53 @@ async def verify_artifact_in_worker(
     workspace: Path | None = None,
     timeout: float = 10.0,
 ) -> tuple[bool, str]:
-    """Run ``get_artifact_postcondition_breakdown`` inside a killable OS child process."""
+    """Run ``get_artifact_postcondition_breakdown`` inside a read-only, no-net OS sandbox worker."""
+    from app.core.artifact_verifier import check_no_symlink_components
+    from app.skills.os_sandbox import (
+        SandboxOutputLimitError,
+        SandboxUnavailableError,
+        collect_python_runtime_read_roots,
+        execute_in_os_sandbox,
+    )
+    from app.skills.windows_sandbox import validate_sandbox_read_root
+
+    if not str(art_path or "").strip():
+        return False, "Path artefak verifikasi kosong."
+
+    if workspace is not None:
+        if workspace.is_symlink():
+            return False, "Workspace verifikasi berupa symlink ditolak (fail-closed)."
+        if not workspace.exists() or not workspace.is_dir():
+            return False, f"Workspace verifikasi tidak valid: {workspace}"
+        ws_real = workspace.resolve()
+    else:
+        if art_path.is_symlink():
+            return False, f"Artefak symlink ditolak oleh gerbang verifikasi: {art_path}"
+        ws_real = art_path.resolve(strict=False).parent
+        if not ws_real.exists() or not ws_real.is_dir():
+            return False, f"File tidak ditemukan: {art_path}"
+
+    try:
+        ws_real = validate_sandbox_read_root(ws_real, allow_system_usr=False)
+    except PermissionError as exc:
+        return False, f"Sandbox OS verifikasi menolak workspace terlalu luas (fail-closed): {exc}"
+
+    sym_ok, sym_err = check_no_symlink_components(art_path, workspace=ws_real)
+    if not sym_ok:
+        return False, sym_err
+
+    canonical_art = art_path.resolve(strict=False)
+    request_bytes = json.dumps(
+        {
+            "artifact_path": str(canonical_art),
+            "workspace": str(ws_real),
+            "expected_schema": expected_schema or {},
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    if len(request_bytes) > MAX_WORKER_STDIN_BYTES:
+        return False, "Payload verifikasi artefak melebihi batas stdin aman."
+
     engine_root = str(Path(__file__).resolve().parent.parent.parent)
     allow_env_keys = (
         "PATH",
@@ -85,62 +157,76 @@ async def verify_artifact_in_worker(
         "COMSPEC",
         "PATHEXT",
         "VIRTUAL_ENV",
-        "HOME",
         "TMPDIR",
         "TEMP",
         "TMP",
     )
     safe_env = {k: v for k, v in os.environ.items() if k in allow_env_keys}
     safe_env["PYTHONPATH"] = engine_root
+    safe_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    safe_env["PYTHONNOUSERSITE"] = "1"
+    safe_env["AKSA_VERIFIER_TIMEOUT"] = str(float(timeout))
+    if sys.platform != "win32":
+        safe_env["HOME"] = str(ws_real)
+        safe_env["TMPDIR"] = str(ws_real)
 
-    request_bytes = json.dumps(
-        {
-            "artifact_path": str(art_path),
-            "workspace": str(workspace) if workspace is not None else "",
-            "expected_schema": expected_schema or {},
-        },
-        ensure_ascii=False,
-    ).encode("utf-8")
-
-    proc = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-m",
-        "app.core.artifact_verifier_worker",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=safe_env,
-        cwd=engine_root,
-        start_new_session=(sys.platform != "win32"),
-    )
+    req_roots, opt_roots = collect_python_runtime_read_roots()
 
     try:
-        stdout_b, stderr_b = await asyncio.wait_for(
-            proc.communicate(input=request_bytes),
+        res = await execute_in_os_sandbox(
+            cmd=[sys.executable, "-B", "-m", "app.core.artifact_verifier_worker"],
+            cwd=ws_real,
+            env=safe_env,
+            workspace=ws_real,
+            required_read_roots=req_roots,
+            optional_read_roots=opt_roots,
+            stdin_bytes=request_bytes,
+            read_only_workspace=True,
             timeout=timeout,
+            max_output_bytes=MAX_WORKER_STDOUT_BYTES,
+            max_stderr_bytes=MAX_WORKER_STDERR_BYTES,
+            stderr_retain_bytes=MAX_WORKER_STDERR_SNIPPET_BYTES,
+            abort_on_output_limit=True,
         )
-    except (asyncio.TimeoutError, TimeoutError):
-        _kill_process_tree(proc)
-        try:
-            await proc.wait()
-        except Exception:
-            pass
+    except TimeoutError:
         return False, f"Verifikasi artefak '{art_path.name}' dihentikan paksa (timeout {timeout}s)."
+    except SandboxOutputLimitError as exc:
+        return (
+            False,
+            f"Output {exc.stream} worker verifikasi melebihi batas ukuran aman ({exc.limit} bytes); proses dihentikan.",
+        )
+    except SandboxUnavailableError as exc:
+        return False, f"Sandbox OS verifikasi tidak tersedia (fail-closed): {exc}"
 
-    if len(stdout_b) > MAX_WORKER_STDOUT_BYTES:
-        return False, "Output worker verifikasi melebihi batas ukuran aman."
-    if proc.returncode != 0:
-        err_snip = stderr_b[:512].decode("utf-8", errors="replace").strip()
-        return False, f"Worker verifikasi artefak gagal (exit={proc.returncode}): {err_snip}"
+    exit_code = int(res.get("exit_code", 1))
+    stdout_str = str(res.get("stdout", "") or "")
+    stderr_str = str(res.get("stderr", "") or "")
+
+    if exit_code != 0:
+        err_snip = stderr_str[:MAX_WORKER_STDERR_SNIPPET_BYTES].strip()
+        return False, f"Worker verifikasi artefak gagal (exit={exit_code}): {err_snip}"
 
     try:
-        parsed = json.loads(stdout_b.decode("utf-8"))
+        parsed = json.loads(stdout_str)
         return bool(parsed.get("ok")), str(parsed.get("detail", ""))
     except Exception as exc:
         return False, f"Respons worker verifikasi tidak valid: {exc}"
 
 
 if __name__ == "__main__":
+    import mimetypes
+
+    # Avoid probing /etc/apache2/mime.types inside strict Seatbelt/bwrap sandboxes
+    mimetypes.knownfiles = []
+    mimetypes.init()
+
+    cpu_hint = 10.0
+    try:
+        cpu_hint = float(os.environ.get("AKSA_VERIFIER_TIMEOUT", "10.0"))
+    except (TypeError, ValueError):
+        pass
+    _apply_worker_resource_limits(timeout_sec=cpu_hint)
+
     raw = sys.stdin.buffer.read(MAX_WORKER_STDIN_BYTES + 1)
     if len(raw) > MAX_WORKER_STDIN_BYTES:
         sys.stdout.write(json.dumps({"ok": False, "detail": "Payload worker melebihi batas.", "breakdown": {}}))
@@ -152,4 +238,3 @@ if __name__ == "__main__":
         out = {"ok": False, "detail": f"Kesalahan internal worker verifikasi: {exc}", "breakdown": {}}
     sys.stdout.write(json.dumps(out, ensure_ascii=False))
     sys.stdout.flush()
-
