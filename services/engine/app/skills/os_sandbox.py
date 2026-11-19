@@ -178,7 +178,6 @@ def build_linux_bwrap_args(workspace: Path, read_roots: list[Path], cmd: list[st
         "--hostname", "aksa-sandbox",
         "--dev", "/dev",
         "--proc", "/proc",
-        "--tmpfs", "/tmp",
     ]
     # Expose only minimal scoped system runtime subpaths read-only
     # (never expose /, /usr/local, /home, /root, /run, /var, /sys, or /etc secrets)
@@ -204,7 +203,15 @@ def build_linux_bwrap_args(workspace: Path, read_roots: list[Path], cmd: list[st
             # Skip /usr itself so /usr/local is never implicitly exposed when sys.base_prefix == '/usr'
             continue
         args.extend(["--ro-bind-try", resolved, resolved])
-    args.extend(["--bind", ws, ws, "--chdir", ws, *cmd])
+    # Mount writable workspace BEFORE locking container root `/` read-only (`--remount-ro /`)
+    # so parent directories such as `/tmp` or synthetic `/home` stubs cannot accept outside writes.
+    args.extend([
+        "--bind", ws, ws,
+        "--remount-ro", "/",
+        "--chdir", ws,
+        "--setenv", "TMPDIR", ws,
+        *cmd,
+    ])
     return args
 
 

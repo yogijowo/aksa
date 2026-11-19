@@ -643,6 +643,8 @@ def test_p2_04_linux_bwrap_excludes_broad_usr_and_usr_local(monkeypatch, tmp_pat
     assert "/home" not in binds
     assert "/etc/ssh" not in binds
     assert "--hostname" in args and "aksa-sandbox" in args
+    assert "--tmpfs" not in args
+    assert "--remount-ro" in args and "/" in args
 
 
 @linux_bwrap_only

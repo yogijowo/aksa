@@ -256,6 +256,8 @@ async def test_real_linux_bwrap_isolates_home_and_network(tmp_path: Path):
     script = ws / "linux_probe.py"
     script.write_text(
         f"import os, socket\n"
+        f"open('{ws}/inside_ok.txt', 'w').write('ok')\n"
+        f"print('WS_WRITE OK')\n"
         f"for label, fn in [('NET', lambda: socket.socket().connect(('1.1.1.1', 80))), "
         f"('WRITE', lambda: open('{outside}', 'w').write('x')), "
         f"('HOME', lambda: os.listdir('/home'))]:\n"
@@ -270,6 +272,7 @@ async def test_real_linux_bwrap_isolates_home_and_network(tmp_path: Path):
         workspace=ws,
         read_roots=[ENGINE_ROOT, Path(sys.prefix), Path(sys.base_prefix), ws],
     )
+    assert "WS_WRITE OK" in res["stdout"]
     assert "NET DENIED" in res["stdout"]
     assert "WRITE DENIED" in res["stdout"]
     assert not outside.exists()
