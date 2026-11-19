@@ -209,13 +209,21 @@ def _store(tmp_path: Path):
 
 def test_trust_store_persist_failure_fails_closed_and_rolls_back(tmp_path: Path):
     root, _, store = _store(tmp_path)
-    (tmp_path / "trust").mkdir()
-    (tmp_path / "trust").chmod(0o500)  # read-only dir -> write fails
+    trust_dir = tmp_path / "trust"
+    trust_dir.mkdir()
+    blocker_dir = trust_dir / "t.json.tmp"
+    if sys.platform == "win32":
+        blocker_dir.mkdir()
+    else:
+        trust_dir.chmod(0o500)  # read-only dir -> write fails
     try:
         with pytest.raises(Exception):
             _enroll(store, root)
     finally:
-        (tmp_path / "trust").chmod(0o700)
+        if blocker_dir.exists() and blocker_dir.is_dir():
+            blocker_dir.rmdir()
+        if sys.platform != "win32":
+            trust_dir.chmod(0o700)
     assert "pub" not in store._trusted_keys
     assert store._enrollment_audit_trail == []
 
@@ -224,7 +232,8 @@ def test_trust_store_file_is_0600_and_checksummed(tmp_path: Path):
     root, _, store = _store(tmp_path)
     _enroll(store, root)
     f = tmp_path / "trust" / "t.json"
-    assert (f.stat().st_mode & 0o777) == 0o600
+    if sys.platform != "win32":
+        assert (f.stat().st_mode & 0o777) == 0o600
     assert "integrity_sha256" in json.loads(f.read_text())
 
 

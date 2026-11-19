@@ -59,8 +59,12 @@ def _dpapi_protect(data: bytes) -> bytes | None:
 
         crypt32 = ctypes.windll.crypt32
         kernel32 = ctypes.windll.kernel32
+        if isinstance(ctypes.WinDLL, type) and isinstance(kernel32, ctypes.WinDLL):
+            kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+            kernel32.LocalFree.restype = ctypes.c_void_p
 
-        blob_in = DATA_BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_byte)))
+        raw_buf = ctypes.create_string_buffer(data)
+        blob_in = DATA_BLOB(len(data), ctypes.cast(raw_buf, ctypes.POINTER(ctypes.c_byte)))
         blob_out = DATA_BLOB()
 
         # CRYPTPROTECT_UI_FORBIDDEN = 0x1
@@ -86,8 +90,12 @@ def _dpapi_unprotect(data: bytes) -> bytes | None:
 
         crypt32 = ctypes.windll.crypt32
         kernel32 = ctypes.windll.kernel32
+        if isinstance(ctypes.WinDLL, type) and isinstance(kernel32, ctypes.WinDLL):
+            kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+            kernel32.LocalFree.restype = ctypes.c_void_p
 
-        blob_in = DATA_BLOB(len(data), ctypes.cast(ctypes.create_string_buffer(data), ctypes.POINTER(ctypes.c_byte)))
+        raw_buf = ctypes.create_string_buffer(data)
+        blob_in = DATA_BLOB(len(data), ctypes.cast(raw_buf, ctypes.POINTER(ctypes.c_byte)))
         blob_out = DATA_BLOB()
 
         if crypt32.CryptUnprotectData(ctypes.byref(blob_in), None, None, None, None, 1, ctypes.byref(blob_out)):
@@ -383,7 +391,11 @@ class CredentialVault:
                 pass
 
         # 2. Migrate metadata-derived AES-GCM fallback vault to OS Keyring / CSPRNG key (P1.1)
-        if self.fallback_vault_file.exists() and not self.os_key_file.exists():
+        if (
+            self.fallback_vault_file.exists()
+            and not self.os_key_file.exists()
+            and not self.dpapi_key_file.exists()
+        ):
             try:
                 legacy_meta_key = _derive_legacy_metadata_key()
                 fallback_entries = self._load_fallback_entries()
@@ -427,6 +439,8 @@ class CredentialVault:
             raise ValueError("Secret tidak boleh kosong.")
 
         self._migrate_all_legacy_vaults_if_needed()
+        if credential_ref in self._memory_cache:
+            return self._memory_cache[credential_ref]
         cred_ref = existing_ref or f"cred_{provider}_{uuid.uuid4().hex[:10]}"
 
         # 1. Attempt OS Keyring storage first
@@ -471,6 +485,8 @@ class CredentialVault:
             return self._memory_cache[credential_ref]
 
         self._migrate_all_legacy_vaults_if_needed()
+        if credential_ref in self._memory_cache:
+            return self._memory_cache[credential_ref]
 
         # 1. Check OS Keyring
         val = self._get_from_keyring(credential_ref)

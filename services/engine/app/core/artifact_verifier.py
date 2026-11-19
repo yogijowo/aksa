@@ -136,23 +136,77 @@ def _win32_verify_open_handle_path(fd: int, anchor_dir: Path, rel_parts: tuple[s
     if sys.platform != "win32":
         return True
     try:
+        from ctypes import wintypes
         import msvcrt  # type: ignore[import-not-found]
+
+        class BY_HANDLE_FILE_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("dwFileAttributes", wintypes.DWORD),
+                ("ftCreationTime", wintypes.DWORD * 2),
+                ("ftLastAccessTime", wintypes.DWORD * 2),
+                ("ftLastWriteTime", wintypes.DWORD * 2),
+                ("dwVolumeSerialNumber", wintypes.DWORD),
+                ("nFileSizeHigh", wintypes.DWORD),
+                ("nFileSizeLow", wintypes.DWORD),
+                ("nNumberOfLinks", wintypes.DWORD),
+                ("nFileIndexHigh", wintypes.DWORD),
+                ("nFileIndexLow", wintypes.DWORD),
+            ]
 
         h_file = msvcrt.get_osfhandle(fd)
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetFileInformationByHandle.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(BY_HANDLE_FILE_INFORMATION),
+        ]
+        kernel32.GetFileInformationByHandle.restype = wintypes.BOOL
+        kernel32.GetFinalPathNameByHandleW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.LPWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+        ]
+        kernel32.GetFinalPathNameByHandleW.restype = wintypes.DWORD
+
+        info = BY_HANDLE_FILE_INFORMATION()
+        if kernel32.GetFileInformationByHandle(wintypes.HANDLE(h_file), ctypes.byref(info)):
+            # FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+            if info.dwFileAttributes & 0x400:
+                return False
+
         buf = ctypes.create_unicode_buffer(32768)
-        length = kernel32.GetFinalPathNameByHandleW(ctypes.c_void_p(h_file), buf, len(buf), 0)
+        # Try FILE_NAME_NORMALIZED (0x0) first; fall back to FILE_NAME_OPENED (0x8) inside
+        # zero-capability AppContainer where ancestor directories (C:\Users\<user>) deny traversal.
+        length = kernel32.GetFinalPathNameByHandleW(wintypes.HANDLE(h_file), buf, len(buf), 0x0)
+        if not length or length >= len(buf):
+            length = kernel32.GetFinalPathNameByHandleW(wintypes.HANDLE(h_file), buf, len(buf), 0x8)
         if not length or length >= len(buf):
             return False
+
         final_raw = buf.value
         if final_raw.startswith("\\\\?\\UNC\\"):
             final_raw = "\\\\" + final_raw[8:]
         elif final_raw.startswith("\\\\?\\"):
             final_raw = final_raw[4:]
+        elif final_raw.startswith("\\Device\\"):
+            # Device-namespace path from FILE_NAME_OPENED when volume DOS letter is stripped:
+            # verify suffix matches anchor_dir relative structure and is not a reparse point.
+            rel_suffix = os.path.normcase(os.path.normpath(str(Path(*rel_parts))))
+            return os.path.normcase(os.path.normpath(final_raw)).endswith(rel_suffix)
+
+        try:
+            anchor_resolved = anchor_dir.resolve()
+        except OSError:
+            anchor_resolved = Path(os.path.abspath(str(anchor_dir)))
         final_norm = os.path.normcase(os.path.normpath(final_raw))
-        expected_target = os.path.normcase(os.path.normpath(str(anchor_dir.resolve() / Path(*rel_parts))))
-        anchor_norm = os.path.normcase(os.path.normpath(str(anchor_dir.resolve())))
-        return final_norm == expected_target and Path(final_norm).is_relative_to(Path(anchor_norm))
+        expected_target = os.path.normcase(os.path.normpath(str(anchor_resolved / Path(*rel_parts))))
+        anchor_norm = os.path.normcase(os.path.normpath(str(anchor_resolved)))
+        if final_norm == expected_target and Path(final_norm).is_relative_to(Path(anchor_norm)):
+            return True
+        # Handle 8.3 short-name vs long-name differences inside %TEMP% under AppContainer
+        raw_expected = os.path.normcase(os.path.normpath(str(Path(os.path.abspath(str(anchor_dir))) / Path(*rel_parts))))
+        raw_anchor = os.path.normcase(os.path.normpath(os.path.abspath(str(anchor_dir))))
+        return final_norm == raw_expected and Path(final_norm).is_relative_to(Path(raw_anchor))
     except Exception:
         return False
 

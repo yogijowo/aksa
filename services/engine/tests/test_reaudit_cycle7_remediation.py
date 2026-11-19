@@ -198,10 +198,13 @@ async def test_p1_01_real_windows_child_cannot_inherit_unrelated_parent_handle(t
         parent_handle = msvcrt.get_osfhandle(fd)
         probe = ws / "check_handle.py"
         probe.write_text(
-            "import ctypes, sys\n"
+            "import ctypes\n"
             f"h = {int(parent_handle)}\n"
-            "res = ctypes.windll.kernel32.GetFileSize(ctypes.c_void_p(h), None)\n"
-            "err = ctypes.windll.kernel32.GetLastError()\n"
+            "k32 = ctypes.WinDLL('kernel32', use_last_error=True)\n"
+            "k32.GetFileSize.argtypes = [ctypes.c_void_p, ctypes.c_void_p]\n"
+            "k32.GetFileSize.restype = ctypes.c_uint32\n"
+            "res = k32.GetFileSize(ctypes.c_void_p(h), None)\n"
+            "err = ctypes.get_last_error()\n"
             "print('INHERITED' if res != 0xFFFFFFFF else f'BLOCKED:{err}')\n",
             encoding="utf-8",
         )
