@@ -84,6 +84,7 @@ except PermissionError as exc:
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert res.returncode == 13
     assert "di luar folder kerja dilarang" in res.stderr
@@ -126,6 +127,7 @@ except PermissionError as exc:
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert res.returncode == 13
     assert not outside_file.exists()
@@ -168,6 +170,7 @@ except PermissionError as exc:
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert res.returncode == 13
     assert not outside_file.exists()
@@ -212,6 +215,7 @@ except PermissionError as exc:
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert res.returncode == 13
     assert not outside_target.exists()
@@ -254,6 +258,7 @@ except PermissionError as exc:
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert res.returncode == 13
     assert "dilarang oleh Sandbox AKSA" in res.stderr or "unavailable" in res.stderr

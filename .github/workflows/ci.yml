@@ -55,7 +55,8 @@ jobs:
         shell: bash
         run: |
           mkdir -p ../../build
-          python -m pytest tests -v -rs --durations=15 --junitxml=../../build/junit-pytest-${{ matrix.os }}.xml
+          set -o pipefail
+          python -m pytest tests -v -rs --timeout=90 --timeout-method=thread -o faulthandler_timeout=75 --durations=25 --junitxml=../../build/junit-pytest-${{ matrix.os }}.xml 2>&1 | tee ../../build/pytest-${{ matrix.os }}.log
 
       - name: Enforce native Windows AppContainer runtime tests (fail on skip)
         if: matrix.os == 'windows-latest'
@@ -152,28 +153,67 @@ jobs:
         if: always()
         shell: bash
         run: |
-          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          python - <<'PY'
           import xml.etree.ElementTree as ET, os, sys
           sys.path.insert(0, "scripts")
           from build_sidecar import detect_target_triple, resolve_sidecar_binary_path
 
-          xml_path = "build/junit-pytest-${{ matrix.os }}.xml"
-          print("### AKSA Cross-Platform CI Summary (${{ matrix.os }})\n")
+          matrix_os = "${{ matrix.os }}"
+          xml_path = f"build/junit-pytest-{matrix_os}.xml"
+          log_path = f"build/pytest-{matrix_os}.log"
+          summary_lines = [f"### AKSA Cross-Platform CI Summary ({matrix_os})\n"]
+
+          def _annot(level: str, msg: str) -> None:
+              clean = msg.replace("%", "%25").replace("\r", "").replace("\n", " | ")
+              print(f"::{level}::{clean[:1200]}")
+
           if os.path.exists(xml_path):
               root = ET.parse(xml_path).getroot()
               ts = root if root.tag == "testsuite" else root.find("testsuite")
               if ts is not None:
-                  print(f"- **Pytest (`services/engine`):** tests={ts.attrib.get('tests')}, skipped={ts.attrib.get('skipped')}, failures={ts.attrib.get('failures')}, errors={ts.attrib.get('errors')}")
+                  stat_msg = f"tests={ts.attrib.get('tests')}, skipped={ts.attrib.get('skipped')}, failures={ts.attrib.get('failures')}, errors={ts.attrib.get('errors')}, time={ts.attrib.get('time')}s"
+                  summary_lines.append(f"- **Pytest (`services/engine`):** {stat_msg}")
+                  cases = []
+                  for tc in ts.findall("testcase"):
+                      t = float(tc.attrib.get("time", "0") or 0)
+                      name = f"{tc.attrib.get('classname', '')}::{tc.attrib.get('name', '')}"
+                      cases.append((t, name, tc))
+                  cases.sort(key=lambda x: x[0], reverse=True)
+                  slow_top = ", ".join(f"{n} ({t:.2f}s)" for t, n, _ in cases[:8])
+                  _annot("notice", f"Pytest ({matrix_os}): {stat_msg} | Slowest: {slow_top}")
+                  summary_lines.append(f"- **Slowest tests:** {slow_top}")
+                  for t, name, tc in cases:
+                      bad = tc.find("failure")
+                      if bad is None:
+                          bad = tc.find("error")
+                      if bad is not None:
+                          detail = (bad.attrib.get("message") or bad.text or "")[-600:]
+                          _annot("error", f"FAIL {name} ({t:.2f}s): {detail}")
               else:
-                  print("- **Pytest JUnit XML parsed without testsuite element**")
+                  summary_lines.append("- **Pytest JUnit XML parsed without testsuite element**")
           else:
-              print("- **Pytest JUnit XML not produced**")
+              summary_lines.append("- **Pytest JUnit XML not produced**")
+              if os.path.exists(log_path):
+                  with open(log_path, encoding="utf-8", errors="replace") as fh:
+                      all_lines = fh.read().splitlines()
+                  highlights = [
+                      ln for ln in all_lines
+                      if any(tok in ln for tok in ("tests/test_", "Timeout", "FAILED", "ERROR", "Event loop", "Current thread", "File \""))
+                  ]
+                  tail = all_lines[-20:]
+                  _annot("error", f"Pytest JUnit missing ({matrix_os}). Last tests/timeout: " + " | ".join(highlights[-12:]))
+                  _annot("error", f"Pytest log tail ({matrix_os}): " + " | ".join(tail))
 
           triple = detect_target_triple()
           bin_path = resolve_sidecar_binary_path(triple)
           if bin_path.exists():
-              print(f"- **Sidecar Binary (`{triple}`):** `{bin_path.name}` ({bin_path.stat().st_size:,} bytes)")
+              summary_lines.append(f"- **Sidecar Binary (`{triple}`):** `{bin_path.name}` ({bin_path.stat().st_size:,} bytes)")
           else:
-              print(f"- **Sidecar Binary (`{triple}`):** missing at `{bin_path}`")
-          print("- **Checks executed in this job:** pytest + real PyInstaller sidecar build & verification + compiled sidecar smoke-test + npm audit + vitest + tsc/vite build + cargo test + cargo check + CycloneDX SBOM")
+              summary_lines.append(f"- **Sidecar Binary (`{triple}`):** missing at `{bin_path}`")
+          summary_lines.append("- **Checks executed in this job:** pytest + real PyInstaller sidecar build & verification + compiled sidecar smoke-test + npm audit + vitest + tsc/vite build + cargo test + cargo check + CycloneDX SBOM")
+
+          summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary_file:
+              with open(summary_file, "a", encoding="utf-8") as sf:
+                  sf.write("\n".join(summary_lines) + "\n")
           PY

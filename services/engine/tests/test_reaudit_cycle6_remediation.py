@@ -227,7 +227,7 @@ for label, fn in [
     )
 
     wrapped = wrap_command([sys.executable, str(probe)], ws, [ENGINE_ROOT, Path(sys.prefix), Path(sys.base_prefix), ws])
-    res = subprocess.run(wrapped, cwd=ws, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    res = subprocess.run(wrapped, cwd=ws, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"}, timeout=30)
     assert res.returncode == 0, res.stderr
     assert (ws / "ok.txt").read_text() == "inside_ws"
     for blocked in ("ETC_PASSWD", "VAR_TMP_LIST", "HOME_LIST", "NET", "FORK", "EXEC_SH"):

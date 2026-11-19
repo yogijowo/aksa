@@ -199,6 +199,7 @@ except PermissionError as e:
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert res.returncode == 13
     assert "di luar folder kerja dilarang" in res.stderr
@@ -240,6 +241,7 @@ except PermissionError as e:
         ],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert res.returncode == 13
     assert "di luar folder kerja dilarang" in res.stderr
