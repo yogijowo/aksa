@@ -49,8 +49,13 @@ def _generate_non_colliding_path(directory: Path, base_stem: str, extension: str
 
 
 MAX_ARTIFACT_VERIFY_BYTES: int = 25 * 1024 * 1024
+MAX_ZIP_ENTRIES: int = 2000
+MAX_ZIP_UNCOMPRESSED_BYTES: int = 50 * 1024 * 1024
+MAX_ZIP_COMPRESSION_RATIO: float = 50.0
+MAX_EXCEL_SHEETS: int = 50
 MAX_EXCEL_PARSE_CELLS: int = 250_000
 MAX_PDF_PARSE_PAGES: int = 500
+MAX_PDF_TEXT_CHARS: int = 5 * 1024 * 1024
 _EXCEL_ERROR_TOKENS: frozenset[str] = frozenset({
     "#REF!",
     "#DIV/0!",
@@ -62,6 +67,140 @@ _EXCEL_ERROR_TOKENS: frozenset[str] = frozenset({
 })
 
 
+def sanitize_verifier_schema(expected_schema: dict[str, Any] | None) -> dict[str, Any]:
+    """Clamp caller max_bytes strictly within [1, MAX_ARTIFACT_VERIFY_BYTES] (P2-01)."""
+    schema = dict(expected_schema) if isinstance(expected_schema, dict) else {}
+    if "max_bytes" in schema:
+        try:
+            req_max = int(schema["max_bytes"])
+        except (TypeError, ValueError):
+            req_max = MAX_ARTIFACT_VERIFY_BYTES
+        schema["max_bytes"] = min(max(1, req_max), MAX_ARTIFACT_VERIFY_BYTES)
+    else:
+        schema["max_bytes"] = MAX_ARTIFACT_VERIFY_BYTES
+    return schema
+
+
+def _validate_office_zip_container(art_path: Path, suffix: str) -> tuple[bool, str]:
+    """Inspect Office OOXML ZIP container metadata BEFORE opening heavy parsers (ZIP bomb & dimension guard)."""
+    import zipfile
+
+    label_map = {
+        ".xlsx": "Integritas Excel (.xlsx)",
+        ".xlsm": "Integritas Excel (.xlsm)",
+        ".docx": "Integritas dokumen Word (.docx)",
+        ".pptx": "Integritas PowerPoint (.pptx)",
+    }
+    label = label_map.get(suffix, f"Integritas Office ({suffix})")
+    if not zipfile.is_zipfile(str(art_path)):
+        return False, f"{label} tidak valid atau bukan arsip ZIP yang sah."
+
+    sheet_entries = 0
+    total_uncompressed = 0
+    total_compressed = 0
+
+    try:
+        with zipfile.ZipFile(str(art_path), "r") as zf:
+            infos = zf.infolist()
+            if len(infos) > MAX_ZIP_ENTRIES:
+                return False, f"Arsip Office mengandung terlalu banyak entry ZIP ({len(infos)} > {MAX_ZIP_ENTRIES})."
+
+            for info in infos:
+                fname = str(info.filename or "")
+                norm = fname.replace("\\", "/")
+                if norm.startswith("/") or ".." in Path(norm).parts:
+                    return False, f"Entry ZIP berbahaya terdeteksi dalam dokumen Office: '{fname}'."
+
+                u_sz = int(info.file_size or 0)
+                c_sz = int(info.compress_size or 0)
+                if u_sz < 0 or c_sz < 0 or u_sz > MAX_ZIP_UNCOMPRESSED_BYTES:
+                    return False, f"Entry XML Office '{fname}' melebihi batas dekompresi aman ({MAX_ZIP_UNCOMPRESSED_BYTES} bytes)."
+                total_uncompressed += u_sz
+                total_compressed += c_sz
+                if total_uncompressed > MAX_ZIP_UNCOMPRESSED_BYTES:
+                    return False, f"Total ukuran dekompresi dokumen Office melebihi batas aman ({MAX_ZIP_UNCOMPRESSED_BYTES} bytes)."
+
+                if suffix in (".xlsx", ".xlsm") and norm.startswith("xl/worksheets/sheet") and norm.endswith(".xml"):
+                    sheet_entries += 1
+                    if sheet_entries > MAX_EXCEL_SHEETS:
+                        return False, f"Jumlah sheet Excel ({sheet_entries}) melebihi batas aman ({MAX_EXCEL_SHEETS})."
+                    with zf.open(info, "r") as sf:
+                        header_bytes = sf.read(4096)
+                    header_str = header_bytes.decode("utf-8", errors="ignore")
+                    dim_match = re.search(r'<dimension\b[^>]*\bref=["\']([A-Za-z0-9:]+)["\']', header_str)
+                    if dim_match and ":" in dim_match.group(1):
+                        from openpyxl.utils.cell import range_boundaries
+
+                        try:
+                            min_c, min_r, max_c, max_r = range_boundaries(dim_match.group(1).upper())
+                            cell_span = (max_r - min_r + 1) * (max_c - min_c + 1)
+                            if cell_span > MAX_EXCEL_PARSE_CELLS:
+                                return False, f"Dimensi worksheet Excel terlalu besar ({cell_span} sel > {MAX_EXCEL_PARSE_CELLS})."
+                        except Exception:
+                            return False, "Deklarasi dimensi worksheet Excel tidak valid."
+
+            if total_uncompressed > 512 * 1024:
+                ratio = total_uncompressed / max(1, total_compressed)
+                if ratio > MAX_ZIP_COMPRESSION_RATIO:
+                    return False, f"Rasio kompresi ZIP Office mencurigakan ({ratio:.1f}:1 > {MAX_ZIP_COMPRESSION_RATIO}:1)."
+    except Exception as exc:
+        return False, f"Gagal memvalidasi kontainer ZIP Office ({suffix}): {exc}"
+
+    return True, ""
+
+
+def _safe_eval_arithmetic_expr(expr: str, resolve_cell_fn: Any) -> float | None:
+    """Safely evaluate basic parenthesized arithmetic over numeric literals and Excel cell refs."""
+    import ast
+    import operator
+
+    token_re = re.compile(r"\$?([A-Z]{1,3})\$?(\d+)", re.IGNORECASE)
+    mapping: dict[str, float] = {}
+    idx = 0
+
+    def _replace_cell(match: re.Match[str]) -> str:
+        nonlocal idx
+        coord = f"{match.group(1).upper()}{match.group(2)}"
+        val = resolve_cell_fn(coord)
+        if val is None:
+            raise ValueError("missing_cell")
+        sym = f"_c{idx}"
+        idx += 1
+        mapping[sym] = float(val)
+        return sym
+
+    try:
+        rewritten = token_re.sub(_replace_cell, expr)
+        # Reject unknown function calls, attribute lookups, or arbitrary names via AST
+        tree = ast.parse(rewritten, mode="eval")
+    except Exception:
+        return None
+
+    bin_ops = {ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul, ast.Div: operator.truediv}
+    un_ops = {ast.UAdd: operator.pos, ast.USub: operator.neg}
+
+    def _eval(node: ast.AST) -> float:
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+            return float(node.value)
+        if isinstance(node, ast.Name) and node.id in mapping:
+            return mapping[node.id]
+        if isinstance(node, ast.UnaryOp) and type(node.op) in un_ops:
+            return un_ops[type(node.op)](_eval(node.operand))
+        if isinstance(node, ast.BinOp) and type(node.op) in bin_ops:
+            rhs = _eval(node.right)
+            if isinstance(node.op, ast.Div) and rhs == 0.0:
+                raise ZeroDivisionError("div0")
+            return float(bin_ops[type(node.op)](_eval(node.left), rhs))
+        raise ValueError("unsupported_ast")
+
+    try:
+        return float(_eval(tree))
+    except Exception:
+        return None
+
+
 def _evaluate_basic_excel_formula(
     formula: str,
     ws_val: Any,
@@ -70,7 +209,11 @@ def _evaluate_basic_excel_formula(
     _depth: int = 0,
     _seen: set[str] | None = None,
 ) -> float | None:
-    """Deterministically evaluate common Excel formulas (SUM, AVERAGE, MIN, MAX, COUNT, + - * /)."""
+    """Deterministically evaluate supported Excel formulas (SUM, AVERAGE, MIN, MAX, COUNT, COUNTA, PRODUCT, ABS, ROUND, arithmetic).
+
+    Returns ``None`` for any unsupported function/expression so callers fail closed rather
+    than trusting unverified cached workbook values.
+    """
     if _depth > 4:
         return None
     from openpyxl.utils import get_column_letter
@@ -86,7 +229,7 @@ def _evaluate_basic_excel_formula(
     seen_set = set(_seen or set())
 
     def _cell_num(coord: str) -> float | None:
-        c_up = coord.strip().upper()
+        c_up = coord.strip().upper().replace("$", "")
         if c_up in seen_set:
             return None
         try:
@@ -94,115 +237,179 @@ def _evaluate_basic_excel_formula(
         except Exception:
             return None
         v_raw = ws_val.cell(row=row_i, column=col_i).value
-        if isinstance(v_raw, (int, float)) and not isinstance(v_raw, bool):
-            return float(v_raw)
         f_raw = ws_fml.cell(row=row_i, column=col_i).value
-        if isinstance(f_raw, (int, float)) and not isinstance(f_raw, bool):
-            return float(f_raw)
         if isinstance(f_raw, str) and f_raw.startswith("="):
             return _evaluate_basic_excel_formula(
                 f_raw, ws_val, ws_fml, _depth=_depth + 1, _seen=seen_set | {c_up}
             )
+        if isinstance(v_raw, (int, float)) and not isinstance(v_raw, bool):
+            return float(v_raw)
+        if isinstance(f_raw, (int, float)) and not isinstance(f_raw, bool):
+            return float(f_raw)
         return None
 
-    # Pattern 1: Single aggregate function FUNC(arg1, arg2, ...)
-    fn_match = re.fullmatch(r"([A-Z]+)\s*\(([^()]+)\)", body, re.IGNORECASE)
-    if fn_match:
-        fn_name = fn_match.group(1).upper()
-        if fn_name not in {"SUM", "AVERAGE", "MIN", "MAX", "COUNT"}:
-            return None
-        nums: list[float] = []
-        for token in fn_match.group(2).split(","):
-            part = token.strip()
-            if not part:
-                continue
-            if ":" in part:
-                try:
-                    min_c, min_r, max_c, max_r = range_boundaries(part.upper())
-                except Exception:
-                    return None
-                if (max_r - min_r + 1) * (max_c - min_c + 1) > 50_000:
-                    return None
-                for rr in range(min_r, max_r + 1):
-                    for cc in range(min_c, max_c + 1):
-                        val = _cell_num(f"{get_column_letter(cc)}{rr}")
+    def _cell_nonempty(coord: str) -> bool:
+        c_up = coord.strip().upper().replace("$", "")
+        try:
+            row_i, col_i = coordinate_to_tuple(c_up)
+        except Exception:
+            return False
+        v_raw = ws_val.cell(row=row_i, column=col_i).value
+        f_raw = ws_fml.cell(row=row_i, column=col_i).value
+        return (v_raw is not None and str(v_raw).strip() != "") or (f_raw is not None and str(f_raw).strip() != "")
+
+    # Match top-level FUNC(inner_args) supporting safe bounded nested expressions
+    outer_match = re.fullmatch(r"([A-Z]+)\s*\((.*)\)", body, re.IGNORECASE)
+    if outer_match:
+        fn_name = outer_match.group(1).upper()
+        inner_raw = outer_match.group(2).strip()
+        if fn_name in {"SUM", "AVERAGE", "MIN", "MAX", "COUNT", "PRODUCT"}:
+            nums: list[float] = []
+            # Split top-level comma tokens
+            tokens: list[str] = []
+            buf: list[str] = []
+            p_depth = 0
+            for ch in inner_raw:
+                if ch == "(":
+                    p_depth += 1
+                elif ch == ")":
+                    p_depth -= 1
+                if ch == "," and p_depth == 0:
+                    tokens.append("".join(buf).strip())
+                    buf = []
+                else:
+                    buf.append(ch)
+            if buf:
+                tokens.append("".join(buf).strip())
+
+            for part in tokens:
+                if not part:
+                    continue
+                if ":" in part and "(" not in part:
+                    try:
+                        min_c, min_r, max_c, max_r = range_boundaries(part.upper())
+                    except Exception:
+                        return None
+                    if (max_r - min_r + 1) * (max_c - min_c + 1) > 50_000:
+                        return None
+                    for rr in range(min_r, max_r + 1):
+                        for cc in range(min_c, max_c + 1):
+                            val = _cell_num(f"{get_column_letter(cc)}{rr}")
+                            if val is not None:
+                                nums.append(val)
+                elif "(" in part:
+                    sub_v = _evaluate_basic_excel_formula(
+                        f"={part}", ws_val, ws_fml, _depth=_depth + 1, _seen=seen_set
+                    )
+                    if sub_v is None:
+                        return None
+                    nums.append(sub_v)
+                else:
+                    try:
+                        nums.append(float(part))
+                    except ValueError:
+                        val = _cell_num(part)
                         if val is not None:
                             nums.append(val)
-            else:
-                try:
-                    nums.append(float(part))
-                except ValueError:
-                    val = _cell_num(part)
-                    if val is not None:
-                        nums.append(val)
-        if fn_name == "COUNT":
-            return float(len(nums))
-        if not nums:
-            return 0.0 if fn_name == "SUM" else None
-        if fn_name == "SUM":
-            return float(sum(nums))
-        if fn_name == "AVERAGE":
-            return float(sum(nums) / len(nums))
-        if fn_name == "MIN":
-            return float(min(nums))
-        if fn_name == "MAX":
-            return float(max(nums))
+            if fn_name == "COUNT":
+                return float(len(nums))
+            if not nums:
+                return 0.0 if fn_name == "SUM" else None
+            if fn_name == "SUM":
+                return float(sum(nums))
+            if fn_name == "AVERAGE":
+                return float(sum(nums) / len(nums))
+            if fn_name == "MIN":
+                return float(min(nums))
+            if fn_name == "MAX":
+                return float(max(nums))
+            if fn_name == "PRODUCT":
+                prod = 1.0
+                for n in nums:
+                    prod *= n
+                return float(prod)
 
-    # Pattern 2: Binary operand expression (<cell|num> <op> <cell|num>)
-    bin_match = re.fullmatch(
-        r"([A-Z]{1,3}\d+|\d+(?:\.\d+)?)\s*([+\-*/])\s*([A-Z]{1,3}\d+|\d+(?:\.\d+)?)",
-        body,
-        re.IGNORECASE,
-    )
-    if bin_match:
-        def _resolve_op(tok: str) -> float | None:
+        if fn_name == "COUNTA" and "(" not in inner_raw:
+            count_nonempty = 0
+            for token in inner_raw.split(","):
+                part = token.strip()
+                if not part:
+                    continue
+                if ":" in part:
+                    try:
+                        min_c, min_r, max_c, max_r = range_boundaries(part.upper())
+                    except Exception:
+                        return None
+                    if (max_r - min_r + 1) * (max_c - min_c + 1) > 50_000:
+                        return None
+                    for rr in range(min_r, max_r + 1):
+                        for cc in range(min_c, max_c + 1):
+                            if _cell_nonempty(f"{get_column_letter(cc)}{rr}"):
+                                count_nonempty += 1
+                elif _cell_nonempty(part):
+                    count_nonempty += 1
+            return float(count_nonempty)
+
+        if fn_name == "ABS":
+            inner = _evaluate_basic_excel_formula(
+                f"={inner_raw}", ws_val, ws_fml, _depth=_depth + 1, _seen=seen_set
+            )
+            return None if inner is None else float(abs(inner))
+
+        if fn_name == "ROUND":
+            args: list[str] = []
+            buf_r: list[str] = []
+            r_depth = 0
+            for ch in inner_raw:
+                if ch == "(":
+                    r_depth += 1
+                elif ch == ")":
+                    r_depth -= 1
+                if ch == "," and r_depth == 0:
+                    args.append("".join(buf_r).strip())
+                    buf_r = []
+                else:
+                    buf_r.append(ch)
+            if buf_r:
+                args.append("".join(buf_r).strip())
+            if len(args) != 2:
+                return None
+            inner = _evaluate_basic_excel_formula(
+                f"={args[0]}", ws_val, ws_fml, _depth=_depth + 1, _seen=seen_set
+            )
             try:
-                return float(tok)
+                digits = int(args[1])
             except ValueError:
-                return _cell_num(tok)
+                return None
+            return None if inner is None else float(round(inner, digits))
 
-        lhs = _resolve_op(bin_match.group(1))
-        rhs = _resolve_op(bin_match.group(3))
-        op = bin_match.group(2)
-        if lhs is None or rhs is None:
-            return None
-        if op == "+":
-            return lhs + rhs
-        if op == "-":
-            return lhs - rhs
-        if op == "*":
-            return lhs * rhs
-        if op == "/":
-            return None if rhs == 0.0 else (lhs / rhs)
+        return None
 
-    return None
+    return _safe_eval_arithmetic_expr(body, _cell_num)
 
 
 def get_artifact_postcondition_breakdown(
     art_path: Path,
     expected_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Inspect and validate an artifact across four orthogonal gates (P2-03):
-    1. ``file_created`` — non-zero byte regular file (non-symlink, bounded size) exists on disk.
-    2. ``format_valid`` — parser opens the format cleanly.
+    """Inspect and validate an artifact across four orthogonal gates (P2-03 & Cycle 9 hardening):
+    1. ``file_created`` — non-zero byte regular file (non-symlink, server-bounded size) exists on disk.
+    2. ``format_valid`` — ZIP/PDF container & parser open the format cleanly within complexity caps.
     3. ``content_detected`` — non-trivial real structural content exists (rejects scalars,
        1-cell placeholders, empty docs, and ornamental textless vector PDFs).
-    4. ``task_requirement_satisfied`` — artifact matches pre-execution prompt/plan
-       expectations (columns, formulas, formula evaluation consistency, expected values,
-       sections, keywords, minimum row/item counts).
-
-    ``semantic_postcondition_passed`` is True ONLY when all four gates pass for a
-    supported format (NEVER auto-passes unknown extensions).
+    4. ``task_requirement_satisfied`` — artifact matches pre-execution prompt/plan expectations
+       AND every Excel formula evaluates deterministically without relying on unverified caches.
     """
-    schema = expected_schema or {}
+    schema = sanitize_verifier_schema(expected_schema)
     res: dict[str, Any] = {
         "file_created": False,
         "format_valid": False,
         "content_detected": False,
         "task_requirement_satisfied": False,
         "semantic_postcondition_passed": False,
-        "semantic_status": "failed",  # passed | failed | unsupported
+        "semantic_status": "failed",  # passed | failed | unsupported | unverified_formula
         "unsupported_format": False,
+        "unverified_formulas": [],
         "detail": "",
     }
     if art_path.is_symlink():
@@ -216,7 +423,7 @@ def get_artifact_postcondition_breakdown(
         if st_size == 0:
             res["detail"] = f"File berukuran 0 byte: {art_path}"
             return res
-        max_bytes = int(schema.get("max_bytes", MAX_ARTIFACT_VERIFY_BYTES))
+        max_bytes = schema["max_bytes"]
         if st_size > max_bytes:
             res["detail"] = f"Ukuran artefak ({st_size} bytes) melebihi batas verifikasi aman ({max_bytes} bytes)."
             return res
@@ -234,6 +441,12 @@ def get_artifact_postcondition_breakdown(
         res["detail"] = f"Format artefak '{suffix}' tidak sesuai target tugas '{expected_ext}'."
         return res
 
+    if suffix in (".xlsx", ".xlsm", ".docx", ".pptx"):
+        zip_ok, zip_err = _validate_office_zip_container(art_path, suffix)
+        if not zip_ok:
+            res["detail"] = zip_err
+            return res
+
     if suffix in (".xlsx", ".xlsm"):
         wb_val = None
         wb_fml = None
@@ -243,6 +456,9 @@ def get_artifact_postcondition_breakdown(
             wb_fml = openpyxl.load_workbook(str(art_path), data_only=False)
             if not wb_val.sheetnames:
                 res["detail"] = f"Buku kerja Excel kosong tanpa lembar kerja: {art_path}"
+                return res
+            if len(wb_val.sheetnames) > MAX_EXCEL_SHEETS:
+                res["detail"] = f"Jumlah sheet Excel ({len(wb_val.sheetnames)}) melebihi batas aman ({MAX_EXCEL_SHEETS})."
                 return res
             res["format_valid"] = True
 
@@ -254,6 +470,7 @@ def get_artifact_postcondition_breakdown(
             has_formula = False
             seen_formula_funcs: set[str] = set()
             cell_values_map: dict[str, Any] = {}
+            unverified_formulas: list[str] = []
             excel_error: str | None = None
 
             for sname in wb_val.sheetnames:
@@ -288,9 +505,13 @@ def get_artifact_postcondition_breakdown(
                             for fn_tok in re.findall(r"([A-Z][A-Z0-9_.]*)\s*\(", fml_str.upper()):
                                 seen_formula_funcs.add(fn_tok)
                             computed = _evaluate_basic_excel_formula(fml_str, ws, ws_f)
+                            if computed is None:
+                                # Cycle 9 P2-02: NEVER fall back to unverified cached value for unsupported formulas
+                                unverified_formulas.append(f"{sname}!{coord}:{fml_str}")
+                                non_empty_cells += 1
+                                continue
                             if (
-                                computed is not None
-                                and isinstance(val_v, (int, float))
+                                isinstance(val_v, (int, float))
                                 and not isinstance(val_v, bool)
                                 and abs(float(val_v) - computed) > 1e-4
                             ):
@@ -299,9 +520,8 @@ def get_artifact_postcondition_breakdown(
                                     f"kalkulasi '{fml_str}' ({computed})."
                                 )
                                 break
-                            effective_v = computed if val_v is None else val_v
-                            cell_values_map.setdefault(coord, effective_v)
-                            cell_values_map[f"{sname}!{coord}"] = effective_v
+                            cell_values_map.setdefault(coord, computed)
+                            cell_values_map[f"{sname}!{coord}"] = computed
                             non_empty_cells += 1
                         elif val_v is not None and str(val_v).strip() != "":
                             non_empty_cells += 1
@@ -328,6 +548,15 @@ def get_artifact_postcondition_breakdown(
 
             if excel_error:
                 res["detail"] = excel_error
+                return res
+
+            if unverified_formulas:
+                res["unverified_formulas"] = unverified_formulas
+                res["semantic_status"] = "unverified_formula"
+                res["detail"] = (
+                    f"Formula Excel tidak didukung evaluator independen dan cached value ditolak "
+                    f"(unverified_formula): {unverified_formulas[:3]}"
+                )
                 return res
 
             min_rows = int(schema.get("min_rows", 1))
@@ -504,8 +733,20 @@ def get_artifact_postcondition_breakdown(
                 return res
             res["format_valid"] = True
             page_count = doc.page_count
-            extracted_text = "\n".join(page.get_text().strip() for page in doc).strip()
-            has_images = any(len(page.get_images()) > 0 for page in doc)
+            page_texts: list[str] = []
+            total_chars = 0
+            has_images = False
+            for page in doc:
+                if len(page.get_images()) > 0:
+                    has_images = True
+                pt = page.get_text().strip()
+                total_chars += len(pt)
+                if total_chars > MAX_PDF_TEXT_CHARS:
+                    doc.close()
+                    res["detail"] = f"Total teks PDF melebihi batas ekstraksi aman ({MAX_PDF_TEXT_CHARS} karakter)."
+                    return res
+                page_texts.append(pt)
+            extracted_text = "\n".join(page_texts).strip()
             doc.close()
 
             # Reject ornamental-only vector drawings without extractable text or images

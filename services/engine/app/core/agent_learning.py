@@ -113,6 +113,50 @@ def resolve_replay_path(
     return resolved
 
 
+MAX_REPLAY_FIXTURES: int = 20
+MAX_FIXTURE_INPUT_FILES: int = 10
+MAX_FIXTURE_INPUT_FILE_BYTES: int = 256 * 1024
+MAX_FIXTURE_EXPECTED_ARTIFACTS: int = 10
+MAX_TOTAL_REPLAY_PAYLOAD_BYTES: int = 2 * 1024 * 1024
+
+
+def validate_replay_fixtures_budget(replay_fixtures: list[dict[str, Any]] | None) -> None:
+    """Enforce strict payload size, artifact count, and input file bounds before replay runs (P2-04)."""
+    if replay_fixtures is None:
+        return
+    if not isinstance(replay_fixtures, list):
+        raise ValueError("replay_fixtures harus berupa daftar objek.")
+    if len(replay_fixtures) > MAX_REPLAY_FIXTURES:
+        raise ValueError(f"Jumlah replay_fixtures ({len(replay_fixtures)}) melebihi batas ({MAX_REPLAY_FIXTURES}).")
+
+    total_bytes = 0
+    for idx, fx in enumerate(replay_fixtures, 1):
+        if not isinstance(fx, dict):
+            raise ValueError(f"Fixture #{idx} tidak valid.")
+        exp_arts = fx.get("expected_artifacts", [])
+        if not isinstance(exp_arts, list) or len(exp_arts) > MAX_FIXTURE_EXPECTED_ARTIFACTS:
+            raise ValueError(
+                f"Fixture #{idx} melebihi batas expected_artifacts ({MAX_FIXTURE_EXPECTED_ARTIFACTS})."
+            )
+        in_files = fx.get("input_files", {})
+        if not isinstance(in_files, dict) or len(in_files) > MAX_FIXTURE_INPUT_FILES:
+            raise ValueError(
+                f"Fixture #{idx} melebihi batas input_files ({MAX_FIXTURE_INPUT_FILES})."
+            )
+        for fname, fbody in in_files.items():
+            f_len = len(str(fbody).encode("utf-8", errors="replace"))
+            if f_len > MAX_FIXTURE_INPUT_FILE_BYTES:
+                raise ValueError(
+                    f"Ukuran input file '{fname}' ({f_len} bytes) melebihi batas aman ({MAX_FIXTURE_INPUT_FILE_BYTES} bytes)."
+                )
+        serialized_len = len(json.dumps(fx, ensure_ascii=False, default=str).encode("utf-8"))
+        total_bytes += serialized_len
+        if total_bytes > MAX_TOTAL_REPLAY_PAYLOAD_BYTES:
+            raise ValueError(
+                f"Total payload replay melebihi batas aman ({MAX_TOTAL_REPLAY_PAYLOAD_BYTES} bytes)."
+            )
+
+
 class ReplayExecutionContext:
     """Isolated per-replay execution context holding its own frozen workspace, sandbox, and allowlist."""
 
@@ -676,12 +720,28 @@ class SkillEvaluator:
         ``replay_pass_rate`` and ``calibrated_confidence``.
         """
         import tempfile
-        from app.core.orchestrator import verify_artifact_postcondition
+        from app.core.artifact_verifier_worker import verify_artifact_in_worker
         from app.core.sandbox import sandbox_manager
-        from app.tools.registry import REPLAY_ALLOWED_TOOLS, tool_registry
+        from app.tools.registry import tool_registry
 
         # Ensure standard built-in tools are registered before lookup
         import app.tools  # noqa: F401
+
+        try:
+            validate_replay_fixtures_budget(replay_fixtures)
+        except ValueError as budget_err:
+            base_eval = cls.evaluate(skill_md_content, skill_id, candidate_data=candidate_data)
+            base_eval.replay_mode = "runtime"
+            base_eval.replay_passed = False
+            base_eval.replay_pass_rate = 0.0
+            base_eval.calibrated_confidence = 0.0
+            base_eval.passed = False
+            base_eval.checks.append({
+                "name": "runtime_replay_execution",
+                "passed": False,
+                "detail": f"Replay ditolak oleh batas anggaran payload: {budget_err}",
+            })
+            return base_eval
 
         base_eval = cls.evaluate(skill_md_content, skill_id, candidate_data=candidate_data)
         if not base_eval.passed or not replay_fixtures:
@@ -799,21 +859,24 @@ class SkillEvaluator:
                                 except ValueError:
                                     step_vars["last_artifact"] = run_artifacts[-1].name
 
-                    # Verify fixture expectations & postcondition schemas strictly within ws bounds (Cycle 8 P1-02)
+                    # Verify fixture expectations & postcondition schemas inside killable worker (Cycle 9 P2-01..P2-03)
                     if run_ok:
                         raw_schema = fixture.get("expected_schema")
                         bounded_schema = dict(raw_schema) if isinstance(raw_schema, dict) else {}
-                        bounded_schema.setdefault("max_bytes", replay_ctx.MAX_VERIFIER_FILE_BYTES)
+                        # P2-01: Unconditionally enforce server-side max_bytes; fixtures CANNOT raise or set size limit
+                        bounded_schema["max_bytes"] = replay_ctx.MAX_VERIFIER_FILE_BYTES
 
                         async def _verify_bounded(path_to_check: Path) -> tuple[bool, str]:
-                            if path_to_check.exists() and path_to_check.stat().st_size > int(bounded_schema["max_bytes"]):
-                                return False, f"Ukuran file artefak melebihi batas replay aman ({bounded_schema['max_bytes']} bytes)."
-                            return await asyncio.wait_for(
-                                asyncio.to_thread(
-                                    verify_artifact_postcondition,
-                                    path_to_check,
-                                    expected_schema=bounded_schema,
-                                ),
+                            if path_to_check.is_symlink():
+                                return False, f"Artefak symlink ditolak: '{path_to_check.name}'."
+                            if path_to_check.exists() and path_to_check.stat().st_size > replay_ctx.MAX_VERIFIER_FILE_BYTES:
+                                return False, (
+                                    f"Ukuran file artefak melebihi batas replay aman ({replay_ctx.MAX_VERIFIER_FILE_BYTES} bytes)."
+                                )
+                            return await verify_artifact_in_worker(
+                                path_to_check,
+                                expected_schema=bounded_schema,
+                                workspace=replay_ctx.workspace,
                                 timeout=replay_ctx.VERIFIER_TIMEOUT_SECONDS,
                             )
 
@@ -825,12 +888,7 @@ class SkillEvaluator:
                                 run_ok = False
                                 fail_reason = f"Artefak '{exp_f}' ditolak oleh path containment: {iso_err}"
                                 break
-                            try:
-                                ok_art, art_msg = await _verify_bounded(target_art)
-                            except TimeoutError:
-                                run_ok = False
-                                fail_reason = f"Verifikasi artefak '{exp_f}' melebihi batas waktu aman."
-                                break
+                            ok_art, art_msg = await _verify_bounded(target_art)
                             if not ok_art:
                                 run_ok = False
                                 fail_reason = f"Artefak '{exp_f}' gagal postcondition: {art_msg}"
@@ -840,15 +898,11 @@ class SkillEvaluator:
                             for p_art in run_artifacts:
                                 try:
                                     safe_art = replay_ctx.resolve_tool_artifact(str(p_art))
-                                    ok_art, art_msg = await _verify_bounded(safe_art)
                                 except AgentIsolationError as iso_err:
                                     run_ok = False
                                     fail_reason = f"Artefak output '{p_art.name}' melanggar sandbox: {iso_err}"
                                     break
-                                except TimeoutError:
-                                    run_ok = False
-                                    fail_reason = f"Verifikasi artefak '{p_art.name}' melebihi batas waktu aman."
-                                    break
+                                ok_art, art_msg = await _verify_bounded(safe_art)
                                 if not ok_art:
                                     run_ok = False
                                     fail_reason = f"Artefak '{p_art.name}' gagal postcondition: {art_msg}"

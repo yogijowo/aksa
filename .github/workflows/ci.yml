@@ -2,9 +2,9 @@ name: CI — Multi-Platform Verification Matrix
 
 on:
   push:
-    branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -49,8 +49,53 @@ jobs:
 
       - name: Run Python unit, integration, and security regression tests
         working-directory: services/engine
+        shell: bash
         run: |
-          python -m pytest tests -v
+          mkdir -p ../../build
+          python -m pytest tests -v -rs --junitxml=../../build/junit-pytest-${{ matrix.os }}.xml
+
+      - name: Enforce native Windows AppContainer runtime tests (fail on skip)
+        if: matrix.os == 'windows-latest'
+        working-directory: services/engine
+        shell: bash
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("../../build/junit-pytest-${{ matrix.os }}.xml").getroot()
+          required = {
+              "test_real_windows_appcontainer_blocks_network_and_outside_writes",
+              "test_p1_01_real_windows_child_cannot_inherit_unrelated_parent_handle",
+          }
+          statuses = {}
+          for tc in root.iter("testcase"):
+              name = tc.attrib.get("name", "")
+              if name in required:
+                  statuses[name] = "skipped" if tc.find("skipped") is not None else ("failed" if tc.find("failure") is not None or tc.find("error") is not None else "passed")
+          print("Windows native sandbox test statuses:", statuses)
+          assert set(statuses) == required and all(v == "passed" for v in statuses.values()), f"Missing or skipped Windows tests: {statuses}"
+          PY
+
+      - name: Enforce native Linux bubblewrap runtime tests (fail on skip)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: services/engine
+        shell: bash
+        run: |
+          bwrap --version
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("../../build/junit-pytest-${{ matrix.os }}.xml").getroot()
+          required = {
+              "test_real_linux_bwrap_isolates_home_and_network",
+              "test_p2_04_real_linux_bwrap_blocks_network_proc_symlinks_and_traversal",
+          }
+          statuses = {}
+          for tc in root.iter("testcase"):
+              name = tc.attrib.get("name", "")
+              if name in required:
+                  statuses[name] = "skipped" if tc.find("skipped") is not None else ("failed" if tc.find("failure") is not None or tc.find("error") is not None else "passed")
+          print("Linux bwrap native sandbox test statuses:", statuses)
+          assert set(statuses) == required and all(v == "passed" for v in statuses.values()), f"Missing or skipped Linux tests: {statuses}"
+          PY
 
       - name: Run sidecar engine lifecycle smoke test
         run: |
@@ -69,7 +114,7 @@ jobs:
       - name: Run Desktop Frontend Vitest test suite
         working-directory: apps/desktop
         run: |
-          npm run test
+          npm run test -- --reporter=verbose
 
       - name: TypeScript typecheck & Vite production build
         working-directory: apps/desktop
@@ -87,3 +132,23 @@ jobs:
       - name: Generate CycloneDX SBOM artifact in CI
         run: |
           python scripts/release_tooling.py sbom --output build/aksa-ci-sbom.json
+
+      - name: Publish CI Verification Summary
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import xml.etree.ElementTree as ET, os
+          xml_path = "build/junit-pytest-${{ matrix.os }}.xml"
+          print("### AKSA Cross-Platform CI Summary (${{ matrix.os }})\n")
+          if os.path.exists(xml_path):
+              root = ET.parse(xml_path).getroot()
+              ts = root if root.tag == "testsuite" else root.find("testsuite")
+              if ts is not None:
+                  print(f"- **Pytest (`services/engine`):** tests={ts.attrib.get('tests')}, skipped={ts.attrib.get('skipped')}, failures={ts.attrib.get('failures')}, errors={ts.attrib.get('errors')}")
+              else:
+                  print("- **Pytest JUnit XML parsed without testsuite element**")
+          else:
+              print("- **Pytest JUnit XML not produced**")
+          print("- **Checks executed in this job:** pytest + sidecar smoke-test + build_sidecar dry-run + npm audit + vitest + tsc/vite build + cargo test + cargo check + CycloneDX SBOM")
+          PY

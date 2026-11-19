@@ -194,16 +194,23 @@ async def test_p1_02_replay_blocks_expected_artifacts_escape_and_never_opens_out
     wb.save(str(outside_secret))
     wb.close()
 
+    import app.core.artifact_verifier_worker as worker_mod
     import app.core.orchestrator as orch_mod
 
     opened_paths: list[Path] = []
     orig_verify = orch_mod.verify_artifact_postcondition
+    orig_worker_verify = worker_mod.verify_artifact_in_worker
 
     def spy_verify(art_path: Path, expected_schema: dict[str, Any] | None = None):
         opened_paths.append(art_path)
         return orig_verify(art_path, expected_schema=expected_schema)
 
+    async def spy_worker_verify(art_path: Path, **kwargs: Any):
+        opened_paths.append(art_path)
+        return await orig_worker_verify(art_path, **kwargs)
+
     monkeypatch.setattr(orch_mod, "verify_artifact_postcondition", spy_verify)
+    monkeypatch.setattr(worker_mod, "verify_artifact_in_worker", spy_worker_verify)
 
     md = "---\nname: Safe Replay\ndescription: Test\n---\n# Test\n"
     cand = {

@@ -1355,16 +1355,40 @@ class EvaluateCandidateRequest(BaseModel):
 async def evaluate_agent_candidate_skill(
     agent_id: str,
     skill_id: str,
+    request: Request,
     req: EvaluateCandidateRequest | None = None,
 ) -> dict[str, Any]:
-    """Evaluate candidate skill safety, DAG/schemas, and isolated runtime replay."""
-    if req and req.replay_fixtures and len(req.replay_fixtures) > 20:
-        raise HTTPException(status_code=400, detail="Maksimal 20 variasi fixture diperbolehkan per evaluasi replay.")
+    """Evaluate candidate skill safety, DAG/schemas, and isolated runtime replay with strict payload limits."""
+    from app.core.agent_learning import MAX_TOTAL_REPLAY_PAYLOAD_BYTES, validate_replay_fixtures_budget
+
+    raw_body = await request.body()
+    if len(raw_body) > MAX_TOTAL_REPLAY_PAYLOAD_BYTES + 65536:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Ukuran request replay melebihi batas maksimum ({MAX_TOTAL_REPLAY_PAYLOAD_BYTES} bytes).",
+        )
+
+    sanitized_fixtures: list[dict[str, Any]] | None = None
+    if req and req.replay_fixtures is not None:
+        try:
+            validate_replay_fixtures_budget(req.replay_fixtures)
+        except ValueError as budget_err:
+            raise HTTPException(status_code=400, detail=str(budget_err)) from budget_err
+        sanitized_fixtures = []
+        for fx in req.replay_fixtures:
+            fx_copy = dict(fx)
+            if isinstance(fx_copy.get("expected_schema"), dict):
+                schema_copy = dict(fx_copy["expected_schema"])
+                # P2-01: Never allow API callers to specify verifier max_bytes
+                schema_copy.pop("max_bytes", None)
+                fx_copy["expected_schema"] = schema_copy
+            sanitized_fixtures.append(fx_copy)
+
     version_svc = SkillVersionService(agent_id)
     try:
         report = await version_svc.evaluate_and_replay_candidate(
             skill_id,
-            replay_fixtures=req.replay_fixtures if req else None,
+            replay_fixtures=sanitized_fixtures,
         )
         return {"report": report.model_dump()}
     except FileNotFoundError as exc:
