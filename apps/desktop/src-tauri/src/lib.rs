@@ -25,13 +25,27 @@ pub fn run() {
         .setup(|app| {
             let state = app.state::<SidecarState>();
             let info = state.info.lock().map_err(|e| e.to_string())?.clone();
+            let launch_id = state.launch_id.clone();
+
+            // Resolve AppData dir & clean up any stale runtime manifest BEFORE spawn (AKSA-SEC-004-R5)
+            let app_data_opt = app.path().app_data_dir().ok();
+            if let Some(ref app_data) = app_data_opt {
+                let stale_manifest = app_data.join("runtime").join("engine_port.json");
+                if stale_manifest.exists() {
+                    let _ = std::fs::remove_file(&stale_manifest);
+                }
+            }
 
             match app.shell().sidecar("aksa-engine") {
                 Ok(cmd) => {
-                    let cmd = cmd
+                    let mut cmd = cmd
                         .args(["--host", &info.host, "--port", "0", "--production"])
                         .env("AKSA_AUTH_TOKEN", &info.auth_token)
+                        .env("AKSA_LAUNCH_ID", &launch_id)
                         .env("PYTHONUNBUFFERED", "1");
+                    if let Some(ref app_data) = app_data_opt {
+                        cmd = cmd.env("AKSA_APPDATA_DIR", app_data.to_string_lossy().as_ref());
+                    }
 
                     match cmd.spawn() {
                         Ok((mut rx, child)) => {
@@ -39,9 +53,12 @@ pub fn run() {
                             if let Ok(mut lock) = state.child_process.lock() {
                                 *lock = Some(child);
                             }
-                            // Keep in Starting state until health check & HMAC identity are verified
+                            // Keep in Starting state until manifest + PID + launch_id + HMAC are verified
                             state.set_state(LifecycleState::Starting);
-                            eprintln!("[AKSA Tauri] Sidecar spawned (PID: {}), awaiting port sync & HMAC identity verification", child_pid);
+                            eprintln!(
+                                "[AKSA Tauri] Sidecar spawned (PID: {}, launch: {}), awaiting mandatory manifest & HMAC handshake",
+                                child_pid, launch_id
+                            );
 
                             let app_handle = app.handle().clone();
                             tauri::async_runtime::spawn(async move {
@@ -53,6 +70,7 @@ pub fn run() {
                                             if text.contains("[AKSA_ENGINE_READY:") {
                                                 let mut ready_port: Option<u16> = None;
                                                 let mut ready_pid: Option<u32> = None;
+                                                let mut ready_launch_id: Option<String> = None;
 
                                                 if let Some(port_start) = text.find("port=") {
                                                     let sub = &text[port_start + 5..];
@@ -64,24 +82,42 @@ pub fn run() {
                                                     let pid_str = sub.split(|c| c == ':' || c == ']').next().unwrap_or("");
                                                     ready_pid = pid_str.parse::<u32>().ok();
                                                 }
+                                                if let Some(lid_start) = text.find("launch_id=") {
+                                                    let sub = &text[lid_start + 10..];
+                                                    let lid_str = sub.split(|c| c == ':' || c == ']').next().unwrap_or("").trim();
+                                                    if !lid_str.is_empty() {
+                                                        ready_launch_id = Some(lid_str.to_string());
+                                                    }
+                                                }
 
                                                 if let (Some(p), Some(reported_pid)) = (ready_port, ready_pid) {
                                                     let s = app_handle.state::<SidecarState>();
                                                     let auth_token = s.info.lock().map(|i| i.auth_token.clone()).unwrap_or_default();
 
-                                                    // Read engine_port.json manifest if present in runtime dir
+                                                    // Mandatory manifest lookup (brief retry if filesystem rename lagged slightly)
                                                     let mut manifest_content: Option<String> = None;
                                                     if let Ok(app_data) = app_handle.path().app_data_dir() {
                                                         let manifest_path = app_data.join("runtime").join("engine_port.json");
-                                                        if manifest_path.exists() {
-                                                            manifest_content = std::fs::read_to_string(&manifest_path).ok();
+                                                        for _ in 0..10 {
+                                                            if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                                                                manifest_content = Some(content);
+                                                                break;
+                                                            }
+                                                            std::thread::sleep(std::time::Duration::from_millis(25));
                                                         }
                                                     }
 
-                                                    match s.validate_and_sync_handshake(p, reported_pid, child_pid, manifest_content.as_deref(), &auth_token) {
+                                                    match s.validate_and_sync_handshake(
+                                                        p,
+                                                        reported_pid,
+                                                        child_pid,
+                                                        ready_launch_id.as_deref(),
+                                                        manifest_content.as_deref(),
+                                                        &auth_token,
+                                                    ) {
                                                         Ok(synced_port) => {
                                                             eprintln!(
-                                                                "[AKSA Tauri] Sidecar port {} and PID {} verified (manifest + HMAC + health passed). Lifecycle: Ready",
+                                                                "[AKSA Tauri] Sidecar port {} and PID {} verified (mandatory manifest + launch_id + HMAC + health passed). Lifecycle: Ready",
                                                                 synced_port, child_pid
                                                             );
                                                         }

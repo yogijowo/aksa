@@ -32,24 +32,34 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await seed_default_indonesian_team(db_manager)
     await privacy_policy_gate.ensure_loaded_from_db(db_manager)
 
-    # Write atomic runtime port file (AKSA-SEC-004-R2)
+    # Write atomic runtime port manifest (AKSA-SEC-004-R2 / AKSA-SEC-004-R5)
+    launch_id = os.environ.get("AKSA_LAUNCH_ID", "").strip()
     port_file = settings.runtime_dir / "engine_port.json"
+    loopback_host = "127.0.0.1" if settings.host in ("127.0.0.1", "localhost") else settings.host
     runtime_info = {
-        "host": settings.host,
+        "host": loopback_host,
         "port": settings.port,
         "pid": os.getpid(),
         "version": "1.0.0",
+        "launch_id": launch_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
         import json
         temp_port_file = settings.runtime_dir / f"engine_port.json.tmp.{os.getpid()}"
-        temp_port_file.write_text(json.dumps(runtime_info, indent=2), encoding="utf-8")
+        fd = os.open(str(temp_port_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(runtime_info, indent=2))
+            fh.flush()
+            os.fsync(fh.fileno())
         os.replace(temp_port_file, port_file)
-        sys.stderr.write(f"[AKSA_ENGINE_READY:port={settings.port}:pid={os.getpid()}]\n")
+        sys.stderr.write(f"[AKSA_ENGINE_READY:port={settings.port}:pid={os.getpid()}:launch_id={launch_id}]\n")
         sys.stderr.flush()
-    except Exception:
-        pass
+    except Exception as exc:
+        sys.stderr.write(f"FATAL: Gagal menulis manifest port runtime '{port_file}': {exc}\n")
+        sys.stderr.flush()
+        if launch_id:
+            raise
 
     yield
 

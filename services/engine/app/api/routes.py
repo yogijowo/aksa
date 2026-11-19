@@ -1345,12 +1345,23 @@ async def list_agent_candidate_skills(agent_id: str) -> dict[str, Any]:
     return {"agent_id": agent_id, "candidates": candidates}
 
 
+class EvaluateCandidateRequest(BaseModel):
+    replay_fixtures: list[dict[str, Any]] | None = None
+
+
 @api_router.post("/agents/{agent_id}/skills/{skill_id}/evaluate")
-async def evaluate_agent_candidate_skill(agent_id: str, skill_id: str) -> dict[str, Any]:
-    """Evaluate candidate skill safety and structural compliance."""
+async def evaluate_agent_candidate_skill(
+    agent_id: str,
+    skill_id: str,
+    req: EvaluateCandidateRequest | None = None,
+) -> dict[str, Any]:
+    """Evaluate candidate skill safety, DAG/schemas, and isolated runtime replay."""
     version_svc = SkillVersionService(agent_id)
     try:
-        report = version_svc.evaluate_candidate(skill_id)
+        report = await version_svc.evaluate_and_replay_candidate(
+            skill_id,
+            replay_fixtures=req.replay_fixtures if req else None,
+        )
         return {"report": report.model_dump()}
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc

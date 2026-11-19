@@ -350,7 +350,17 @@ class MCPClientManager:
         server.enabled = enabled
         return server
 
-    def register_server(self, config: MCPServerConfig) -> MCPServerConfig:
+    def register_server(self, config: MCPServerConfig, internal: bool = False) -> MCPServerConfig:
+        """Register an MCP server config; third-party callers cannot claim 'system_trusted' or hijack trusted IDs."""
+        if not internal:
+            if config.trust_level == "system_trusted":
+                raise PermissionError(
+                    f"Server MCP eksternal '{config.id}' dilarang mendeklarasikan trust_level='system_trusted' (fail-closed)."
+                )
+            if config.id in TRUSTED_SYSTEM_MCP_SERVER_IDS:
+                raise PermissionError(
+                    f"ID server MCP terproteksi '{config.id}' hanya dapat didaftarkan oleh registri internal tepercaya."
+                )
         self._servers[config.id] = config
         return config
 

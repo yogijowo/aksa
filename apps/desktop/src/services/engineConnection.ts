@@ -121,23 +121,34 @@ export async function getEngineConnection(): Promise<EngineConnectionConfig> {
     if (isTauri) {
       try {
         const { invoke } = await import("@tauri-apps/api/core");
-        const info = await invoke<{
+        let info: {
           host: string;
           port: number;
           auth_token: string;
           base_url: string;
           ws_url: string;
           lifecycle_state?: SidecarLifecycleState;
-        }>("get_engine_connection_info");
+        } | null = null;
 
-        if (info && info.base_url) {
+        // Wait up to 10s while Rust completes mandatory manifest + PID + launch_id + HMAC handshake
+        for (let attempt = 0; attempt < 40; attempt++) {
+          info = await invoke("get_engine_connection_info");
+          if (!info) break;
+          if (info.lifecycle_state === "failed" || info.lifecycle_state === "stopping") break;
+          if (info.lifecycle_state === "ready" && info.port > 0 && info.base_url) break;
+          await new Promise((r) => setTimeout(r, 250));
+        }
+
+        if (info && info.port > 0 && info.base_url && info.lifecycle_state === "ready") {
           const isVerified = await verifyEngineIdentity(info.base_url, info.auth_token);
           const finalState: SidecarLifecycleState = isVerified ? "ready" : "failed";
 
-          try {
-            await invoke("update_engine_lifecycle_state", { newState: finalState });
-          } catch {
-            // Non-critical if update handler fails
+          if (!isVerified) {
+            try {
+              await invoke("update_engine_lifecycle_state", { newState: "failed" });
+            } catch {
+              // Ignore IPC error if closing
+            }
           }
 
           cachedConnection = {

@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import base64
+import csv
 import json
+import logging
 import uuid
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
+
+logger = logging.getLogger(__name__)
 
 
 class TaskOutcome(str, Enum):
@@ -43,16 +47,25 @@ def _generate_non_colliding_path(directory: Path, base_stem: str, extension: str
         counter += 1
 
 
-def get_artifact_postcondition_breakdown(art_path: Path) -> dict[str, Any]:
-    """Inspect and validate an artifact across three distinct gates:
+def get_artifact_postcondition_breakdown(
+    art_path: Path,
+    expected_schema: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Inspect and validate an artifact across three distinct gates + task-specific semantics:
     1. file_created
     2. format_valid
-    3. semantic_postcondition_passed (AKSA-CYCLE-5 / Section 9).
+    3. semantic_postcondition_passed (AKSA-AGENT-003-R5).
+
+    NEVER auto-passes unknown/unsupported file extensions; rejects JSON scalars,
+    trivial 1-cell Excel placeholders, and textless ornamental PDF drawings.
     """
-    res = {
+    schema = expected_schema or {}
+    res: dict[str, Any] = {
         "file_created": False,
         "format_valid": False,
         "semantic_postcondition_passed": False,
+        "semantic_status": "failed",  # passed | failed | unsupported
+        "unsupported_format": False,
         "detail": "",
     }
     if not art_path.exists():
@@ -72,28 +85,77 @@ def get_artifact_postcondition_breakdown(art_path: Path) -> dict[str, Any]:
     if suffix in (".xlsx", ".xlsm"):
         try:
             import openpyxl
-            wb = openpyxl.load_workbook(str(art_path), data_only=True)
-            if not wb.sheetnames:
+            wb_val = openpyxl.load_workbook(str(art_path), data_only=True)
+            wb_fml = openpyxl.load_workbook(str(art_path), data_only=False)
+            if not wb_val.sheetnames:
+                wb_val.close()
+                wb_fml.close()
                 res["detail"] = f"Buku kerja Excel kosong tanpa lembar kerja: {art_path}"
                 return res
             res["format_valid"] = True
-            # Semantic check: Verify at least one worksheet has actual data/rows
-            has_data = False
-            for sname in wb.sheetnames:
-                ws = wb[sname]
-                if ws.max_row and ws.max_row >= 1 and ws.max_column and ws.max_column >= 1:
-                    # Check if at least one cell has content
-                    for row in ws.iter_rows(values_only=True):
-                        if any(v is not None and str(v).strip() != "" for v in row):
-                            has_data = True
-                            break
-                if has_data:
-                    break
-            wb.close()
-            if not has_data:
-                res["detail"] = f"Buku kerja Excel tidak memiliki data/sel terisi (hanya lembar kosong): {art_path}"
+
+            non_empty_cells = 0
+            max_rows_seen = 0
+            all_text_lower: list[str] = []
+            header_tokens: set[str] = set()
+            has_formula = False
+
+            for sname in wb_val.sheetnames:
+                ws = wb_val[sname]
+                ws_f = wb_fml[sname]
+                if ws.max_row and ws.max_row > max_rows_seen:
+                    max_rows_seen = ws.max_row
+                for r_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
+                    for cell_v in row:
+                        if cell_v is not None and str(cell_v).strip() != "":
+                            non_empty_cells += 1
+                            txt = str(cell_v).strip().lower()
+                            all_text_lower.append(txt)
+                            if r_idx <= 2:
+                                header_tokens.add(txt)
+                for row_f in ws_f.iter_rows(values_only=True):
+                    for cf in row_f:
+                        if isinstance(cf, str) and cf.startswith("="):
+                            has_formula = True
+
+            wb_val.close()
+            wb_fml.close()
+
+            min_cells = int(schema.get("min_cells", 2))
+            if non_empty_cells < min_cells:
+                res["detail"] = (
+                    f"Buku kerja Excel hanya memiliki {non_empty_cells} sel terisi "
+                    f"(minimum semantik: {min_cells} sel nyata): {art_path}"
+                )
                 return res
+
+            min_rows = int(schema.get("min_rows", 1))
+            if max_rows_seen < min_rows:
+                res["detail"] = f"Jumlah baris Excel ({max_rows_seen}) kurang dari syarat tugas ({min_rows})."
+                return res
+
+            if schema.get("require_formulas") and not has_formula:
+                res["detail"] = "Buku kerja Excel tidak memuat formula/rumus dinamis yang disyaratkan tugas."
+                return res
+
+            req_cols = [str(c).strip().lower() for c in schema.get("required_columns", [])]
+            if req_cols:
+                combined_headers = " ".join(header_tokens)
+                missing_cols = [c for c in req_cols if c not in combined_headers]
+                if missing_cols:
+                    res["detail"] = f"Kolom wajib Excel tidak ditemukan: {missing_cols}"
+                    return res
+
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            if req_kw:
+                corpus = " ".join(all_text_lower)
+                missing_kw = [k for k in req_kw if k not in corpus]
+                if missing_kw:
+                    res["detail"] = f"Konten wajib Excel tidak ditemukan: {missing_kw}"
+                    return res
+
             res["semantic_postcondition_passed"] = True
+            res["semantic_status"] = "passed"
             res["detail"] = "Valid"
             return res
         except Exception as exc:
@@ -105,21 +167,75 @@ def get_artifact_postcondition_breakdown(art_path: Path) -> dict[str, Any]:
             import docx
             doc = docx.Document(str(art_path))
             res["format_valid"] = True
-            # Semantic check: Document has actual paragraph text or table cells
-            total_text_len = sum(len(p.text.strip()) for p in doc.paragraphs)
-            if total_text_len == 0 and doc.tables:
-                for table in doc.tables:
-                    for row in table.rows:
-                        for cell in row.cells:
-                            total_text_len += len(cell.text.strip())
-            if total_text_len == 0:
-                res["detail"] = f"Dokumen Word (.docx) tidak memiliki teks atau konten narasi: {art_path}"
+            chunks = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            chunks.append(cell.text.strip())
+            full_text = "\n".join(chunks)
+            min_chars = int(schema.get("min_chars", 10))
+            if len(full_text) < min_chars:
+                res["detail"] = (
+                    f"Dokumen Word (.docx) hanya berisi {len(full_text)} karakter "
+                    f"(minimum semantik: {min_chars}): {art_path}"
+                )
                 return res
+
+            if schema.get("min_paragraphs") and len(chunks) < int(schema["min_paragraphs"]):
+                res["detail"] = f"Jumlah paragraf Word kurang dari syarat ({schema['min_paragraphs']})."
+                return res
+
+            lower_text = full_text.lower()
+            req_sections = [str(s).strip().lower() for s in schema.get("required_sections", [])]
+            missing_sec = [s for s in req_sections if s not in lower_text]
+            if missing_sec:
+                res["detail"] = f"Bagian/section wajib dokumen Word tidak ditemukan: {missing_sec}"
+                return res
+
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            missing_kw = [k for k in req_kw if k not in lower_text]
+            if missing_kw:
+                res["detail"] = f"Konten wajib dokumen Word tidak ditemukan: {missing_kw}"
+                return res
+
             res["semantic_postcondition_passed"] = True
+            res["semantic_status"] = "passed"
             res["detail"] = "Valid"
             return res
         except Exception as exc:
             res["detail"] = f"Integritas dokumen Word (.docx) tidak valid atau korup: {exc}"
+            return res
+
+    elif suffix == ".pptx":
+        try:
+            from pptx import Presentation
+            prs = Presentation(str(art_path))
+            if len(prs.slides) < 1:
+                res["detail"] = f"Presentasi PowerPoint tidak memiliki slide: {art_path}"
+                return res
+            res["format_valid"] = True
+            slide_texts: list[str] = []
+            for slide in prs.slides:
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and str(shape.text).strip():
+                        slide_texts.append(str(shape.text).strip())
+            full_text = "\n".join(slide_texts)
+            if len(full_text) < int(schema.get("min_chars", 10)):
+                res["detail"] = f"Slide PowerPoint tidak memuat teks isi yang memadai: {art_path}"
+                return res
+            lower_text = full_text.lower()
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            missing_kw = [k for k in req_kw if k not in lower_text]
+            if missing_kw:
+                res["detail"] = f"Konten wajib PowerPoint tidak ditemukan: {missing_kw}"
+                return res
+            res["semantic_postcondition_passed"] = True
+            res["semantic_status"] = "passed"
+            res["detail"] = "Valid"
+            return res
+        except Exception as exc:
+            res["detail"] = f"Integritas PowerPoint (.pptx) tidak valid atau korup: {exc}"
             return res
 
     elif suffix == ".pdf":
@@ -131,17 +247,33 @@ def get_artifact_postcondition_breakdown(art_path: Path) -> dict[str, Any]:
                 res["detail"] = f"Dokumen PDF tidak memiliki halaman: {art_path}"
                 return res
             res["format_valid"] = True
-            # Semantic check: At least one page contains readable text or vector drawings
-            has_content = False
-            for page in doc:
-                if len(page.get_text().strip()) > 0 or len(page.get_drawings()) > 0:
-                    has_content = True
-                    break
+            page_count = doc.page_count
+            extracted_text = "\n".join(page.get_text().strip() for page in doc).strip()
+            has_images = any(len(page.get_images()) > 0 for page in doc)
             doc.close()
-            if not has_content:
-                res["detail"] = f"Dokumen PDF tidak memiliki teks atau visual yang dapat dirender: {art_path}"
+
+            if schema.get("min_pages") and page_count < int(schema["min_pages"]):
+                res["detail"] = f"Jumlah halaman PDF ({page_count}) kurang dari syarat ({schema['min_pages']})."
                 return res
+
+            # Reject ornamental-only vector drawings without extractable text or images
+            min_chars = int(schema.get("min_chars", 10))
+            if len(extracted_text) < min_chars and not (schema.get("allow_image_only") and has_images):
+                res["detail"] = (
+                    f"Dokumen PDF tidak memiliki teks yang cukup ({len(extracted_text)} karakter, "
+                    "ornamental vector drawing ditolak oleh semantic gate)."
+                )
+                return res
+
+            lower_text = extracted_text.lower()
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            missing_kw = [k for k in req_kw if k not in lower_text]
+            if missing_kw:
+                res["detail"] = f"Konten wajib PDF tidak ditemukan: {missing_kw}"
+                return res
+
             res["semantic_postcondition_passed"] = True
+            res["semantic_status"] = "passed"
             res["detail"] = "Valid"
             return res
         except Exception as exc:
@@ -150,46 +282,109 @@ def get_artifact_postcondition_breakdown(art_path: Path) -> dict[str, Any]:
 
     elif suffix == ".json":
         try:
-            import json
             data = json.loads(art_path.read_text(encoding="utf-8"))
             res["format_valid"] = True
-            # Semantic check: JSON is non-empty object or list
-            if data is None or (isinstance(data, (dict, list, str)) and len(data) == 0):
-                res["detail"] = f"File JSON kosong tanpa data terstruktur: {art_path}"
+            # Reject scalars (int, float, bool, str, None) and empty containers
+            if not isinstance(data, (dict, list)) or len(data) == 0:
+                res["detail"] = f"File JSON harus berupa objek atau array terstruktur non-kosong (skalar ditolak): {art_path}"
                 return res
+            if schema.get("min_items") and len(data) < int(schema["min_items"]):
+                res["detail"] = f"Jumlah item JSON kurang dari syarat ({schema['min_items']})."
+                return res
+            req_keys = [str(k) for k in schema.get("required_keys", [])]
+            if req_keys:
+                sample = data if isinstance(data, dict) else (data[0] if isinstance(data[0], dict) else {})
+                missing_keys = [k for k in req_keys if k not in sample]
+                if missing_keys:
+                    res["detail"] = f"Kunci wajib JSON tidak ditemukan: {missing_keys}"
+                    return res
             res["semantic_postcondition_passed"] = True
+            res["semantic_status"] = "passed"
             res["detail"] = "Valid"
             return res
         except Exception as exc:
             res["detail"] = f"Integritas JSON tidak valid atau korup: {exc}"
             return res
 
-    elif suffix in (".txt", ".csv", ".tsv", ".md", ".html"):
+    elif suffix in (".csv", ".tsv"):
+        try:
+            delimiter = "\t" if suffix == ".tsv" else ","
+            raw = art_path.read_text(encoding="utf-8", errors="replace")
+            rows = [r for r in csv.reader(raw.splitlines(), delimiter=delimiter) if any(c.strip() for c in r)]
+            res["format_valid"] = True
+            min_rows = int(schema.get("min_rows", 2))
+            if len(rows) < min_rows:
+                res["detail"] = f"File {suffix} hanya memiliki {len(rows)} baris terisi (minimum {min_rows})."
+                return res
+            req_cols = [str(c).strip().lower() for c in schema.get("required_columns", [])]
+            if req_cols:
+                header_lower = {c.strip().lower() for c in rows[0]}
+                missing_cols = [c for c in req_cols if c not in header_lower]
+                if missing_cols:
+                    res["detail"] = f"Kolom wajib {suffix} tidak ditemukan: {missing_cols}"
+                    return res
+            res["semantic_postcondition_passed"] = True
+            res["semantic_status"] = "passed"
+            res["detail"] = "Valid"
+            return res
+        except Exception as exc:
+            res["detail"] = f"Integritas {suffix} tidak valid: {exc}"
+            return res
+
+    elif suffix in (".txt", ".md", ".html"):
         try:
             text = art_path.read_text(encoding="utf-8", errors="replace")
             res["format_valid"] = True
-            if len(text.strip()) == 0:
-                res["detail"] = f"File teks kosong: {art_path}"
+            stripped = text.strip()
+            min_chars = int(schema.get("min_chars", 10))
+            if len(stripped) < min_chars:
+                res["detail"] = f"File teks terlalu pendek ({len(stripped)} < {min_chars} karakter): {art_path}"
+                return res
+            lower_text = stripped.lower()
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            missing_kw = [k for k in req_kw if k not in lower_text]
+            if missing_kw:
+                res["detail"] = f"Konten wajib {suffix} tidak ditemukan: {missing_kw}"
                 return res
             res["semantic_postcondition_passed"] = True
+            res["semantic_status"] = "passed"
             res["detail"] = "Valid"
             return res
         except Exception as exc:
             res["detail"] = f"Gagal membaca teks file: {exc}"
             return res
 
-    # Generic file fallback
-    res["format_valid"] = True
-    res["semantic_postcondition_passed"] = True
-    res["detail"] = "Valid"
+    # AKSA-AGENT-003-R5: Unknown extensions MUST return 'unsupported', NEVER auto-pass semantic gate
+    res["format_valid"] = False
+    res["semantic_postcondition_passed"] = False
+    res["semantic_status"] = "unsupported"
+    res["unsupported_format"] = True
+    res["detail"] = f"Ekstensi '{suffix or '(tanpa ekstensi)'}' tidak didukung untuk verifikasi semantik otomatis (unsupported)."
     return res
 
 
-def verify_artifact_postcondition(art_path: Path) -> tuple[bool, str]:
-    """Verify that an artifact file exists, is non-empty, and satisfies format-specific
-    and semantic integrity (AKSA-AGENT-003-R3, AKSA-CYCLE-5)."""
-    breakdown = get_artifact_postcondition_breakdown(art_path)
-    is_ok = bool(breakdown["file_created"] and breakdown["format_valid"] and breakdown["semantic_postcondition_passed"])
+def derive_expected_artifact_schema(prompt: str, art_path: Path) -> dict[str, Any]:
+    """Derive task-specific expected schema hints from user prompt for artifact verification."""
+    p_lower = (prompt or "").lower()
+    suffix = art_path.suffix.lower()
+    schema: dict[str, Any] = {}
+    if suffix in (".xlsx", ".xlsm") and any(k in p_lower for k in ("rumus", "formula", "=sum", "=average")):
+        schema["require_formulas"] = True
+    return schema
+
+
+def verify_artifact_postcondition(
+    art_path: Path,
+    expected_schema: dict[str, Any] | None = None,
+) -> tuple[bool, str]:
+    """Verify that an artifact file exists, is supported, valid format, and satisfies semantic postconditions."""
+    breakdown = get_artifact_postcondition_breakdown(art_path, expected_schema=expected_schema)
+    is_ok = bool(
+        breakdown["file_created"]
+        and breakdown["format_valid"]
+        and breakdown["semantic_postcondition_passed"]
+        and not breakdown["unsupported_format"]
+    )
     return is_ok, breakdown["detail"]
 
 
@@ -1000,45 +1195,46 @@ class HierarchicalOrchestrator:
             session_id=session_id,
         )
 
+        # Compute granular task outcome reflecting actual tool execution & artifact postconditions (AKSA-AGENT-003-R5)
+        has_failed_step = any(s.get("status") == "failed" for s in execution_steps)
+        has_succeeded_step = any(s.get("status") in ("completed", "success") for s in execution_steps)
+        postcondition_error_reason: str | None = None
+
+        if is_ambiguous_duplication:
+            task_outcome = TaskOutcome.CANCELLED
+        elif tool_failed or has_failed_step:
+            task_outcome = TaskOutcome.PARTIAL_SUCCESS if has_succeeded_step else TaskOutcome.FAILED
+        else:
+            postcondition_failed = False
+            if artifacts:
+                for art_entry in artifacts:
+                    raw_path = art_entry.get("file_path") if isinstance(art_entry, dict) else art_entry
+                    if not raw_path:
+                        continue
+                    art_path = Path(str(raw_path))
+                    expected_schema = derive_expected_artifact_schema(prompt, art_path)
+                    ok, reason = verify_artifact_postcondition(art_path, expected_schema=expected_schema)
+                    if not ok:
+                        postcondition_failed = True
+                        postcondition_error_reason = reason
+                        break
+            if postcondition_failed:
+                task_outcome = TaskOutcome.UNVERIFIED
+                logger.warning("[AKSA Orchestrator] Validasi postcondition artefak gagal: %s", postcondition_error_reason)
+            else:
+                task_outcome = TaskOutcome.SUCCESS
+
+        actual_success = (task_outcome == TaskOutcome.SUCCESS)
+
         # Record episodic task & evaluate candidate skills under isolated agent storage (AKSA-AGENT-002, AKSA-AGENT-003)
         try:
             from app.core.agent_learning import AgentMemoryService, SkillCandidateExtractor
             sup_agent_id = supervisor.get("id") or "supervisor"
             tools_called = [s.get("action_label", "") for s in execution_steps]
-
-            # Compute granular task outcome reflecting actual tool execution & artifact postconditions (AKSA-AGENT-003-R2)
-            has_failed_step = any(s.get("status") == "failed" for s in execution_steps)
-            has_succeeded_step = any(s.get("status") in ("completed", "success") for s in execution_steps)
-
-            if is_ambiguous_duplication:
-                task_outcome = TaskOutcome.CANCELLED
-            elif tool_failed:
-                task_outcome = TaskOutcome.PARTIAL_SUCCESS if has_succeeded_step else TaskOutcome.FAILED
-            elif has_failed_step:
-                task_outcome = TaskOutcome.PARTIAL_SUCCESS if has_succeeded_step else TaskOutcome.FAILED
-            else:
-                postcondition_failed = False
-                postcondition_error_reason: str | None = None
-                if artifacts:
-                    for art_path_str in artifacts:
-                        art_path = Path(art_path_str)
-                        ok, reason = verify_artifact_postcondition(art_path)
-                        if not ok:
-                            postcondition_failed = True
-                            postcondition_error_reason = reason
-                            break
-                if postcondition_failed:
-                    task_outcome = TaskOutcome.UNVERIFIED
-                    logger.warning("[AKSA Orchestrator] Validasi postcondition artefak gagal: %s", postcondition_error_reason)
-                else:
-                    task_outcome = TaskOutcome.SUCCESS
-
-            actual_success = (task_outcome == TaskOutcome.SUCCESS)
-
             task_uid = f"task_{uuid.uuid4().hex[:8]}"
 
             # 1. Record in isolated storage for each executing sub-agent
-            for sub in sub_agents_to_run:
+            for sub in delegated_agents:
                 sub_id = sub.get("id") or sub.get("name")
                 if sub_id and sub_id != sup_agent_id:
                     mem_sub = AgentMemoryService(sub_id)
@@ -1083,11 +1279,13 @@ class HierarchicalOrchestrator:
                 execution_trace=execution_steps,
             )
         except Exception:
-            pass
+            logger.exception("[AKSA Orchestrator] Gagal mencatat memori episodik / pembelajaran agen")
 
         return {
             "supervisor_name": supervisor["name"],
             "reply": final_reply,
+            "task_outcome": task_outcome.value,
+            "postcondition_error": postcondition_error_reason,
             "execution_steps": execution_steps,
             "artifacts": artifacts,
             "tokens_used": total_tokens_used,

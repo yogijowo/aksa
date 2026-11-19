@@ -102,6 +102,10 @@ class SkillEvaluationResult(BaseModel):
     score: float
     checks: list[dict[str, Any]]
     replay_passed: bool = True
+    replay_mode: str = "static_screen"  # static_screen | runtime
+    replay_pass_rate: float = 0.0
+    dag_valid: bool = True
+    calibrated_confidence: float | None = None
     replay_trace: list[dict[str, Any]] = Field(default_factory=list)
     evaluated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -374,6 +378,73 @@ class SkillEvaluator:
     DANGEROUS_CALLS = ["rm -rf", "shutil.rmtree", "os.system", "subprocess.Popen", "eval(", "exec("]
 
     @classmethod
+    def validate_dag_and_schemas(cls, traces: list[dict[str, Any]]) -> tuple[bool, list[str], list[dict[str, Any]]]:
+        """Validate dependency DAG ordering and parameter JSON schemas against ToolRegistry."""
+        from app.tools.registry import tool_registry
+
+        issues: list[str] = []
+        screened_steps: list[dict[str, Any]] = []
+        completed_steps: set[int | str] = set()
+        produced_artifacts: set[str] = set()
+        dag_valid = True
+
+        for idx, trace in enumerate(traces, 1):
+            t_name = str(trace.get("tool_name", "")).strip()
+            raw_inp = trace.get("input_summary", {})
+            raw_out = trace.get("output_summary", "")
+            status = str(trace.get("status", "success"))
+
+            # 1. Dependency DAG check (no forward/circular references)
+            for dep in trace.get("depends_on", []):
+                if dep not in completed_steps:
+                    dag_valid = False
+                    issues.append(f"Langkah {idx} ('{t_name}') bergantung pada '{dep}' yang belum dijalankan sebelumnya.")
+            for req_art in trace.get("requires_artifacts", []):
+                if req_art not in produced_artifacts:
+                    dag_valid = False
+                    issues.append(f"Langkah {idx} ('{t_name}') membutuhkan artefak '{req_art}' yang belum dihasilkan.")
+
+            # 2. Parameter safety & schema validation against registered ToolDefinition
+            is_safe_tool = bool(re.match(r"^[a-zA-Z0-9_\-\.\:\s]+$", t_name)) if t_name else True
+            inp_str = json.dumps(raw_inp, ensure_ascii=False) if isinstance(raw_inp, dict) else str(raw_inp)
+            out_str = json.dumps(raw_out, ensure_ascii=False) if isinstance(raw_out, dict) else str(raw_out)
+            is_clean_args = (
+                not any(kw in inp_str for kw in cls.DANGEROUS_CALLS)
+                and ".." not in inp_str
+                and not any(pat.search(out_str) for pat in LearningPrivacyFilter.SECRET_PATTERNS)
+            )
+
+            schema_ok = True
+            reg_tool = tool_registry.get_tool(t_name)
+            if reg_tool and isinstance(raw_inp, dict) and reg_tool.parameters_schema:
+                try:
+                    import jsonschema
+                    jsonschema.validate(instance=raw_inp, schema=reg_tool.parameters_schema)
+                except Exception as exc:
+                    schema_ok = False
+                    issues.append(f"Schema argumen langkah {idx} ('{t_name}') tidak valid: {exc}")
+
+            step_ok = dag_valid and is_safe_tool and is_clean_args and schema_ok and status != "failed"
+            screened_steps.append({
+                "step_number": idx,
+                "tool": t_name,
+                "schema_checked": bool(reg_tool and isinstance(raw_inp, dict)),
+                "simulated_status": "passed" if step_ok else "failed",
+                "reason": "OK" if step_ok else (issues[-1] if issues else "Parameter atau status tidak valid"),
+            })
+
+            if step_ok:
+                completed_steps.add(idx)
+                if t_name:
+                    completed_steps.add(t_name)
+                if trace.get("step_id"):
+                    completed_steps.add(trace["step_id"])
+                for art in trace.get("produces_artifacts", []):
+                    produced_artifacts.add(str(art))
+
+        return dag_valid and all(s["simulated_status"] == "passed" for s in screened_steps), issues, screened_steps
+
+    @classmethod
     def evaluate(
         cls,
         skill_md_content: str,
@@ -384,6 +455,7 @@ class SkillEvaluator:
         score = 100.0
         replay_trace: list[dict[str, Any]] = []
         replay_passed = True
+        dag_valid = True
 
         # Check 1: YAML frontmatter presence
         has_frontmatter = skill_md_content.startswith("---") and "\n---\n" in skill_md_content[3:]
@@ -418,43 +490,24 @@ class SkillEvaluator:
         if not has_secrets:
             score -= 40.0
 
-        # Check 4: Procedural Replay & Generalizability Evaluation (AKSA-CYCLE-5 / Section 9)
+        # Check 4: Static Trace Screening, DAG & Schema Validation (label honestly: static_screen)
         traces = (candidate_data or {}).get("structured_traces", [])
         steps = (candidate_data or {}).get("steps", [])
         if traces:
-            for idx, trace in enumerate(traces, 1):
-                t_name = trace.get("tool_name", "")
-                inp = str(trace.get("input_summary", ""))
-                outp = str(trace.get("output_summary", ""))
-                status = trace.get("status", "success")
-
-                # Verify tool name doesn't contain path traversal or shell metacharacters
-                is_safe_tool = bool(re.match(r"^[a-zA-Z0-9_\-\.\:\s]+$", t_name)) if t_name else True
-                is_clean_args = not any(kw in inp for kw in cls.DANGEROUS_CALLS) and ".." not in inp
-                step_ok = is_safe_tool and is_clean_args and status != "failed"
-
-                replay_trace.append({
-                    "step_number": idx,
-                    "tool": t_name,
-                    "simulated_status": "passed" if step_ok else "failed",
-                    "reason": "OK" if step_ok else "Tool name atau parameter melanggar batasan keamanan",
-                })
-                if not step_ok:
-                    replay_passed = False
-
+            dag_valid, issues, replay_trace = cls.validate_dag_and_schemas(traces)
+            replay_passed = dag_valid
             checks.append({
-                "name": "procedural_replay_simulation",
+                "name": "trace_dag_and_schema_screening",
                 "passed": replay_passed,
                 "detail": (
-                    f"Replay evaluasi berhasil pada {len(traces)} langkah prosedural"
+                    f"Screening DAG & skema berhasil pada {len(traces)} langkah (static_screen)"
                     if replay_passed
-                    else "Replay simulasi gagal: terdeteksi parameter tidak aman atau status langkah gagal"
+                    else f"Screening DAG/skema gagal: {'; '.join(issues)}"
                 ),
             })
             if not replay_passed:
                 score -= 35.0
         elif steps:
-            # Basic syntactic flow replay on step list
             has_steps = len(steps) >= 2
             checks.append({
                 "name": "procedural_steps_structure",
@@ -471,7 +524,210 @@ class SkillEvaluator:
             score=max(0.0, score),
             checks=checks,
             replay_passed=replay_passed,
+            replay_mode="static_screen",
+            replay_pass_rate=1.0 if (traces and replay_passed) else 0.0,
+            dag_valid=dag_valid,
             replay_trace=replay_trace,
+        )
+
+    @classmethod
+    async def replay_candidate_in_sandbox(
+        cls,
+        skill_md_content: str,
+        skill_id: str,
+        candidate_data: dict[str, Any],
+        replay_fixtures: list[dict[str, Any]],
+        tool_executor: Any = None,
+    ) -> SkillEvaluationResult:
+        """Actually replay a candidate workflow across isolated fixture variations in a clean temp sandbox.
+
+        Executes real registered tools (or a sandboxed test executor), verifies produced artifacts
+        against format + semantic postcondition gates, validates output expectations, and computes
+        empirical ``replay_pass_rate`` and ``calibrated_confidence`` (AKSA-AGENT-001-R5).
+        """
+        import tempfile
+        from app.core.orchestrator import verify_artifact_postcondition
+        from app.core.sandbox import WorkspacePolicy, sandbox_manager
+        from app.tools.registry import ToolResult, tool_registry
+
+        # Ensure standard built-in tools are registered before lookup
+        import app.tools  # noqa: F401
+
+        base_eval = cls.evaluate(skill_md_content, skill_id, candidate_data=candidate_data)
+        if not base_eval.passed or not replay_fixtures:
+            base_eval.replay_mode = "runtime"
+            base_eval.replay_passed = False
+            base_eval.replay_pass_rate = 0.0
+            base_eval.calibrated_confidence = 0.0
+            base_eval.passed = False
+            return base_eval
+
+        traces = candidate_data.get("structured_traces", [])
+        if not traces:
+            base_eval.replay_mode = "runtime"
+            base_eval.replay_passed = False
+            base_eval.replay_pass_rate = 0.0
+            base_eval.calibrated_confidence = 0.0
+            base_eval.passed = False
+            base_eval.checks.append({
+                "name": "runtime_replay_execution",
+                "passed": False,
+                "detail": "Kandidat tidak memiliki structured_traces untuk di-replay secara runtime.",
+            })
+            return base_eval
+
+        passed_runs = 0
+        runtime_logs: list[dict[str, Any]] = []
+        # Preserve authorized workspaces outside isolated replay
+        prior_workspaces = dict(sandbox_manager._workspaces)
+
+        try:
+            for f_idx, fixture in enumerate(replay_fixtures, 1):
+                fixture_name = str(fixture.get("name", f"fixture_{f_idx}"))
+                with tempfile.TemporaryDirectory(prefix="aksa_skill_replay_") as tmp_dir:
+                    ws = Path(tmp_dir).resolve()
+                    sandbox_manager.clear_all_workspaces()
+                    sandbox_manager.register_workspace(
+                        WorkspacePolicy(
+                            folder_path=str(ws),
+                            allow_read=True,
+                            allow_write=True,
+                            allow_execute=True,
+                        )
+                    )
+
+                    # Materialize fixture input files strictly inside isolated replay workspace
+                    for rel_name, file_content in fixture.get("input_files", {}).items():
+                        rel = Path(rel_name)
+                        if rel.is_absolute() or ".." in rel.parts:
+                            raise PermissionError(f"Path fixture tidak aman: '{rel_name}'")
+                        dest = ws / rel
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        dest.write_text(str(file_content), encoding="utf-8")
+
+                    run_ok = True
+                    run_artifacts: list[Path] = []
+                    run_summaries: list[str] = []
+                    fail_reason = ""
+                    step_vars: dict[str, Any] = dict(fixture.get("inputs", {}))
+
+                    for s_idx, trace in enumerate(traces, 1):
+                        tool_name = str(trace.get("tool_name", ""))
+                        base_args = dict(trace.get("input_summary", {})) if isinstance(trace.get("input_summary"), dict) else {}
+                        # Allow per-fixture overrides for tool parameters
+                        per_step_override = fixture.get("step_args", {}).get(tool_name, {})
+                        call_args = {**base_args, **per_step_override}
+
+                        # Recursively substitute {var} placeholders from fixture inputs & ensure path args stay inside ws
+                        def _resolve_val(key: str, val: Any) -> Any:
+                            if isinstance(val, str):
+                                try:
+                                    v_sub = val.format(**step_vars)
+                                except Exception:
+                                    v_sub = val
+                                if any(tok in key.lower() for tok in ("path", "file", "output", "source", "target")):
+                                    vp = Path(v_sub)
+                                    safe_name = vp.name or f"output_{s_idx}"
+                                    return str((ws / vp) if not vp.is_absolute() else (ws / safe_name))
+                                return v_sub
+                            if isinstance(val, list):
+                                return [_resolve_val(key, item) for item in val]
+                            if isinstance(val, dict):
+                                return {dk: _resolve_val(dk, dv) for dk, dv in val.items()}
+                            return val
+
+                        resolved_args: dict[str, Any] = {k: _resolve_val(k, v) for k, v in call_args.items()}
+
+                        if tool_executor is not None:
+                            res = await tool_executor(tool_name, resolved_args, ws)
+                            if not isinstance(res, ToolResult):
+                                res = ToolResult(success=bool(res.get("success")), summary=str(res.get("summary", "")), artifacts=res.get("artifacts", []), data=res.get("data"))
+                        else:
+                            # Call registered handler directly inside isolated replay sandbox (bypassing HITL side-effects in dry-run)
+                            handler = tool_registry._handlers.get(tool_name)
+                            if not handler:
+                                run_ok = False
+                                fail_reason = f"Tool '{tool_name}' tidak ditemukan untuk runtime replay."
+                                break
+                            res = await handler(**resolved_args)
+
+                        run_summaries.append(res.summary)
+                        if not res.success:
+                            run_ok = False
+                            fail_reason = f"Langkah {s_idx} ({tool_name}) gagal: {res.summary}"
+                            break
+
+                        for art in res.artifacts:
+                            art_p = Path(art)
+                            run_artifacts.append(art_p)
+                        step_vars["last_summary"] = res.summary
+                        if run_artifacts:
+                            step_vars["last_artifact"] = str(run_artifacts[-1])
+
+                    # Verify fixture expectations & postcondition schemas
+                    if run_ok:
+                        exp_files = fixture.get("expected_artifacts", [])
+                        for exp_f in exp_files:
+                            target_art = ws / exp_f
+                            ok_art, art_msg = verify_artifact_postcondition(
+                                target_art, expected_schema=fixture.get("expected_schema")
+                            )
+                            if not ok_art:
+                                run_ok = False
+                                fail_reason = f"Artefak '{exp_f}' gagal postcondition: {art_msg}"
+                                break
+                        # If fixture expects schema without naming file, validate all produced artifacts
+                        if run_ok and not exp_files and run_artifacts:
+                            for p_art in run_artifacts:
+                                ok_art, art_msg = verify_artifact_postcondition(
+                                    p_art, expected_schema=fixture.get("expected_schema")
+                                )
+                                if not ok_art:
+                                    run_ok = False
+                                    fail_reason = f"Artefak '{p_art.name}' gagal postcondition: {art_msg}"
+                                    break
+                        for needle in fixture.get("expected_summary_contains", []):
+                            if needle.lower() not in " ".join(run_summaries).lower():
+                                run_ok = False
+                                fail_reason = f"Output ringkasan tidak memuat teks yang diharapkan: '{needle}'"
+                                break
+
+                    if run_ok:
+                        passed_runs += 1
+                    runtime_logs.append({
+                        "fixture": fixture_name,
+                        "passed": run_ok,
+                        "reason": "OK" if run_ok else fail_reason,
+                        "artifacts_produced": [a.name for a in run_artifacts],
+                    })
+        finally:
+            sandbox_manager._workspaces = prior_workspaces
+
+        pass_rate = round(passed_runs / len(replay_fixtures), 4)
+        all_passed = passed_runs == len(replay_fixtures) and base_eval.dag_valid
+        calibrated_conf = round(pass_rate * (0.95 if base_eval.dag_valid else 0.50), 2)
+
+        checks = list(base_eval.checks)
+        checks.append({
+            "name": "runtime_replay_execution",
+            "passed": all_passed,
+            "detail": (
+                f"Runtime replay terisolasi lulus {passed_runs}/{len(replay_fixtures)} variasi fixture "
+                f"(pass_rate={pass_rate:.0%}, confidence={calibrated_conf})."
+            ),
+        })
+        score = base_eval.score if all_passed else max(0.0, base_eval.score - round((1.0 - pass_rate) * 50.0, 1))
+        return SkillEvaluationResult(
+            skill_id=skill_id,
+            passed=all_passed and score >= 70.0,
+            score=score,
+            checks=checks,
+            replay_passed=all_passed,
+            replay_mode="runtime",
+            replay_pass_rate=pass_rate,
+            dag_valid=base_eval.dag_valid,
+            calibrated_confidence=calibrated_conf,
+            replay_trace=runtime_logs,
         )
 
 
@@ -520,6 +776,49 @@ class SkillVersionService:
         result = SkillEvaluator.evaluate(content, skill_id, candidate_data=cand_data)
 
         # Store evaluation report
+        eval_dir = agent_directory_service.resolve_agent_path(self.agent_id, "skills/evaluations")
+        eval_dir.mkdir(parents=True, exist_ok=True)
+        (eval_dir / f"{skill_id}.json").write_text(result.model_dump_json(indent=2), encoding="utf-8")
+        return result
+
+    async def evaluate_and_replay_candidate(
+        self,
+        skill_id: str,
+        replay_fixtures: list[dict[str, Any]] | None = None,
+        tool_executor: Any = None,
+    ) -> SkillEvaluationResult:
+        """Run static + DAG/schema checks AND runtime isolated replay when fixtures are provided."""
+        cand_dir = agent_directory_service.resolve_agent_path(
+            self.agent_id, f"skills/candidates/{skill_id}"
+        )
+        skill_md_file = cand_dir / "SKILL.md"
+        if not skill_md_file.exists():
+            raise FileNotFoundError(f"Candidate skill '{skill_id}' tidak memiliki SKILL.md.")
+
+        content = skill_md_file.read_text(encoding="utf-8")
+        cand_meta_file = cand_dir / "candidate.json"
+        cand_data: dict[str, Any] = {}
+        if cand_meta_file.exists():
+            try:
+                cand_data = json.loads(cand_meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        fixtures = replay_fixtures or cand_data.get("replay_fixtures")
+        if fixtures:
+            result = await SkillEvaluator.replay_candidate_in_sandbox(
+                skill_md_content=content,
+                skill_id=skill_id,
+                candidate_data=cand_data,
+                replay_fixtures=fixtures,
+                tool_executor=tool_executor,
+            )
+            if cand_data and result.calibrated_confidence is not None:
+                cand_data["confidence"] = result.calibrated_confidence
+                cand_meta_file.write_text(json.dumps(cand_data, indent=2), encoding="utf-8")
+        else:
+            result = SkillEvaluator.evaluate(content, skill_id, candidate_data=cand_data)
+
         eval_dir = agent_directory_service.resolve_agent_path(self.agent_id, "skills/evaluations")
         eval_dir.mkdir(parents=True, exist_ok=True)
         (eval_dir / f"{skill_id}.json").write_text(result.model_dump_json(indent=2), encoding="utf-8")

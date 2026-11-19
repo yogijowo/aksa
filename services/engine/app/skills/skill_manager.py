@@ -42,6 +42,7 @@ class PublisherTrustStore:
         root_public_key_b64: str | None = None,
         persist_path: Path | None = None,
         locked: bool = False,
+        allow_legacy_migration: bool = False,
     ) -> None:
         self._trusted_keys: dict[str, ed25519.Ed25519PublicKey] = {}
         self._revoked_keys: set[str] = set()
@@ -49,6 +50,7 @@ class PublisherTrustStore:
         self._persisted_raw_keys: dict[str, str] = {}
         self._root_locked: bool = locked
         self._persist_path: Path | None = persist_path
+        self._allow_legacy_migration: bool = allow_legacy_migration
 
         # Seed only official AKSA root public key (raw 32-byte Ed25519 public key)
         self.set_root_public_key(root_public_key_b64 or OFFICIAL_AKSA_ROOT_PUBLIC_KEY_B64, allow_override=True)
@@ -73,24 +75,58 @@ class PublisherTrustStore:
         raw_pub = base64.b64decode(root_public_key_b64)
         self._trusted_keys["aksa_official"] = ed25519.Ed25519PublicKey.from_public_bytes(raw_pub)
 
+    def rotate_root_public_key(self, new_root_public_key_b64: str, current_root_signature_b64: str) -> None:
+        """Rotate the root key only when authorized by a valid signature from the current root key."""
+        current_root = self._trusted_keys.get("aksa_official")
+        if not current_root:
+            raise PermissionError("Tidak ada kunci root aktif untuk memverifikasi rotasi.")
+        msg = f"aksa-root-rotation:v1:{new_root_public_key_b64}".encode("utf-8")
+        try:
+            current_root.verify(base64.b64decode(current_root_signature_b64), msg)
+        except Exception as exc:
+            raise PermissionError(f"Rotasi root ditolak: tanda tangan kunci root saat ini tidak valid: {exc}")
+        self.set_root_public_key(new_root_public_key_b64, allow_override=True)
+        self._enrollment_audit_trail.append({
+            "event": "root_key_rotated",
+            "new_root_public_key_b64": new_root_public_key_b64,
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
+        self._persist()
+
     @staticmethod
     def _payload_digest(payload: dict[str, Any]) -> str:
         body = {k: v for k, v in payload.items() if k != "integrity_sha256"}
         return hashlib.sha256(json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()
 
+    @staticmethod
+    def _validate_safe_trust_path(path: Path) -> None:
+        """Reject symlinks and hardlinks on trust store path and parent directory."""
+        if path.parent.is_symlink() or path.is_symlink():
+            raise PermissionError(f"Jalur trust store '{path}' menggunakan symlink yang dilarang.")
+        if path.exists():
+            st = os.lstat(str(path))
+            if st.st_nlink > 1:
+                raise PermissionError(f"File trust store '{path}' memiliki hardlink ({st.st_nlink}) yang dilarang.")
+
     def _load_persisted_state(self) -> None:
-        """Load persisted trust state; corrupt or tampered files fail closed (AKSA-SEC-002-R4)."""
+        """Load persisted trust state; corrupt, tampered, symlinked, or legacy files fail closed."""
         self._load_error: str | None = None
         legacy_migration = False
         if not self._persist_path or not self._persist_path.exists():
             return
         try:
-            data = json.loads(self._persist_path.read_text(encoding="utf-8"))
+            self._validate_safe_trust_path(self._persist_path)
+            flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+            fd = os.open(str(self._persist_path), flags)
+            with os.fdopen(fd, "r", encoding="utf-8") as fh:
+                data = json.loads(fh.read())
             if "integrity_sha256" in data:
                 if data["integrity_sha256"] != self._payload_digest(data):
                     raise ValueError("checksum integritas trust store tidak cocok")
+            elif self._allow_legacy_migration:
+                legacy_migration = True
             else:
-                legacy_migration = True  # pre-R4 file without checksum: accepted once, re-signed below
+                raise ValueError("file trust store tidak memiliki checksum integritas (migrasi legacy nonaktif)")
             revoked = set(data.get("revoked", []))
             keys: dict[str, ed25519.Ed25519PublicKey] = {}
             raw_keys: dict[str, str] = {}
@@ -110,11 +146,19 @@ class PublisherTrustStore:
             print(f"[AKSA Trust Store] State persistensi korup/dimanipulasi, mode fail-closed: {exc}", file=sys.stderr)
 
     def _persist(self) -> None:
-        """Atomically persist state with 0600 permissions; any failure raises (fail-closed)."""
+        """Atomically persist state with 0700 parent / 0600 file permissions, O_NOFOLLOW, and dir fsync."""
         if not self._persist_path:
             return
         if getattr(self, "_load_error", None):
             raise PermissionError(f"Trust store dalam mode fail-closed: {self._load_error}")
+        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+        if sys.platform != "win32":
+            try:
+                os.chmod(str(self._persist_path.parent), 0o700)
+            except OSError:
+                pass
+        self._validate_safe_trust_path(self._persist_path)
+
         payload: dict[str, Any] = {
             "version": "1.0",
             "publishers": self._persisted_raw_keys,
@@ -123,14 +167,23 @@ class PublisherTrustStore:
             "updated_at": datetime.now(timezone.utc).isoformat(),
         }
         payload["integrity_sha256"] = self._payload_digest(payload)
-        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self._persist_path.with_suffix(".tmp")
-        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(str(tmp), flags, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(payload, indent=2))
             fh.flush()
             os.fsync(fh.fileno())
         tmp.replace(self._persist_path)
+        if sys.platform != "win32":
+            try:
+                dir_fd = os.open(str(self._persist_path.parent), os.O_RDONLY)
+                try:
+                    os.fsync(dir_fd)
+                finally:
+                    os.close(dir_fd)
+            except OSError:
+                pass
 
     def register_publisher(
         self,
@@ -193,15 +246,30 @@ class PublisherTrustStore:
         return base64.b64encode(sig).decode("utf-8")
 
     def revoke_publisher(self, publisher_id: str) -> None:
-        """Revoke a publisher key immediately (AKSA-SEC-002, AKSA-SEC-002-R3)."""
-        snapshot = (set(self._revoked_keys), dict(self._trusted_keys), dict(self._persisted_raw_keys))
+        """Revoke a publisher key immediately with auditable persistence and rollback."""
+        snapshot = (
+            set(self._revoked_keys),
+            dict(self._trusted_keys),
+            dict(self._persisted_raw_keys),
+            list(self._enrollment_audit_trail),
+        )
         self._revoked_keys.add(publisher_id)
         self._trusted_keys.pop(publisher_id, None)
         self._persisted_raw_keys.pop(publisher_id, None)
+        self._enrollment_audit_trail.append({
+            "event": "publisher_revoked",
+            "publisher_id": publisher_id,
+            "at": datetime.now(timezone.utc).isoformat(),
+        })
         try:
             self._persist()
         except Exception:
-            self._revoked_keys, self._trusted_keys, self._persisted_raw_keys = snapshot
+            (
+                self._revoked_keys,
+                self._trusted_keys,
+                self._persisted_raw_keys,
+                self._enrollment_audit_trail,
+            ) = snapshot
             raise
 
     def is_revoked(self, publisher_id: str) -> bool:
@@ -1191,8 +1259,9 @@ class AgentSkillsManager:
             json.dumps(args or []),
         ]
 
-        # AKSA-SEC-003-R4: OS-enforced sandbox is the security boundary (fail-closed if unavailable).
-        from app.skills.os_sandbox import wrap_command
+        # AKSA-SEC-003-R5: OS-enforced sandbox is the security boundary across macOS, Linux, and Windows.
+        # Any sandbox setup failure aborts fail-closed without executing untrusted code.
+        from app.skills.os_sandbox import execute_in_os_sandbox
         engine_root = Path(__file__).resolve().parent.parent.parent
         read_roots = [
             engine_root,
@@ -1201,33 +1270,19 @@ class AgentSkillsManager:
             Path(sys.executable).resolve().parent,
             script_file.parent,
         ]
-        runner_cmd = wrap_command(runner_cmd, ws, read_roots)
-
-        popen_kwargs: dict[str, Any] = {}
-        if sys.platform != "win32":
-            popen_kwargs["start_new_session"] = True
-        else:
-            import subprocess
-            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-
-        proc = await asyncio.create_subprocess_exec(
-            *runner_cmd,
-            cwd=str(ws),
-            env=safe_env,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            **popen_kwargs,
-        )
-
-        if sys.platform == "win32":
-            from app.skills.os_sandbox import apply_windows_job_object_limits
-            apply_windows_job_object_limits(proc.pid)
 
         try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            max_out = 1024 * 1024
-            stdout_str = stdout[:max_out].decode("utf-8", errors="replace")
-            stderr_str = stderr[:max_out].decode("utf-8", errors="replace")
+            exec_res = await execute_in_os_sandbox(
+                cmd=runner_cmd,
+                cwd=ws,
+                env=safe_env,
+                workspace=ws,
+                read_roots=read_roots,
+                timeout=timeout,
+            )
+            stdout_str = exec_res["stdout"]
+            stderr_str = exec_res["stderr"]
+            exit_code = exec_res["exit_code"]
 
             from app.core.agent_learning import LearningPrivacyFilter
             clean_stdout = LearningPrivacyFilter.redact(stdout_str)
@@ -1235,43 +1290,20 @@ class AgentSkillsManager:
 
             await db_manager.log_permission_audit_event({
                 "capability_id": "skill_script_executed",
-                "resource_scope": f"{skill_id}:{script_rel_path}",
-                "decision": "allow" if proc.returncode == 0 else "error",
-                "reason_code": f"EXIT_CODE_{proc.returncode}",
+                "resource_scope": f"{agent_id or 'global'}:{skill_id}:{script_rel_path}",
+                "decision": "allow" if exit_code == 0 else "error",
+                "reason_code": f"EXIT_CODE_{exit_code}",
             })
 
             return {
-                "exit_code": proc.returncode,
+                "exit_code": exit_code,
                 "stdout": clean_stdout,
                 "stderr": clean_stderr,
                 "script": script_rel_path,
                 "skill_id": skill_id,
             }
-        except asyncio.TimeoutError:
-            import signal
-            if sys.platform != "win32":
-                try:
-                    pgid = os.getpgid(proc.pid)
-                    os.killpg(pgid, signal.SIGKILL)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-            else:
-                try:
-                    import subprocess
-                    subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-            try:
-                await proc.wait()
-            except Exception:
-                pass
-            raise TimeoutError(f"Eksekusi skrip keahlian '{script_rel_path}' melebihi batas waktu aman ({timeout}s).")
+        except TimeoutError as exc:
+            raise TimeoutError(f"Eksekusi skrip keahlian '{script_rel_path}' melebihi batas waktu aman ({timeout}s).") from exc
 
     async def uninstall_skill(self, skill_id: str) -> bool:
         """Uninstall a skill, revoke all its grants, and remove its runtime directory."""

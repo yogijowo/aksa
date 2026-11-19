@@ -39,7 +39,7 @@ jobs:
       - name: Execute Full P0/P1/P2 Adversarial Security Regression Suite
         working-directory: services/engine
         run: |
-          python -m pytest tests/test_p0_*.py tests/test_p1_*.py tests/test_p2_*.py tests/test_phase6_*.py tests/test_phase7_*.py tests/test_phase8_*.py -v
+          python -m pytest tests/test_p0_*.py tests/test_p1_*.py tests/test_p2_*.py tests/test_phase6_*.py tests/test_phase7_*.py tests/test_phase8_*.py tests/test_audit_*.py tests/test_reaudit_*.py -v
 
       - name: Audit Production Frontend Dependencies (Strict Blocking)
         working-directory: apps/desktop
