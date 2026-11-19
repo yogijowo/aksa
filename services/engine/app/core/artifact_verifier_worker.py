@@ -284,6 +284,10 @@ async def verify_artifact_in_worker(
     safe_env["VECLIB_MAXIMUM_THREADS"] = "1"
     safe_env["NUMEXPR_NUM_THREADS"] = "1"
     safe_env["MALLOC_ARENA_MAX"] = "2"
+    if sys.platform != "win32":
+        safe_env["HOME"] = str(ws_real)
+        safe_env["TMPDIR"] = str(ws_real)
+
     req_roots, opt_roots = collect_python_runtime_read_roots()
     worker_cmd = (
         [sys.executable, "--verifier-worker"]
