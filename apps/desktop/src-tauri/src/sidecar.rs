@@ -109,6 +109,38 @@ impl SidecarState {
         Ok(manifest.port)
     }
 
+    pub fn validate_and_sync_handshake(
+        &self,
+        reported_port: u16,
+        reported_pid: u32,
+        child_pid: u32,
+        manifest_content: Option<&str>,
+        auth_token: &str,
+    ) -> Result<u16, String> {
+        if reported_pid != child_pid {
+            return Err(format!(
+                "Validasi PID gagal: reported pid ({}) tidak sesuai dengan child process pid ({})",
+                reported_pid, child_pid
+            ));
+        }
+
+        if let Some(content) = manifest_content {
+            let manifest_port = self.read_and_validate_manifest(content, child_pid)?;
+            if manifest_port != reported_port {
+                return Err(format!(
+                    "Validasi Port gagal: port manifest ({}) tidak sesuai dengan readiness marker ({})",
+                    manifest_port, reported_port
+                ));
+            }
+        } else {
+            self.sync_port(reported_port);
+        }
+
+        verify_engine_health(reported_port, auth_token, 3000)?;
+        self.set_state(LifecycleState::Ready);
+        Ok(reported_port)
+    }
+
     pub fn set_state(&self, state: LifecycleState) {
         if let Ok(mut lock) = self.lifecycle_state.lock() {
             *lock = state;
@@ -422,5 +454,43 @@ mod tests {
     fn test_verify_engine_health_generic_200_server_rejected() {
         let port = spawn_fake_health(|_| "{\"status\":\"ok\"}".to_string());
         assert!(verify_engine_health(port, "aksa-genuine-token", 1000).is_err());
+    }
+
+    #[test]
+    fn test_validate_and_sync_handshake_pid_mismatch_fails() {
+        let state = SidecarState::new(43120);
+        let res = state.validate_and_sync_handshake(43120, 1111, 2222, None, "token");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("PID gagal"));
+    }
+
+    #[test]
+    fn test_validate_and_sync_handshake_manifest_port_mismatch_fails() {
+        let state = SidecarState::new(43120);
+        let manifest = r#"{"host":"127.0.0.1","port":43188,"pid":9999,"version":"1.0.0"}"#;
+        // reported port 43120 does not match manifest port 43188
+        let res = state.validate_and_sync_handshake(43120, 9999, 9999, Some(manifest), "token");
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("Port gagal"));
+    }
+
+    #[test]
+    fn test_validate_and_sync_handshake_genuine_manifest_and_health_passes() {
+        let token = "aksa-sync-token";
+        let state = SidecarState::new(43120);
+        let port = spawn_fake_health({
+            let t = token.to_string();
+            move |nonce| {
+                format!(
+                    "{{\"status\":\"ok\",\"engine\":\"aksa-engine\",\"nonce_hmac\":\"{}\"}}",
+                    compute_nonce_hmac(&t, nonce)
+                )
+            }
+        });
+        let manifest = format!(r#"{{"host":"127.0.0.1","port":{},"pid":7777,"version":"1.0.0"}}"#, port);
+        let res = state.validate_and_sync_handshake(port, 7777, 7777, Some(&manifest), token);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), port);
+        assert_eq!(state.get_state(), LifecycleState::Ready);
     }
 }

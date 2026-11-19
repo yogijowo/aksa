@@ -111,7 +111,7 @@ def test_os_sandbox_denies_fork_without_python_hooks(tmp_path: Path):
 
 
 def test_os_sandbox_fails_closed_on_unsupported_platform(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr(sys, "platform", "win32")
+    monkeypatch.setattr(sys, "platform", "freebsd")
     with pytest.raises(SandboxUnavailableError):
         wrap_command(["python"], tmp_path, [])
 
@@ -221,3 +221,171 @@ def test_mcp_self_declared_system_trusted_is_rejected():
     spoof = MCPServerConfig(id="evil_server", name="Evil", command="node", trust_level="system_trusted", permissions=["*"])
     allowed, reason = check_mcp_server_permissions(spoof, "write_file")
     assert allowed is False and "wildcard" in str(reason).lower()
+
+
+# ---- AKSA-CYCLE-5: Symlink Traversal & Semantic Postconditions & Replay Evaluation ------------
+
+@darwin_only
+def test_os_sandbox_blocks_symlink_escape_attempt(tmp_path: Path):
+    """Adversarial test: creating a symlink inside workspace pointing to user files is blocked by OS and sandbox."""
+    secret = Path.home() / ".aksa_test_symlink_secret.txt"
+    secret.write_text("SENSITIVE_USER_DATA", encoding="utf-8")
+    ws = tmp_path / "ws"
+    ws.mkdir(exist_ok=True)
+    symlink_path = ws / "symlink_to_user_secret.txt"
+
+    try:
+        res = _run_sandboxed_raw(tmp_path, f"""
+import os
+import sys
+
+target = r'{secret}'
+sym = r'{symlink_path}'
+try:
+    if hasattr(os, "symlink"):
+        os.symlink(target, sym)
+    # Attempt reading user secret through symlink
+    with open(sym, 'r') as f:
+        print("LEAKED:", f.read())
+except (OSError, PermissionError) as exc:
+    print("BLOCKED_SYMLINK_READ:", exc)
+""")
+        assert "LEAKED" not in res.stdout
+        assert "BLOCKED" in res.stdout or "DENIED" in res.stdout
+    finally:
+        secret.unlink(missing_ok=True)
+
+
+def test_sandbox_runner_blocks_symlink_pointing_outside_workspace(tmp_path: Path):
+    """Adversarial test: sandbox_runner.py blocks symlink creation and reading pointing outside workspace."""
+    outside = tmp_path / "outside_target.txt"
+    outside.write_text("OUTSIDE_PAYLOAD", encoding="utf-8")
+    ws = tmp_path / "ws"
+    ws.mkdir(exist_ok=True)
+    script = ws / "symlink_test.py"
+    script.write_text(f"""
+import os
+import sys
+
+target = r'{outside}'
+sym = r'{ws / "symlink.txt"}'
+try:
+    os.symlink(target, sym)
+    with open(sym, 'r') as f:
+        print("LEAKED:", f.read())
+except PermissionError as exc:
+    sys.stderr.write(f"BLOCKED: {{exc}}\\n")
+    sys.exit(13)
+""", encoding="utf-8")
+
+    res = subprocess.run(
+        [sys.executable, "-m", "app.skills.sandbox_runner", "--script", str(script), "--workspace", str(ws)],
+        capture_output=True,
+        text=True,
+    )
+    assert res.returncode == 13
+    assert "di luar batas aman" in res.stderr or "di luar folder kerja dilarang" in res.stderr
+    assert "LEAKED" not in res.stdout
+
+
+def test_artifact_postcondition_breakdown_detects_empty_semantic_shells(tmp_path: Path):
+    """Verify granular gates: file_created, format_valid, semantic_postcondition_passed."""
+    from app.core.orchestrator import get_artifact_postcondition_breakdown, verify_artifact_postcondition
+    import docx
+    import openpyxl
+
+    # 1. Excel file with empty sheet (no rows/data)
+    empty_xlsx = tmp_path / "empty_sheet.xlsx"
+    wb = openpyxl.Workbook()
+    wb.save(str(empty_xlsx))
+    wb.close()
+
+    bd_empty_xlsx = get_artifact_postcondition_breakdown(empty_xlsx)
+    assert bd_empty_xlsx["file_created"] is True
+    assert bd_empty_xlsx["format_valid"] is True
+    assert bd_empty_xlsx["semantic_postcondition_passed"] is False  # empty cells!
+    ok_empty, _ = verify_artifact_postcondition(empty_xlsx)
+    assert ok_empty is False
+
+    # 2. Populated Excel file
+    valid_xlsx = tmp_path / "populated.xlsx"
+    wb2 = openpyxl.Workbook()
+    ws = wb2.active
+    ws["A1"] = "Pendapatan Bulanan"
+    ws["B1"] = 15000000
+    wb2.save(str(valid_xlsx))
+    wb2.close()
+
+    bd_valid_xlsx = get_artifact_postcondition_breakdown(valid_xlsx)
+    assert bd_valid_xlsx["file_created"] is True
+    assert bd_valid_xlsx["format_valid"] is True
+    assert bd_valid_xlsx["semantic_postcondition_passed"] is True
+    ok_valid, _ = verify_artifact_postcondition(valid_xlsx)
+    assert ok_valid is True
+
+    # 3. Empty DOCX (0 paragraphs)
+    empty_docx = tmp_path / "empty.docx"
+    doc = docx.Document()
+    doc.save(str(empty_docx))
+
+    bd_empty_docx = get_artifact_postcondition_breakdown(empty_docx)
+    assert bd_empty_docx["file_created"] is True
+    assert bd_empty_docx["format_valid"] is True
+    assert bd_empty_docx["semantic_postcondition_passed"] is False
+
+
+def test_candidate_skill_replay_and_evaluation_simulation():
+    """Verify replay simulation evaluates procedural DAG and catches dangerous parameter injections."""
+    from app.core.agent_learning import SkillEvaluator
+
+    valid_md = """---
+name: Laporan Rekap Bulanan
+description: Otomasi kalkulasi laporan bulanan
+metadata:
+  owner-agent: "agent_analyst"
+  source: "learned"
+---
+# Alur Prosedural
+1. Muat data
+2. Kalkulasi
+"""
+
+    # 1. Clean candidate data with valid traces
+    clean_candidate = {
+        "structured_traces": [
+            {
+                "tool_name": "read_financial_data",
+                "input_summary": {"path": "data.csv"},
+                "output_summary": {"rows": 50},
+                "status": "success",
+            },
+            {
+                "tool_name": "calculate_excel_summary",
+                "input_summary": {"source": "data.csv", "dest": "report.xlsx"},
+                "output_summary": {"status": "created"},
+                "status": "success",
+            },
+        ],
+    }
+
+    eval_clean = SkillEvaluator.evaluate(valid_md, "clean_cand_01", candidate_data=clean_candidate)
+    assert eval_clean.passed is True
+    assert eval_clean.replay_passed is True
+    assert len(eval_clean.replay_trace) == 2
+
+    # 2. Malicious candidate injecting command execution in parameters
+    malicious_candidate = {
+        "structured_traces": [
+            {
+                "tool_name": "read_financial_data",
+                "input_summary": {"cmd": "rm -rf /"},
+                "output_summary": "",
+                "status": "success",
+            },
+        ],
+    }
+
+    eval_malicious = SkillEvaluator.evaluate(valid_md, "evil_cand_01", candidate_data=malicious_candidate)
+    assert eval_malicious.passed is False
+    assert eval_malicious.replay_passed is False
+

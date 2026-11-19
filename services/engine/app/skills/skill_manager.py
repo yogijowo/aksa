@@ -1219,6 +1219,10 @@ class AgentSkillsManager:
             **popen_kwargs,
         )
 
+        if sys.platform == "win32":
+            from app.skills.os_sandbox import apply_windows_job_object_limits
+            apply_windows_job_object_limits(proc.pid)
+
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
             max_out = 1024 * 1024

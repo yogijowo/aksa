@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
   <img src="https://img.shields.io/badge/Audit-Grade%20A%2B%20(99%2F100)-10B981?style=for-the-badge" alt="Audit Grade A+ 99/100">
-  <img src="https://img.shields.io/badge/Tests-238%2F238%20Verified-10B981?style=for-the-badge" alt="238/238 Verified Tests">
+  <img src="https://img.shields.io/badge/Tests-245%2F245%20Verified-10B981?style=for-the-badge" alt="245/245 Verified Tests">
 </p>
 
 <p align="center">

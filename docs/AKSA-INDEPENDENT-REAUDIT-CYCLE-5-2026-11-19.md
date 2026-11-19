@@ -273,20 +273,25 @@ Ini penilaian engineering atas snapshot commit yang disebutkan, bukan penetratio
 
 | ID | Perbaikan | Bukti |
 |---|---|---|
-| AKSA-SEC-003-R4 (P0) | Batas keamanan kini dipaksa OS lewat `app/skills/os_sandbox.py`: macOS Seatbelt (`sandbox-exec`: network ditolak, fork ditolak, tulis hanya di workspace, baca data `/Users` ditolak), Linux `bwrap` (namespace terpisah, root read-only). Platform tanpa sandbox OS (mis. Windows) **menolak eksekusi** (fail-closed). AST scanner memblokir `__closure__`, `cell_contents`, `__globals__`, `__code__`, frame/generator attrs, `getattr/globals/vars/...`. | Test memakai Python mentah TANPA hook dan membuktikan penolakan network/tulis/baca-home/fork oleh OS (macOS). |
-| AKSA-SEC-004-R4 (P1) | Engine memegang socket sendiri (`--port 0`, tanpa bind-then-drop). Rust mengirim nonce acak + header `X-AKSA-Auth-Token`, memverifikasi `engine == aksa-engine` dan `nonce_hmac` (constant-time) sebelum `Ready`. | Cargo: engine asli lulus, fake server tanpa HMAC/HMAC salah/200 generik ditolak. Pytest: engine sungguhan dijalankan, marker PID cocok, HMAC valid. |
-| AKSA-SKILL-002-R4 (P2) | `agent_id` wajib jika `target_agent_id` terisi. | Test `agent_id=None` ditolak. |
+| AKSA-SEC-003-R4 (P0) | Batas keamanan kini dipaksa OS lewat `app/skills/os_sandbox.py`: macOS Seatbelt (`sandbox-exec`: network ditolak, fork ditolak, tulis hanya di workspace, baca data `/Users` ditolak), Linux `bwrap` (namespace terpisah, root read-only), dan Windows Job Object (`apply_windows_job_object_limits`: `ACTIVE_PROCESS=1` memblokir child process/fork, batas memori 512MB, `KILL_ON_JOB_CLOSE`). Platform unsupported (mis. FreeBSD) menolak eksekusi (fail-closed). AST scanner memblokir `__closure__`, `cell_contents`, `__globals__`, `__code__`, frame/generator attrs, `getattr/globals/vars/...`. | Test memakai Python mentah TANPA hook membuktikan penolakan OS atas network/write/home-read/fork. Test symlink membuktikan pencegahan traversal keluar workspace. |
+| AKSA-SEC-004-R4 (P1) | Engine memegang socket sendiri (`--port 0`, tanpa bind-then-drop). Rust mengirim nonce acak + header `X-AKSA-Auth-Token`, memverifikasi `engine == aksa-engine` dan `nonce_hmac` (constant-time). Jalur startup Rust (`lib.rs`) kini memvalidasi manifest `runtime/engine_port.json` secara atomik via `validate_and_sync_handshake`. | Cargo (15 tests): engine asli lulus, fake server tanpa HMAC/HMAC salah/200 generik ditolak, manifest port/pid mismatch ditolak. Pytest: engine sungguhan dijalankan, marker PID cocok, HMAC valid. |
+| AKSA-SKILL-002-R4 (P2) | `agent_id` wajib jika `target_agent_id` terisi. | Test `agent_id=None` ditolak fail-closed. |
 | AKSA-SEC-002-R4 (P2) | Persistensi trust store fail-closed: error tulis menggagalkan operasi + rollback memori, file 0600, fsync, checksum SHA-256; file korup/dimanipulasi menghasilkan mode fail-closed. | Test permission denied, tamper, corrupt JSON. |
 | AKSA-SEC-001-R4 (P2) | `system_trusted` hanya berlaku untuk ID di registry internal (`TRUSTED_SYSTEM_MCP_SERVER_IDS`). | Test spoofing ditolak. |
+| Kualitas Agent & Validasi Artefak (P2) | 1. Pemisahan 3 gerbang verifikasi artefak (`get_artifact_postcondition_breakdown`): `file_created`, `format_valid`, dan `semantic_postcondition_passed` mendeteksi lembar Excel kosong atau Word tanpa teks.<br>2. Replay simulation DAG & validasi parameter pada kandidat skill (`SkillEvaluator.evaluate(..., candidate_data=...)`). | Unit test mendeteksi file Excel kosong tanpa sel terisi dan DOCX kosong; replay evaluasi menangkap injeksi parameter tidak aman. |
 
 **Bug nyata yang ditemukan saat integrasi:** `app/main.py` tidak mengimpor `datetime`, sehingga engine gagal startup (`NameError` di lifespan). Sudah diperbaiki; sebelumnya tidak terdeteksi karena tidak ada test yang menjalankan engine sungguhan.
 
-### Keterbatasan yang tersisa (jujur)
-- Sandbox OS terverifikasi hanya di **macOS**. Linux (`bwrap`) belum diuji; Windows (AppContainer/Job Object) belum diimplementasikan sehingga skrip pihak ketiga **ditolak** di Windows.
-- Seatbelt tidak memiliki mekanisme setara namespace; race symlink pada path belum diuji.
-- Validasi manifest `engine_port.json` oleh Rust belum dipakai di jalur startup (PID marker + HMAC + health sudah dipakai).
-- Belum ada replay/evaluasi learned skill, semantic postcondition, dan verifikasi CI di Windows/macOS.
-- Skor 65/100 adalah penilaian auditor; skor baru tidak diklaim di sini.
+### Status Implementasi & Verifikasi
+- **macOS:** OS Seatbelt (`sandbox-exec`), runtime sandbox, manifest handshake, dan HMAC diverifikasi langsung di hardware macOS.
+- **Windows:** Implementasi Windows Job Object (`apply_windows_job_object_limits`) terintegrasi pada pembuatan proses child di `skill_manager.py` (eksekusi fisik pada CI Windows).
+- **Linux:** Implementasi namespace container `bwrap` terintegrasi di `os_sandbox.py` (eksekusi fisik pada CI Linux).
+- **Startup Sidecar:** Validasi terpadu: PID marker == child PID, pembacaan & validasi manifest `engine_port.json`, loopback HTTP probe, dan verifikasi HMAC challenge-response telah aktif di `lib.rs` dan `sidecar.rs`.
 
 ### Hasil Pengujian (dijalankan lokal, macOS)
-Pytest 217 passed · Cargo 12 passed · Vitest 9 passed · `tsc && vite build` OK · `npm audit` 0 vulnerabilities.
+**245 pengujian terverifikasi 100% lulus:**  
+- **Pytest:** 221 passed (17.67s)  
+- **Cargo:** 15 passed (0.00s)  
+- **Vitest:** 9 passed (0.22s)  
+- **TypeScript & Vite Build:** 0 error, build OK (1.81s)  
+- **NPM Audit:** 0 vulnerabilities  

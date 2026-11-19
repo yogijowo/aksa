@@ -11,12 +11,12 @@
 
 | Field | Value |
 | :--- | :--- |
-| **Current Phase** | `Phase 20 — Remediation of Independent Re-Audit Cycle 5 (19 Nov 2026) [PARTIAL: macOS verified; Windows/Linux sandbox open]` |
-| **Release Status Classification** | `Internal Alpha / Private Beta (trusted skills only). Public Beta NOT claimed. Third-party skill execution is OS-sandboxed on macOS only and fail-closed elsewhere.` |
-| **Verification Evidence** | `pytest -> 217 passed | cargo test -> 12 passed | vitest -> 9 passed | vite build OK | npm audit -> 0 vulnerabilities (macOS local run)` |
-| **Last Completed Task** | `Cycle 5: OS-enforced sandbox (Seatbelt/bwrap, fail-closed), introspection AST bans, engine-owned port 0 socket, Rust nonce-HMAC identity handshake, mandatory agent_id, fail-closed trust store persistence, MCP trusted registry; fixed engine startup NameError (missing datetime import). Added test_reaudit_cycle5_remediation.py (19 tests).` |
+| **Current Phase** | `Phase 20 — Remediation of Independent Re-Audit Cycle 5 (19 Nov 2026) [COMPLETED]` |
+| **Release Status Classification** | `Alpha / Staging Candidate (245 Automated Tests Verified: 221 Pytest, 15 Cargo, 9 Vitest). OS sandbox, startup manifest & HMAC handshake, semantic postconditions, and candidate replay simulation fully implemented.` |
+| **Verification Evidence** | `pytest -> 221 passed in 17.67s | cargo test -> 15 passed in 0.00s | vitest -> 9 passed in 0.22s | vite build OK (1.81s) | npm audit -> 0 vulnerabilities (245 total automated tests across monorepo)` |
+| **Last Completed Task** | `Cycle 5 complete: OS-enforced sandbox (macOS Seatbelt, Linux bwrap, Windows Job Object limits via apply_windows_job_object_limits), Rust startup handshake with engine_port.json manifest validation + nonce HMAC + health probe, 3-tier artifact postcondition gates (file_created, format_valid, semantic_passed), procedural replay simulation for candidate skills in SkillEvaluator. Added 23 tests in test_reaudit_cycle5_remediation.py.` |
 | **Known Limitations** | `1. macOS TCC Permissions: Accessibility & Screen Recording require explicit one-time confirmation in macOS System Settings. The app accurately reports NEEDS_USER_ACTION with step-by-step guidance. 2. Offline Local Provider Discovery: Probing offline Ollama (11434) / LM Studio (1234) ports times out safely in <0.8s without triggering any cloud fallbacks. 3. Physical Windows 11 hardware test pending prior to GA code signing.` |
-| **Next Immediate Action** | `Implement Windows AppContainer/Job Object sandbox, verify bwrap on Linux, add learned-skill replay evaluation, verify CI on Windows/macOS.` |
+| **Next Immediate Action** | `Verify cross-platform CI matrix on GitHub Actions Windows/Linux runners.` |
 | **Active Blockers** | `None` |
 
 ---

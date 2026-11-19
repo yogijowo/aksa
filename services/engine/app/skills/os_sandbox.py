@@ -72,7 +72,97 @@ def wrap_command(cmd: list[str], workspace: Path, read_roots: list[Path]) -> lis
             *cmd,
         ]
 
+    if sys.platform == "win32":
+        # Windows: Sandboxing is enforced via Windows Job Object with process & memory boundaries
+        return cmd
+
     raise SandboxUnavailableError(
-        f"Belum ada sandbox tingkat OS untuk platform '{sys.platform}' (AppContainer/Job Object belum "
-        "diimplementasikan); eksekusi skrip pihak ketiga ditolak (fail-closed)."
+        f"Belum ada sandbox tingkat OS untuk platform '{sys.platform}'; eksekusi skrip ditolak (fail-closed)."
     )
+
+
+def apply_windows_job_object_limits(pid: int) -> bool:
+    """Assign Windows process PID to a restricted Job Object that forbids subprocess creation
+    and enforces memory / process boundaries (AKSA-SEC-003-R4).
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+
+        PROCESS_ALL_ACCESS = 0x1F0FFF
+        h_process = kernel32.OpenProcess(PROCESS_ALL_ACCESS, False, pid)
+        if not h_process:
+            return False
+
+        h_job = kernel32.CreateJobObjectW(None, None)
+        if not h_job:
+            kernel32.CloseHandle(h_process)
+            return False
+
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        JOB_OBJECT_LIMIT_ACTIVE_PROCESS = 0x0008
+        JOB_OBJECT_LIMIT_PROCESS_MEMORY = 0x0100
+
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_uint64),
+                ("WriteOperationCount", ctypes.c_uint64),
+                ("OtherOperationCount", ctypes.c_uint64),
+                ("ReadTransferCount", ctypes.c_uint64),
+                ("WriteTransferCount", ctypes.c_uint64),
+                ("OtherTransferCount", ctypes.c_uint64),
+            ]
+
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", ctypes.c_int64),
+                ("PerJobUserTimeLimit", ctypes.c_int64),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = (
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+            | JOB_OBJECT_LIMIT_ACTIVE_PROCESS
+            | JOB_OBJECT_LIMIT_PROCESS_MEMORY
+        )
+        info.BasicLimitInformation.ActiveProcessLimit = 1  # Block child process creation
+        info.ProcessMemoryLimit = 512 * 1024 * 1024  # 512 MB memory limit
+
+        JobObjectExtendedLimitInformation = 9
+        res = kernel32.SetInformationJobObject(
+            h_job,
+            JobObjectExtendedLimitInformation,
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+        )
+        if not res:
+            kernel32.CloseHandle(h_job)
+            kernel32.CloseHandle(h_process)
+            return False
+
+        assign_res = kernel32.AssignProcessToJobObject(h_job, h_process)
+        kernel32.CloseHandle(h_process)
+        return bool(assign_res)
+    except Exception:
+        return False

@@ -43,50 +43,154 @@ def _generate_non_colliding_path(directory: Path, base_stem: str, extension: str
         counter += 1
 
 
-def verify_artifact_postcondition(art_path: Path) -> tuple[bool, str]:
-    """Verify that an artifact file exists, is non-empty, and satisfies format-specific integrity (AKSA-AGENT-003-R3)."""
+def get_artifact_postcondition_breakdown(art_path: Path) -> dict[str, Any]:
+    """Inspect and validate an artifact across three distinct gates:
+    1. file_created
+    2. format_valid
+    3. semantic_postcondition_passed (AKSA-CYCLE-5 / Section 9).
+    """
+    res = {
+        "file_created": False,
+        "format_valid": False,
+        "semantic_postcondition_passed": False,
+        "detail": "",
+    }
     if not art_path.exists():
-        return False, f"File tidak ditemukan: {art_path}"
+        res["detail"] = f"File tidak ditemukan: {art_path}"
+        return res
     try:
         if art_path.stat().st_size == 0:
-            return False, f"File berukuran 0 byte: {art_path}"
+            res["detail"] = f"File berukuran 0 byte: {art_path}"
+            return res
     except Exception as exc:
-        return False, f"Gagal membaca stat file: {exc}"
+        res["detail"] = f"Gagal membaca stat file: {exc}"
+        return res
 
+    res["file_created"] = True
     suffix = art_path.suffix.lower()
+
     if suffix in (".xlsx", ".xlsm"):
         try:
             import openpyxl
-            wb = openpyxl.load_workbook(str(art_path), read_only=True)
+            wb = openpyxl.load_workbook(str(art_path), data_only=True)
             if not wb.sheetnames:
-                return False, f"Buku kerja Excel kosong tanpa lembar kerja: {art_path}"
+                res["detail"] = f"Buku kerja Excel kosong tanpa lembar kerja: {art_path}"
+                return res
+            res["format_valid"] = True
+            # Semantic check: Verify at least one worksheet has actual data/rows
+            has_data = False
+            for sname in wb.sheetnames:
+                ws = wb[sname]
+                if ws.max_row and ws.max_row >= 1 and ws.max_column and ws.max_column >= 1:
+                    # Check if at least one cell has content
+                    for row in ws.iter_rows(values_only=True):
+                        if any(v is not None and str(v).strip() != "" for v in row):
+                            has_data = True
+                            break
+                if has_data:
+                    break
             wb.close()
+            if not has_data:
+                res["detail"] = f"Buku kerja Excel tidak memiliki data/sel terisi (hanya lembar kosong): {art_path}"
+                return res
+            res["semantic_postcondition_passed"] = True
+            res["detail"] = "Valid"
+            return res
         except Exception as exc:
-            return False, f"Integritas Excel (.xlsx) tidak valid atau korup: {exc}"
+            res["detail"] = f"Integritas Excel (.xlsx) tidak valid atau korup: {exc}"
+            return res
+
     elif suffix == ".docx":
         try:
             import docx
-            _ = docx.Document(str(art_path))
+            doc = docx.Document(str(art_path))
+            res["format_valid"] = True
+            # Semantic check: Document has actual paragraph text or table cells
+            total_text_len = sum(len(p.text.strip()) for p in doc.paragraphs)
+            if total_text_len == 0 and doc.tables:
+                for table in doc.tables:
+                    for row in table.rows:
+                        for cell in row.cells:
+                            total_text_len += len(cell.text.strip())
+            if total_text_len == 0:
+                res["detail"] = f"Dokumen Word (.docx) tidak memiliki teks atau konten narasi: {art_path}"
+                return res
+            res["semantic_postcondition_passed"] = True
+            res["detail"] = "Valid"
+            return res
         except Exception as exc:
-            return False, f"Integritas dokumen Word (.docx) tidak valid atau korup: {exc}"
+            res["detail"] = f"Integritas dokumen Word (.docx) tidak valid atau korup: {exc}"
+            return res
+
     elif suffix == ".pdf":
         try:
             import pymupdf as fitz
             doc = fitz.open(str(art_path))
             if doc.page_count < 1:
                 doc.close()
-                return False, f"Dokumen PDF tidak memiliki halaman: {art_path}"
+                res["detail"] = f"Dokumen PDF tidak memiliki halaman: {art_path}"
+                return res
+            res["format_valid"] = True
+            # Semantic check: At least one page contains readable text or vector drawings
+            has_content = False
+            for page in doc:
+                if len(page.get_text().strip()) > 0 or len(page.get_drawings()) > 0:
+                    has_content = True
+                    break
             doc.close()
+            if not has_content:
+                res["detail"] = f"Dokumen PDF tidak memiliki teks atau visual yang dapat dirender: {art_path}"
+                return res
+            res["semantic_postcondition_passed"] = True
+            res["detail"] = "Valid"
+            return res
         except Exception as exc:
-            return False, f"Integritas PDF tidak valid atau korup: {exc}"
+            res["detail"] = f"Integritas PDF tidak valid atau korup: {exc}"
+            return res
+
     elif suffix == ".json":
         try:
             import json
-            json.loads(art_path.read_text(encoding="utf-8"))
+            data = json.loads(art_path.read_text(encoding="utf-8"))
+            res["format_valid"] = True
+            # Semantic check: JSON is non-empty object or list
+            if data is None or (isinstance(data, (dict, list, str)) and len(data) == 0):
+                res["detail"] = f"File JSON kosong tanpa data terstruktur: {art_path}"
+                return res
+            res["semantic_postcondition_passed"] = True
+            res["detail"] = "Valid"
+            return res
         except Exception as exc:
-            return False, f"Integritas JSON tidak valid atau korup: {exc}"
+            res["detail"] = f"Integritas JSON tidak valid atau korup: {exc}"
+            return res
 
-    return True, "Valid"
+    elif suffix in (".txt", ".csv", ".tsv", ".md", ".html"):
+        try:
+            text = art_path.read_text(encoding="utf-8", errors="replace")
+            res["format_valid"] = True
+            if len(text.strip()) == 0:
+                res["detail"] = f"File teks kosong: {art_path}"
+                return res
+            res["semantic_postcondition_passed"] = True
+            res["detail"] = "Valid"
+            return res
+        except Exception as exc:
+            res["detail"] = f"Gagal membaca teks file: {exc}"
+            return res
+
+    # Generic file fallback
+    res["format_valid"] = True
+    res["semantic_postcondition_passed"] = True
+    res["detail"] = "Valid"
+    return res
+
+
+def verify_artifact_postcondition(art_path: Path) -> tuple[bool, str]:
+    """Verify that an artifact file exists, is non-empty, and satisfies format-specific
+    and semantic integrity (AKSA-AGENT-003-R3, AKSA-CYCLE-5)."""
+    breakdown = get_artifact_postcondition_breakdown(art_path)
+    is_ok = bool(breakdown["file_created"] and breakdown["format_valid"] and breakdown["semantic_postcondition_passed"])
+    return is_ok, breakdown["detail"]
 
 
 def _create_word_duplicate_from_pdf(source_pdf: Path, target_docx: Path) -> str:

@@ -101,6 +101,8 @@ class SkillEvaluationResult(BaseModel):
     passed: bool
     score: float
     checks: list[dict[str, Any]]
+    replay_passed: bool = True
+    replay_trace: list[dict[str, Any]] = Field(default_factory=list)
     evaluated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -372,9 +374,16 @@ class SkillEvaluator:
     DANGEROUS_CALLS = ["rm -rf", "shutil.rmtree", "os.system", "subprocess.Popen", "eval(", "exec("]
 
     @classmethod
-    def evaluate(cls, skill_md_content: str, skill_id: str) -> SkillEvaluationResult:
+    def evaluate(
+        cls,
+        skill_md_content: str,
+        skill_id: str,
+        candidate_data: dict[str, Any] | None = None,
+    ) -> SkillEvaluationResult:
         checks: list[dict[str, Any]] = []
         score = 100.0
+        replay_trace: list[dict[str, Any]] = []
+        replay_passed = True
 
         # Check 1: YAML frontmatter presence
         has_frontmatter = skill_md_content.startswith("---") and "\n---\n" in skill_md_content[3:]
@@ -409,12 +418,60 @@ class SkillEvaluator:
         if not has_secrets:
             score -= 40.0
 
-        passed = score >= 70.0 and no_dangers
+        # Check 4: Procedural Replay & Generalizability Evaluation (AKSA-CYCLE-5 / Section 9)
+        traces = (candidate_data or {}).get("structured_traces", [])
+        steps = (candidate_data or {}).get("steps", [])
+        if traces:
+            for idx, trace in enumerate(traces, 1):
+                t_name = trace.get("tool_name", "")
+                inp = str(trace.get("input_summary", ""))
+                outp = str(trace.get("output_summary", ""))
+                status = trace.get("status", "success")
+
+                # Verify tool name doesn't contain path traversal or shell metacharacters
+                is_safe_tool = bool(re.match(r"^[a-zA-Z0-9_\-\.\:\s]+$", t_name)) if t_name else True
+                is_clean_args = not any(kw in inp for kw in cls.DANGEROUS_CALLS) and ".." not in inp
+                step_ok = is_safe_tool and is_clean_args and status != "failed"
+
+                replay_trace.append({
+                    "step_number": idx,
+                    "tool": t_name,
+                    "simulated_status": "passed" if step_ok else "failed",
+                    "reason": "OK" if step_ok else "Tool name atau parameter melanggar batasan keamanan",
+                })
+                if not step_ok:
+                    replay_passed = False
+
+            checks.append({
+                "name": "procedural_replay_simulation",
+                "passed": replay_passed,
+                "detail": (
+                    f"Replay evaluasi berhasil pada {len(traces)} langkah prosedural"
+                    if replay_passed
+                    else "Replay simulasi gagal: terdeteksi parameter tidak aman atau status langkah gagal"
+                ),
+            })
+            if not replay_passed:
+                score -= 35.0
+        elif steps:
+            # Basic syntactic flow replay on step list
+            has_steps = len(steps) >= 2
+            checks.append({
+                "name": "procedural_steps_structure",
+                "passed": has_steps,
+                "detail": f"Memiliki {len(steps)} tahapan alur prosedural" if has_steps else "Tahapan alur terlalu pendek",
+            })
+            if not has_steps:
+                score -= 20.0
+
+        passed = score >= 70.0 and no_dangers and replay_passed
         return SkillEvaluationResult(
             skill_id=skill_id,
             passed=passed,
             score=max(0.0, score),
             checks=checks,
+            replay_passed=replay_passed,
+            replay_trace=replay_trace,
         )
 
 
@@ -452,7 +509,15 @@ class SkillVersionService:
             raise FileNotFoundError(f"Candidate skill '{skill_id}' tidak memiliki SKILL.md.")
 
         content = skill_md_file.read_text(encoding="utf-8")
-        result = SkillEvaluator.evaluate(content, skill_id)
+        cand_meta_file = cand_dir / "candidate.json"
+        cand_data: dict[str, Any] | None = None
+        if cand_meta_file.exists():
+            try:
+                cand_data = json.loads(cand_meta_file.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        result = SkillEvaluator.evaluate(content, skill_id, candidate_data=cand_data)
 
         # Store evaluation report
         eval_dir = agent_directory_service.resolve_agent_path(self.agent_id, "skills/evaluations")
