@@ -121,16 +121,72 @@ def validate_sandbox_read_root(root: Path, *, allow_system_usr: bool = False) ->
     return resolved
 
 
+_WIN32_REQUIRED_BASE_ENV_KEYS: tuple[str, ...] = (
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "COMPUTERNAME",
+    "COMSPEC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "LOGONSERVER",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PATHEXT",
+    "PROCESSOR_ARCHITECTURE",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PUBLIC",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+)
+
+
 def _escape_env_block(env: dict[str, str]) -> ctypes.Array[ctypes.c_wchar]:
-    """Encode environment dict as double-null-terminated UTF-16 block for CreateProcessW."""
-    merged = dict(env)
+    """Encode environment dict as sorted double-null-terminated UTF-16 block for CreateProcessW.
+
+    Note: Windows ``CreateProcessW`` with ``PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES``
+    (AppContainer ``BasepCreateLowBox``) queries ``USERPROFILE``, ``LOCALAPPDATA``,
+    ``APPDATA``, ``SystemRoot``, and ``SystemDrive`` from ``lpEnvironment`` to derive
+    the AppContainer package path and fails with ``ERROR_ENVVAR_NOT_FOUND (203)`` if omitted.
+    """
+    merged: dict[str, str] = {}
     if sys.platform == "win32":
-        if "SYSTEMROOT" not in merged:
-            merged["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
-        if "WINDIR" not in merged:
-            merged["WINDIR"] = os.environ.get("WINDIR", merged["SYSTEMROOT"])
-    items = [f"{k}={v}" for k, v in merged.items()]
-    block = "\0".join(items) + "\0\0"
+        env_upper_map = {k.upper(): (k, v) for k, v in os.environ.items()}
+        for req_key in _WIN32_REQUIRED_BASE_ENV_KEYS:
+            if req_key in env_upper_map:
+                orig_k, orig_v = env_upper_map[req_key]
+                if orig_v:
+                    merged[orig_k] = orig_v
+        if not any(k.upper() == "SYSTEMROOT" for k in merged):
+            merged["SystemRoot"] = os.environ.get("SystemRoot") or os.environ.get("SYSTEMROOT") or r"C:\Windows"
+        if not any(k.upper() == "WINDIR" for k in merged):
+            merged["windir"] = os.environ.get("windir") or os.environ.get("WINDIR") or r"C:\Windows"
+        if not any(k.upper() == "SYSTEMDRIVE" for k in merged):
+            merged["SystemDrive"] = os.environ.get("SystemDrive") or "C:"
+
+    upper_to_actual = {k.upper(): k for k in merged}
+    for k, v in env.items():
+        if not k or "=" in k or "\0" in k or "\0" in str(v) or not str(v):
+            continue
+        existing_key = upper_to_actual.get(k.upper(), k)
+        upper_to_actual[k.upper()] = existing_key
+        merged[existing_key] = str(v)
+
+    sorted_keys = sorted(merged.keys(), key=lambda x: x.upper())
+    items = [f"{k}={merged[k]}" for k in sorted_keys]
+    block = ("\0".join(items) + "\0\0") if items else "\0\0"
     return ctypes.create_unicode_buffer(block)
 
 
