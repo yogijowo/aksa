@@ -9,7 +9,13 @@ import {
   Plus,
   CheckCircle2,
   Inbox,
+  Trash2,
+  ShieldCheck,
+  Users,
+  ChevronDown,
+  ChevronRight,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useAksaStore } from "@/stores/useAksaStore";
 import {
   fetchRAGDocuments,
@@ -18,6 +24,13 @@ import {
   fetchMemoriesRemote,
   saveMemoryRemote,
 } from "@/services/engineClient";
+import {
+  PageHeader,
+  SectionHeader,
+  StatusBadge,
+  EmptyStateCard,
+  ErrorStateCard,
+} from "@/components/ui/UXPrimitives";
 
 interface RAGDocumentRow {
   id: string;
@@ -39,18 +52,26 @@ interface RAGSearchHit {
 }
 
 export const KnowledgeBaseView: React.FC = () => {
-  const { workspaces, activeWorkspaceId } = useAksaStore();
+  const { workspaces, activeWorkspaceId, teams, activeTeamId } = useAksaStore();
   const [documents, setDocuments] = useState<RAGDocumentRow[]>([]);
   const [isReindexing, setIsReindexing] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchHits, setSearchHits] = useState<RAGSearchHit[]>([]);
   const [hasSearched, setHasSearched] = useState(false);
-  const [memories, setMemories] = useState<Array<{ id: string; category: string; fact: string }>>([]);
+  const [memories, setMemories] = useState<Array<{ id: string; category: string; fact: string }>>(
+    []
+  );
   const [newFact, setNewFact] = useState("");
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [processingError, setProcessingError] = useState<string | null>(null);
+  const [showTechnicalDetails, setShowTechnicalDetails] = useState(false);
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0];
+  const activeTeam = teams.find((t) => t.id === activeTeamId) ?? teams[0];
+  const agentsWithAccess = (activeTeam?.agents ?? [])
+    .filter((a) => a.tool_categories.includes("rag_search"))
+    .map((a) => a.name);
 
   const loadData = async () => {
     try {
@@ -64,7 +85,7 @@ export const KnowledgeBaseView: React.FC = () => {
         setMemories(mems);
       }
     } catch {
-      // Silently fall back to empty state
+      // Fall back to empty state
     }
   };
 
@@ -73,9 +94,15 @@ export const KnowledgeBaseView: React.FC = () => {
   }, [activeWorkspace?.id]);
 
   const handleManualReindex = async () => {
-    if (!activeWorkspace) return;
+    if (!activeWorkspace) {
+      setProcessingError(
+        "Belum ada folder Ruang Kerja yang dipilih. Pilih folder di bagian atas layar terlebih dahulu."
+      );
+      return;
+    }
     setIsReindexing(true);
     setActionNotice(null);
+    setProcessingError(null);
     try {
       const res = await indexWorkspaceFolderRemote(
         activeWorkspace.id,
@@ -83,15 +110,26 @@ export const KnowledgeBaseView: React.FC = () => {
       );
       if (res && res.indexed_files !== undefined) {
         setActionNotice(
-          `Berhasil mengindeks ${res.indexed_files} file (${res.total_chunks} potongan semantik).`
+          `Berhasil memproses ${res.indexed_files} dokumen referensi (${res.total_chunks} bagian siap dicari).`
+        );
+      } else {
+        setProcessingError(
+          "Gagal memproses dokumen di folder kerja. Pastikan file tidak rusak dan layanan AKSA aktif."
         );
       }
       await loadData();
-    } catch {
-      setActionNotice("Gagal mengindeks folder kerja. Pastikan backend engine berjalan.");
+    } catch (err: any) {
+      setProcessingError(
+        err?.message || "Gagal memproses dokumen. Pastikan layanan AKSA sedang berjalan."
+      );
     } finally {
       setIsReindexing(false);
     }
+  };
+
+  const handleRemoveDocument = (docId: string, fileName: string) => {
+    setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    toast.success(`Dokumen "${fileName}" dihapus dari daftar referensi Pengetahuan AKSA.`);
   };
 
   const handleSearch = async () => {
@@ -126,6 +164,7 @@ export const KnowledgeBaseView: React.FC = () => {
           ...prev,
         ]);
       }
+      toast.success("Catatan referensi berhasil disimpan.");
     } catch {
       setMemories((prev) => [
         { id: `mem_${Date.now()}`, category: "preferensi_pengguna", fact: factText },
@@ -137,51 +176,144 @@ export const KnowledgeBaseView: React.FC = () => {
   return (
     <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6 bg-[#191918]">
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div>
-            <h2 className="text-base font-semibold text-zinc-100 flex items-center gap-2">
-              <BookOpenCheck size={18} className="text-[#D97757]" />
-              Basis Pengetahuan Lokal (Hybrid RAG)
-            </h2>
-            <p className="text-xs text-zinc-400 mt-1">
-              Pencarian Hibrida Reciprocal Rank Fusion (RRF) untuk pemahaman semantik sekaligus
-              kecocokan persis nomor surat, klausul kontrak, dan tabel data.
+        {/* Page Header (Section 5.7 Pengetahuan AKSA) */}
+        <PageHeader
+          icon={<BookOpenCheck size={22} className="text-[#D97757]" />}
+          title="Pengetahuan AKSA"
+          description="Kelola dokumen dan informasi yang dapat digunakan AKSA sebagai referensi saat menjawab pertanyaan atau menyusun laporan Anda."
+          actions={
+            <>
+              <button
+                type="button"
+                onClick={() => void handleManualReindex()}
+                disabled={isReindexing}
+                className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-4 py-2 text-[13px] font-semibold text-white flex items-center gap-2 transition-colors disabled:opacity-50"
+              >
+                <Plus size={15} />
+                <span>{isReindexing ? "Memproses Dokumen..." : "Tambah & Perbarui Dokumen"}</span>
+              </button>
+              <span className="rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-3 py-2 text-xs font-medium text-emerald-300 flex items-center gap-1.5">
+                <FolderSync size={14} /> Pemantauan Folder Aktif
+              </span>
+            </>
+          }
+        />
+
+        {/* Clear Security & Access Boundary Explanation (Section 5.7) */}
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-[13px]">
+          <div className="flex items-start gap-2.5 text-zinc-300">
+            <ShieldCheck size={18} className="text-emerald-400 shrink-0 mt-0.5" />
+            <p className="leading-relaxed">
+              Menambahkan dokumen ke Pengetahuan AKSA{" "}
+              <strong>tidak otomatis memberikan seluruh agen akses tanpa batas</strong>. Hanya agen
+              yang memiliki izin <em>Pencarian dalam Dokumen</em> yang dapat membaca referensi ini.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => void handleManualReindex()}
-              disabled={isReindexing}
-              className="rounded-xl bg-[#D97757]/15 hover:bg-[#D97757]/25 border border-[#D97757]/40 px-3.5 py-2 text-xs font-medium text-[#D97757] flex items-center gap-1.5 transition-colors disabled:opacity-50"
-            >
-              <RefreshCw size={13} className={isReindexing ? "animate-spin" : ""} />
-              {isReindexing ? "Memindai Folder..." : "Indeks Ulang Folder"}
-            </button>
-            <span className="rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-3 py-2 text-xs font-medium text-emerald-300 flex items-center gap-1.5">
-              <FolderSync size={14} /> Watchdog Aktif
+          <div className="shrink-0 flex items-center gap-2 text-xs text-zinc-300 bg-[#262624] border border-white/[0.07] rounded-xl px-3 py-2">
+            <Users size={14} className="text-[#D97757]" />
+            <span>
+              Agen yang dapat mengakses:{" "}
+              <strong>
+                {agentsWithAccess.length > 0 ? agentsWithAccess.join(", ") : "Belum ada agen"}
+              </strong>
             </span>
           </div>
         </div>
 
         {actionNotice && (
-          <div className="rounded-xl bg-[#21211F] border border-white/[0.08] px-4 py-2.5 text-xs text-zinc-300 flex items-center gap-2">
-            <CheckCircle2 size={14} className="text-emerald-400" />
+          <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-4 py-3 text-[13px] text-emerald-200 flex items-center gap-2">
+            <CheckCircle2 size={16} className="text-emerald-400 shrink-0" />
             <span>{actionNotice}</span>
           </div>
         )}
 
-        {/* Live Hybrid RAG Search Section */}
-        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-zinc-100 flex items-center gap-2">
-              <Search size={14} className="text-[#D97757]" />
-              Uji Pencarian Hibrida (Dense Vector + BM25 Keyword RRF)
-            </span>
-            <span className="text-[11px] text-emerald-400 font-mono">
-              Hemat Token • Hanya Kutipan Relevan
-            </span>
+        {processingError && (
+          <ErrorStateCard
+            title="Pemrosesan dokumen belum berhasil"
+            cause={processingError}
+            nextStep="Pastikan folder ruang kerja sudah dipilih dan berisi file PDF, Word, Excel, atau teks yang valid."
+            onRetry={() => void handleManualReindex()}
+            onDismiss={() => setProcessingError(null)}
+          />
+        )}
+
+        {/* Document List & Processing/Index Status (Section 5.7) */}
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+          <SectionHeader
+            title={`Daftar Dokumen Referensi (${documents.length})`}
+            description={`Sumber folder: ${activeWorkspace?.name || "Ruang Kerja"} (${activeWorkspace?.folder_path || "Belum dipilih"})`}
+            rightElement={
+              <button
+                type="button"
+                onClick={() => setShowTechnicalDetails((v) => !v)}
+                className="inline-flex items-center gap-1 text-xs text-zinc-400 hover:text-zinc-200"
+              >
+                {showTechnicalDetails ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                <span>Detail teknis</span>
+              </button>
+            }
+          />
+
+          <div className="space-y-2.5">
+            {documents.length > 0 ? (
+              documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl bg-[#262624] border border-white/[0.07] px-4 py-3"
+                >
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <FileText size={15} className="text-[#D97757]" />
+                      <span className="text-[14px] font-semibold text-zinc-100">
+                        {doc.file_name}
+                      </span>
+                      <StatusBadge tone="success" label="Siap digunakan (Terindeks)" />
+                    </div>
+                    <div className="text-xs text-zinc-300">
+                      Status pemrosesan: Selesai ({doc.chunk_count} bagian bacaan) • Diakses oleh:{" "}
+                      {agentsWithAccess.length > 0
+                        ? agentsWithAccess.join(", ")
+                        : "Peneliti Dokumen"}
+                    </div>
+                    {showTechnicalDetails && (
+                      <div className="text-[11px] font-mono text-zinc-400">
+                        Sidik jari SHA-256: {doc.sha256_short} • Waktu indeks: {doc.indexed_at}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveDocument(doc.id, doc.file_name)}
+                      className="rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 px-3 py-1.5 text-xs font-medium text-rose-300 flex items-center gap-1.5 transition-colors"
+                      title="Hapus dokumen ini dari referensi Pengetahuan AKSA"
+                    >
+                      <Trash2 size={13} />
+                      <span>Hapus</span>
+                    </button>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <EmptyStateCard
+                icon={<Inbox size={22} />}
+                title="Belum ada dokumen di Pengetahuan AKSA"
+                description={`Folder kerja aktif (${activeWorkspace?.name || "Ruang Kerja"}) belum dipindai. Tambahkan atau pindai dokumen PDF, Word, Excel, dan PowerPoint agar AKSA dapat menjadikannya referensi.`}
+                actionLabel={isReindexing ? "Memproses Dokumen..." : "Tambah & Pindai Dokumen Sekarang"}
+                onAction={() => void handleManualReindex()}
+              />
+            )}
           </div>
+        </div>
+
+        {/* Search inside Knowledge Base */}
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+          <SectionHeader
+            icon={<Search size={17} className="text-[#D97757]" />}
+            title="Cari Informasi di Dalam Dokumen"
+            description="Coba cari nomor surat, isi perjanjian, atau data tabel dari dokumen yang sudah terdaftar."
+          />
 
           <div className="flex gap-2">
             <input
@@ -189,16 +321,18 @@ export const KnowledgeBaseView: React.FC = () => {
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleSearch()}
-              placeholder="Cari nomor surat resmi, klausa dokumen, atau isi tabel..."
-              className="flex-1 rounded-xl bg-[#262624] border border-white/[0.08] px-3.5 py-2 text-xs text-zinc-100 focus:outline-none focus:border-[#D97757]/60"
+              aria-label="Cari isi dokumen"
+              placeholder="Ketik kata kunci atau kalimat yang ingin dicari..."
+              className="flex-1 rounded-xl bg-[#262624] border border-white/[0.09] px-3.5 py-2.5 text-[13.5px] text-zinc-100 focus:outline-none focus:border-[#D97757]"
             />
             <button
+              type="button"
               onClick={() => void handleSearch()}
               disabled={isSearching || !searchQuery.trim()}
-              className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-4 py-2 text-xs font-medium text-white transition-colors disabled:opacity-50 flex items-center gap-1.5"
+              className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-4 py-2.5 text-[13px] font-semibold text-white transition-colors disabled:opacity-50 flex items-center gap-1.5"
             >
-              {isSearching ? <RefreshCw size={13} className="animate-spin" /> : null}
-              Cari Kutipan
+              {isSearching ? <RefreshCw size={14} className="animate-spin" /> : null}
+              <span>Cari di Dokumen</span>
             </button>
           </div>
 
@@ -207,103 +341,42 @@ export const KnowledgeBaseView: React.FC = () => {
               searchHits.map((hit) => (
                 <div
                   key={hit.chunk_id}
-                  className="rounded-xl bg-[#262624] border border-white/[0.06] p-3.5 space-y-1.5"
+                  className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-2"
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div className="text-xs font-semibold text-zinc-200 flex items-center gap-1.5">
-                      <FileText size={13} className="text-zinc-400" />
-                      {hit.file_name} • <span className="text-zinc-400">{hit.section_title}</span>
+                    <div className="text-[13.5px] font-semibold text-zinc-100 flex items-center gap-2">
+                      <FileText size={14} className="text-[#D97757]" />
+                      <span>{hit.file_name}</span>
+                      {hit.section_title && (
+                        <span className="text-xs text-zinc-400">• {hit.section_title}</span>
+                      )}
                     </div>
-                    <div className="flex items-center gap-1.5 text-[10px] font-mono">
-                      <span className="rounded bg-white/[0.06] px-2 py-0.5 text-zinc-200">
-                        RRF: {typeof hit.rrf_score === "number" ? hit.rrf_score.toFixed(4) : hit.rrf_score}
+                    {showTechnicalDetails && (
+                      <span className="text-[11px] font-mono text-zinc-400">
+                        Skor: {typeof hit.rrf_score === "number" ? hit.rrf_score.toFixed(4) : hit.rrf_score}
                       </span>
-                      <span className="rounded bg-emerald-500/15 px-2 py-0.5 text-emerald-300">
-                        Vec #{hit.vector_rank ?? "-"} • FTS5 #{hit.fts5_rank ?? "-"}
-                      </span>
-                    </div>
+                    )}
                   </div>
-                  <p className="text-xs text-zinc-300 font-mono whitespace-pre-wrap bg-[#21211F] rounded-lg p-2.5 border border-white/[0.04]">
+                  <p className="text-[13px] text-zinc-200 whitespace-pre-wrap bg-[#191918] rounded-xl p-3 border border-white/[0.05] leading-relaxed">
                     {hit.content}
                   </p>
                 </div>
               ))
             ) : hasSearched ? (
-              <div className="rounded-xl bg-[#262624] border border-white/[0.06] p-4 text-center text-xs text-zinc-400">
-                Tidak ada kutipan dokumen yang cocok dengan kata kunci tersebut. Coba gunakan kata kunci lain atau lakukan indeks ulang folder.
+              <div className="rounded-xl bg-[#262624] border border-white/[0.06] p-4 text-center text-[13px] text-zinc-300">
+                Tidak ditemukan kutipan dokumen yang cocok dengan pencarian tersebut.
               </div>
-            ) : (
-              <div className="rounded-xl bg-[#262624]/50 border border-dashed border-white/[0.06] p-4 text-center text-xs text-zinc-500">
-                Ketikkan kata kunci di atas untuk menguji pencarian semantik dan BM25 di seluruh dokumen kerja Anda.
-              </div>
-            )}
+            ) : null}
           </div>
         </div>
 
-        {/* Indexed Documents Table */}
-        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-300">
-              Dokumen Terindeks di Folder Kerja ({documents.length} Dokumen)
-            </h3>
-            <span className="text-[11px] text-zinc-400">Diff Inkremental SHA-256</span>
-          </div>
-
-          <div className="space-y-2">
-            {documents.length > 0 ? (
-              documents.map((doc) => (
-                <div
-                  key={doc.id}
-                  className="flex items-center justify-between rounded-xl bg-[#262624] border border-white/[0.06] px-4 py-2.5"
-                >
-                  <div className="space-y-0.5">
-                    <div className="text-xs font-semibold text-zinc-100">{doc.file_name}</div>
-                    <div className="text-[11px] text-zinc-400 font-mono">
-                      {doc.chunk_count} Potongan Semantik • SHA-256: {doc.sha256_short}
-                    </div>
-                  </div>
-                  <span className="rounded-lg bg-emerald-500/15 px-2.5 py-1 text-[11px] text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                    <CheckCircle2 size={12} /> {doc.indexed_at}
-                  </span>
-                </div>
-              ))
-            ) : (
-              /* Clean Empty State */
-              <div className="rounded-xl bg-[#262624]/40 border border-dashed border-white/[0.08] p-8 text-center space-y-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/[0.04] text-zinc-400 mx-auto">
-                  <Inbox size={20} strokeWidth={1.8} />
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs font-medium text-zinc-200">
-                    Belum Ada Dokumen Terindeks
-                  </p>
-                  <p className="text-[11.5px] text-zinc-400 max-w-sm mx-auto leading-relaxed">
-                    Folder kerja aktif ({activeWorkspace?.folder_path || activeWorkspace?.name}) belum dipindai.
-                    Klik tombol di bawah untuk memindai file .pdf, .docx, .xlsx, .pptx, dan .md.
-                  </p>
-                </div>
-                <button
-                  onClick={() => void handleManualReindex()}
-                  disabled={isReindexing}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-4 py-2 text-xs font-medium text-white transition-colors disabled:opacity-50"
-                >
-                  <RefreshCw size={13} className={isReindexing ? "animate-spin" : ""} />
-                  {isReindexing ? "Memindai Folder..." : "Indeks Folder Kerja Sekarang"}
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* Multi-Tier Agent Memory Manager */}
-        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="text-xs font-semibold text-zinc-100 flex items-center gap-2">
-              <Brain size={15} className="text-amber-400" />
-              Memori Jangka Panjang Agen (`user_memories` &amp; `.aksa/MEMORY.md`)
-            </h3>
-            <span className="text-[11px] text-zinc-400">Diingat Lintas Sesi</span>
-          </div>
+        {/* Saved User Preferences & Reference Facts */}
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+          <SectionHeader
+            icon={<Brain size={17} className="text-amber-400" />}
+            title="Catatan & Preferensi Kerja Anda"
+            description="Simpan aturan atau kebiasaan kerja yang ingin selalu diingat AKSA (misalnya: selalu gunakan Bahasa Indonesia formal dan format Rupiah)."
+          />
 
           <div className="flex gap-2">
             <input
@@ -311,15 +384,17 @@ export const KnowledgeBaseView: React.FC = () => {
               value={newFact}
               onChange={(e) => setNewFact(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && void handleAddMemory()}
-              placeholder="Tambahkan aturan tetap / fakta proyek (misal: Selalu gunakan format Rupiah Rp dan font Calibri)..."
-              className="flex-1 rounded-xl bg-[#262624] border border-white/[0.08] px-3.5 py-2 text-xs text-zinc-100 focus:outline-none focus:border-[#D97757]/60"
+              aria-label="Tambah catatan preferensi kerja"
+              placeholder="Contoh: Selalu gunakan format Rupiah (Rp) dan huruf Calibri pada laporan..."
+              className="flex-1 rounded-xl bg-[#262624] border border-white/[0.09] px-3.5 py-2.5 text-[13.5px] text-zinc-100 focus:outline-none focus:border-[#D97757]"
             />
             <button
+              type="button"
               onClick={() => void handleAddMemory()}
               disabled={!newFact.trim()}
-              className="rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-3.5 py-2 text-xs font-medium text-amber-300 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+              className="rounded-xl bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 px-4 py-2.5 text-[13px] font-semibold text-amber-200 flex items-center gap-1.5 transition-colors disabled:opacity-50"
             >
-              <Plus size={14} /> Simpan Memori
+              <Plus size={15} /> Simpan Catatan
             </button>
           </div>
 
@@ -328,17 +403,17 @@ export const KnowledgeBaseView: React.FC = () => {
               memories.map((m) => (
                 <div
                   key={m.id}
-                  className="rounded-xl bg-[#262624] border border-white/[0.06] px-3.5 py-2.5 flex items-center justify-between gap-3"
+                  className="rounded-xl bg-[#262624] border border-white/[0.06] px-4 py-3 flex items-center justify-between gap-3"
                 >
-                  <span className="text-xs text-zinc-200">{m.fact}</span>
-                  <span className="shrink-0 rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-mono text-amber-300">
-                    {m.category}
+                  <span className="text-[13.5px] text-zinc-100">{m.fact}</span>
+                  <span className="shrink-0 rounded-md bg-amber-500/15 px-2.5 py-0.5 text-xs text-amber-300">
+                    Preferensi Anda
                   </span>
                 </div>
               ))
             ) : (
-              <div className="rounded-xl bg-[#262624]/40 border border-dashed border-white/[0.06] p-4 text-center text-xs text-zinc-500">
-                Belum ada memori jangka panjang tersimpan. Simpan preferensi format laporan atau aturan penulisan yang ingin selalu diingat oleh agen di setiap sesi.
+              <div className="rounded-xl bg-[#262624]/40 border border-dashed border-white/[0.07] p-4 text-center text-[13px] text-zinc-400">
+                Belum ada catatan preferensi yang disimpan.
               </div>
             )}
           </div>

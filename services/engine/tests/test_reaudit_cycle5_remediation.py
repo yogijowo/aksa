@@ -128,6 +128,8 @@ def test_engine_owns_port_and_answers_nonce_hmac(tmp_path: Path):
         [sys.executable, "-m", "app.main", "--host", "127.0.0.1", "--port", "0", "--production"],
         cwd=ENGINE_ROOT,
         env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
     )

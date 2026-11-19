@@ -123,7 +123,13 @@ def validate_sandbox_read_root(root: Path, *, allow_system_usr: bool = False) ->
 
 def _escape_env_block(env: dict[str, str]) -> ctypes.Array[ctypes.c_wchar]:
     """Encode environment dict as double-null-terminated UTF-16 block for CreateProcessW."""
-    items = [f"{k}={v}" for k, v in env.items()]
+    merged = dict(env)
+    if sys.platform == "win32":
+        if "SYSTEMROOT" not in merged:
+            merged["SYSTEMROOT"] = os.environ.get("SYSTEMROOT", r"C:\Windows")
+        if "WINDIR" not in merged:
+            merged["WINDIR"] = os.environ.get("WINDIR", merged["SYSTEMROOT"])
+    items = [f"{k}={v}" for k, v in merged.items()]
     block = "\0".join(items) + "\0\0"
     return ctypes.create_unicode_buffer(block)
 
@@ -198,7 +204,7 @@ def run_windows_appcontainer_sandboxed(
     EXTENDED_STARTUPINFO_PRESENT = 0x00080000
     STARTF_USESTDHANDLES = 0x00000100
     PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
-    PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x0002000B
+    PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x00020009
     HANDLE_FLAG_INHERIT = 0x00000001
     WAIT_TIMEOUT = 0x00000102
     JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x00002000

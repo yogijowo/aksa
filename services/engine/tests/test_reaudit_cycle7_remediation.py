@@ -524,6 +524,8 @@ def test_p2_02_engine_honors_per_launch_aksa_manifest_path(tmp_path: Path):
         [sys.executable, "-m", "app.main", "--host", "127.0.0.1", "--port", "0", "--production"],
         cwd=ENGINE_ROOT,
         env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
     )

@@ -45,6 +45,16 @@ export interface AgentTeam {
   agents: AgentNodeConfig[];
 }
 
+export interface WorkspaceFolderPermissionsGranular {
+  list_files: boolean;
+  read_content: boolean;
+  create_files: boolean;
+  modify_files: boolean;
+  move_files: boolean;
+  delete_files: boolean;
+  execute_programs: boolean;
+}
+
 export interface WorkspaceFolder {
   id: string;
   name: string;
@@ -54,6 +64,7 @@ export interface WorkspaceFolder {
   allow_execute: boolean;
   auto_rag_sync: boolean;
   last_indexed_at?: string | null;
+  granular_permissions?: WorkspaceFolderPermissionsGranular;
 }
 
 export interface FileArtifact {

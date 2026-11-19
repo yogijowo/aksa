@@ -3,7 +3,6 @@ import {
   Settings,
   FolderOpen,
   FolderPlus,
-  FolderLock,
   Cpu,
   KeyRound,
   Zap,
@@ -14,17 +13,18 @@ import {
   AlertCircle,
   ExternalLink,
   Shield,
-  ShieldCheck,
-  OctagonAlert,
   Sliders,
   Plus,
   Trash2,
   Play,
   Layers,
-  Sparkles,
   Info,
   Eye,
   EyeOff,
+  Palette,
+  HardDrive,
+  Globe,
+  Wrench,
 } from "lucide-react";
 import { useAksaStore } from "@/stores/useAksaStore";
 import {
@@ -35,6 +35,7 @@ import {
 } from "@/services/engineClient";
 import { formatNumberID } from "@/lib/utils";
 import { ProviderIcon } from "@/components/ui/DynamicIcon";
+import { PageHeader, SectionHeader, StatusBadge } from "@/components/ui/UXPrimitives";
 import type { ModelProvider } from "@/types/aksa";
 import { KnowledgeBaseView } from "@/components/rag/KnowledgeBaseView";
 import { TelegramGatewayView } from "@/components/telegram/TelegramGatewayView";
@@ -52,291 +53,69 @@ interface PreloadedModel {
 }
 
 const PRELOADED_MODELS: PreloadedModel[] = [
-  // Google Gemini (Seri Gemini 4 & 3.8)
   {
     provider: "gemini",
     model_id: "gemini-4-carbon",
     name: "Gemini 4 Carbon",
-    badge_label: "Frontier Tertinggi & Manajer",
-    description: "Model frontier kasta tertinggi Google Gemini 4 untuk penalaran mendalam, koordinasi tim multi-agen, dan arsitektur strategis.",
+    badge_label: "Manajer & Penalaran",
+    description: "Model utama Google Gemini 4 untuk koordinasi tim AI dan analisis mendalam.",
     is_recommended: true,
   },
   {
     provider: "gemini",
     model_id: "gemini-4-argon",
     name: "Gemini 4 Argon",
-    badge_label: "Flagship Multimodal & Agen",
-    description: "Model unggulan Gemini 4 untuk pemrosesan multimodal presisi tinggi, eksekusi tool-calling kompleks, dan dokumen panjang.",
+    badge_label: "Multimodal & Dokumen",
+    description: "Model unggulan Gemini 4 untuk pemrosesan dokumen panjang dan tugas kompleks.",
     is_recommended: true,
-  },
-  {
-    provider: "gemini",
-    model_id: "gemini-4-hydrogen",
-    name: "Gemini 4 Hydrogen",
-    badge_label: "Generasi 4 Efisien",
-    description: "Varian berkecepatan tinggi di keluarga Gemini 4 dengan keseimbangan optimal antara kecerdasan dan latensi rendah.",
   },
   {
     provider: "gemini",
     model_id: "gemini-3.8-flash",
     name: "Gemini 3.8 Flash",
-    badge_label: "Super Cepat & Tangkas",
-    description: "Model harian andalan berkecepatan ekstra tinggi untuk beban kerja agen responsif dan automasi real-time.",
-    is_recommended: true,
-  },
-  {
-    provider: "gemini",
-    model_id: "gemini-3.5-flash-lite",
-    name: "Gemini 3.5 Flash-Lite",
-    badge_label: "Paling Hemat Kuota",
-    description: "Versi ultra-ringan dengan efisiensi biaya maksimal untuk ekstraksi data massal dan tugas berulang.",
-  },
-
-  // Anthropic Claude (Seri Claude 5.5 & Fable 5.2)
-  {
-    provider: "anthropic",
-    model_id: "claude-fable-5-2",
-    name: "Claude Fable 5.2",
-    badge_label: "Penalaran Horizon Panjang",
-    description: "Generasi frontier Anthropic Fable 5.2 untuk riset otonom multi-tahap, penalaran algoritmik berat, dan rekayasa sistem.",
+    badge_label: "Cepat & Tangkas",
+    description: "Model harian berkecepatan tinggi untuk respons cepat.",
     is_recommended: true,
   },
   {
     provider: "anthropic",
     model_id: "claude-opus-5-5",
     name: "Claude Opus 5.5",
-    badge_label: "Flagship Pengetahuan & Kode",
-    description: "Model utama Claude 5.5 untuk telaah dokumen hukum/keuangan mendalam, penulisan naskah eksekutif, dan orkestrasi agen.",
+    badge_label: "Penulisan & Telaah",
+    description: "Model utama Claude 5.5 untuk telaah dokumen dan penulisan laporan.",
     is_recommended: true,
   },
   {
     provider: "anthropic",
     model_id: "claude-sonnet-5-5",
     name: "Claude Sonnet 5.5",
-    badge_label: "Standar Emas Agen & Computer Use",
-    description: "Kombinasi kecepatan dan kecerdasan terbaik generasi Claude 5.5 untuk pemrograman, Office, dan automasi layar PC.",
+    badge_label: "Agen & Aplikasi",
+    description: "Kombinasi kecepatan dan ketepatan terbaik untuk pengolahan dokumen & aplikasi.",
     is_recommended: true,
   },
-  {
-    provider: "anthropic",
-    model_id: "claude-haiku-5-5",
-    name: "Claude Haiku 5.5",
-    badge_label: "Kilat & Berbiaya Rendah",
-    description: "Model tercepat di keluarga Claude 5.5 untuk respons instan, klasifikasi dokumen, dan delegasi sub-agen.",
-  },
-
-  // OpenAI (Seri GPT-6.2 & GPT-6)
   {
     provider: "openai",
     model_id: "gpt-6.2-astra",
     name: "OpenAI GPT-6.2 Astra",
-    badge_label: "Flagship Penalaran & Agen",
-    description: "Model frontier tertinggi OpenAI generasi GPT-6.2 untuk penalaran kompleks, eksekusi agen otonom, dan sintesis kode.",
+    badge_label: "Penalaran Lanjut",
+    description: "Model unggulan OpenAI generasi GPT-6.2 untuk analisis dan sintesis.",
     is_recommended: true,
   },
-  {
-    provider: "openai",
-    model_id: "gpt-6.2-sol",
-    name: "OpenAI GPT-6.2 Sol",
-    badge_label: "Performa & Efisiensi Seimbang",
-    description: "Model serbaguna generasi GPT-6.2 dengan ketajaman instruksi tinggi dan kecepatan optimal untuk produktivitas kantor.",
-    is_recommended: true,
-  },
-  {
-    provider: "openai",
-    model_id: "gpt-6.1-sol",
-    name: "OpenAI GPT-6.1 Sol",
-    badge_label: "Produksi Enterprise Stabil",
-    description: "Varian stabil seri GPT-6.1 untuk pemrosesan spreadsheet, analisis laporan, dan integrasi JSON schema presisi.",
-  },
-  {
-    provider: "openai",
-    model_id: "gpt-6-luna",
-    name: "OpenAI GPT-6 Luna",
-    badge_label: "Cepat & Hemat Biaya",
-    description: "Model ringan generasi GPT-6 yang dirancang untuk tugas berfrekuensi tinggi dengan latensi sangat rendah.",
-  },
-
-  // DeepSeek (Seri DeepSeek V4 & R1)
   {
     provider: "deepseek",
     model_id: "deepseek-v4-pro",
     name: "DeepSeek V4 Pro",
-    badge_label: "Flagship MoE Kode & Logika",
-    description: "Arsitektur Mixture-of-Experts generasi V4 terbaru untuk rekayasa kode, pemodelan finansial Excel, dan analisis data.",
+    badge_label: "Analisis Data & Excel",
+    description: "Sangat akurat dan hemat kuota untuk pemodelan tabel Excel serta analisis angka.",
     is_recommended: true,
   },
-  {
-    provider: "deepseek",
-    model_id: "deepseek-flash",
-    name: "DeepSeek V4.1 Flash",
-    badge_label: "Sangat Hemat Token & Cepat",
-    description: "Model multimodal konteks panjang V4.1 Flash yang super hemat biaya untuk pembuatan rumus Excel, Word, dan PPT.",
-    is_recommended: true,
-  },
-  {
-    provider: "deepseek",
-    model_id: "deepseek-chat",
-    name: "DeepSeek Chat (V4 Alias)",
-    badge_label: "Endpoint Standar V4",
-    description: "Alias resmi DeepSeek yang otomatis mengarah ke checkpoint V4 aktif untuk pengolahan dokumen harian.",
-  },
-  {
-    provider: "deepseek",
-    model_id: "deepseek-reasoner",
-    name: "DeepSeek R1 / Reasoner",
-    badge_label: "Penalaran Chain-of-Thought",
-    description: "Model penalaran matematis dan verifikasi logika mendalam dengan jejak berpikir langkah-demi-langkah.",
-    is_recommended: true,
-  },
-
-  // Groq
-  {
-    provider: "groq",
-    model_id: "meta-llama/llama-4-maverick-17b-128e-instruct",
-    name: "Llama 4 Maverick 17B (Groq)",
-    badge_label: "Flagship Llama 4 LPU",
-    description: "Model multimodal MoE generasi Llama 4 (128 experts) dengan akselerasi perangkat keras LPU Groq super cepat.",
-    is_recommended: true,
-  },
-  {
-    provider: "groq",
-    model_id: "meta-llama/llama-4-scout-17b-16e-instruct",
-    name: "Llama 4 Scout 17B (Groq)",
-    badge_label: "Inferensi LPU Kilat",
-    description: "Model Llama 4 Scout berkecepatan ratusan token/detik untuk peringkasan dokumen dan eksekusi alat instan.",
-  },
-  {
-    provider: "groq",
-    model_id: "qwen/qwen3-32b",
-    name: "Qwen 3.8 / 3 32B (Groq)",
-    badge_label: "Penalaran & Kode LPU",
-    description: "Model penalaran hibrida dan pemrograman tingkat lanjut yang berjalan di atas chip LPU Groq.",
-    is_recommended: true,
-  },
-  {
-    provider: "groq",
-    model_id: "deepseek-r1-distill-llama-70b",
-    name: "DeepSeek R1 Distill 70B (Groq)",
-    badge_label: "Penalaran Kilat Groq",
-    description: "Kemampuan penalaran mendalam DeepSeek R1 dengan kecepatan inferensi LPU ultra-rendah latensi.",
-  },
-
-  // OpenRouter
-  {
-    provider: "openrouter",
-    model_id: "anthropic/claude-opus-5-5",
-    name: "Claude Opus 5.5 (OpenRouter)",
-    badge_label: "Router Claude 5.5",
-    description: "Akses langsung ke flagship Anthropic Claude Opus 5.5 melalui gerbang terpadu OpenRouter.",
-    is_recommended: true,
-  },
-  {
-    provider: "openrouter",
-    model_id: "anthropic/claude-sonnet-5-5",
-    name: "Claude Sonnet 5.5 (OpenRouter)",
-    badge_label: "Router Sonnet 5.5",
-    description: "Model agen dan kode Claude Sonnet 5.5 via satu kunci API OpenRouter.",
-    is_recommended: true,
-  },
-  {
-    provider: "openrouter",
-    model_id: "google/gemini-4-carbon",
-    name: "Gemini 4 Carbon (OpenRouter)",
-    badge_label: "Router Gemini 4",
-    description: "Model frontier Google Gemini 4 Carbon melalui agregator OpenRouter.",
-  },
-  {
-    provider: "openrouter",
-    model_id: "openai/gpt-6.2-astra",
-    name: "OpenAI GPT-6.2 Astra (OpenRouter)",
-    badge_label: "Router GPT-6.2",
-    description: "Akses model flagship OpenAI GPT-6.2 Astra melalui infrastruktur OpenRouter.",
-  },
-  {
-    provider: "openrouter",
-    model_id: "deepseek/deepseek-v4-pro",
-    name: "DeepSeek V4 Pro (OpenRouter)",
-    badge_label: "Router DeepSeek V4",
-    description: "Model MoE DeepSeek V4 Pro via jaringan global OpenRouter.",
-  },
-  {
-    provider: "openrouter",
-    model_id: "openrouter/auto",
-    name: "OpenRouter Auto Gateway",
-    badge_label: "Router Cerdas Otomatis",
-    description: "Gerbang terpadu yang merutekan secara dinamis ke model terbaik berdasarkan kompleksitas prompt.",
-    is_recommended: true,
-  },
-
-  // Ollama (Lokal Gratis)
   {
     provider: "ollama",
     model_id: "qwen3.8:8b",
-    name: "Qwen 3.8 8B (Ollama)",
-    badge_label: "Rekomendasi Lokal Utama",
-    description: "Model lokal generasi Qwen 3.8 terbaru untuk Bahasa Indonesia, penalaran hibrida, tool-calling, dan privasi offline 100%.",
+    name: "Qwen 3.8 8B (Ollama Lokal)",
+    badge_label: "Rekomendasi Lokal Gratis",
+    description: "Berjalan langsung di komputer Anda tanpa internet dan tanpa biaya kuota API.",
     is_recommended: true,
-  },
-  {
-    provider: "ollama",
-    model_id: "qwen3.8:14b",
-    name: "Qwen 3.8 14B (Ollama)",
-    badge_label: "Akurasi Tinggi Lokal",
-    description: "Varian 14B Qwen 3.8 dengan ketajaman analisis dokumen RAG dan sintesis laporan setara model cloud.",
-  },
-  {
-    provider: "ollama",
-    model_id: "qwen3-coder:30b",
-    name: "Qwen 3 Coder 30B (Ollama)",
-    badge_label: "Spesialis Kode Lokal",
-    description: "Model coding lokal untuk penulisan skrip Python otomatis, analisis CSV/Excel, dan debugging.",
-  },
-  {
-    provider: "ollama",
-    model_id: "gemma4:12b",
-    name: "Google Gemma 4 12B (Ollama)",
-    badge_label: "Multimodal Lokal Gen-4",
-    description: "Model open-weights generasi ke-4 dari Google dengan dukungan teks dan vision berkapasitas konteks besar.",
-    is_recommended: true,
-  },
-  {
-    provider: "ollama",
-    model_id: "deepseek-r1:8b",
-    name: "DeepSeek R1 8B (Ollama)",
-    badge_label: "Penalaran Offline",
-    description: "Penalaran matematika dan logika chain-of-thought offline di perangkat PC Anda tanpa koneksi internet.",
-  },
-  {
-    provider: "ollama",
-    model_id: "llama4:scout",
-    name: "Meta Llama 4 Scout (Ollama)",
-    badge_label: "Flagship Lokal Meta",
-    description: "Arsitektur Mixture-of-Experts Llama 4 untuk PC/Mac berspesifikasi memori tinggi.",
-  },
-
-  // LM Studio
-  {
-    provider: "lmstudio",
-    model_id: "qwen3.8-8b-instruct",
-    name: "Qwen 3.8 8B Instruct (LM Studio)",
-    badge_label: "Server Lokal OpenAI",
-    description: "Integrasi server lokal LM Studio untuk menjalankan Qwen 3.8 8B dengan akselerasi penuh GPU/MLX.",
-    is_recommended: true,
-  },
-  {
-    provider: "lmstudio",
-    model_id: "gemma-4-12b-it",
-    name: "Google Gemma 4 12B Instruct (LM Studio)",
-    badge_label: "Multimodal Lokal Gen-4",
-    description: "Model multimodal Gemma 4 12B melalui endpoint OpenAI lokal LM Studio.",
-  },
-  {
-    provider: "lmstudio",
-    model_id: "deepseek-r1-distill-qwen-14b",
-    name: "DeepSeek R1 Distill 14B (LM Studio)",
-    badge_label: "Reasoning Lokal",
-    description: "Menjalankan model penalaran DeepSeek R1 14B secara lokal melalui antarmuka LM Studio.",
   },
 ];
 
@@ -351,7 +130,7 @@ const CLOUD_PROVIDERS: {
   {
     id: "gemini",
     name: "Google Gemini",
-    desc: "Gemini 4 Carbon, 4 Argon & 3.8 Flash — Frontier multimodal & ideal untuk Supervisor",
+    desc: "Gemini 4 Carbon, 4 Argon & 3.8 Flash",
     placeholder: "AIzaSy...",
     link: "https://aistudio.google.com/app/apikey",
     defaultTestModel: "gemini-3.8-flash",
@@ -359,15 +138,15 @@ const CLOUD_PROVIDERS: {
   {
     id: "anthropic",
     name: "Anthropic Claude",
-    desc: "Claude Fable 5.2, Opus 5.5 & Sonnet 5.5 — Penalaran mendalam & agen otonom",
+    desc: "Claude Fable 5.2, Opus 5.5 & Sonnet 5.5",
     placeholder: "sk-ant-...",
     link: "https://console.anthropic.com/",
     defaultTestModel: "claude-sonnet-5-5",
   },
   {
     id: "deepseek",
-    name: "DeepSeek API",
-    desc: "DeepSeek V4 Pro, V4.1 Flash & R1 — Sangat hemat token untuk formula Excel & data",
+    name: "DeepSeek",
+    desc: "DeepSeek V4 Pro, V4.1 Flash & R1",
     placeholder: "sk-...",
     link: "https://platform.deepseek.com/",
     defaultTestModel: "deepseek-flash",
@@ -375,7 +154,7 @@ const CLOUD_PROVIDERS: {
   {
     id: "openai",
     name: "OpenAI",
-    desc: "GPT-6.2 Astra, GPT-6.2 Sol & GPT-6 Luna — Standar industri kecerdasan buatan",
+    desc: "GPT-6.2 Astra, GPT-6.2 Sol & GPT-6 Luna",
     placeholder: "sk-...",
     link: "https://platform.openai.com/api-keys",
     defaultTestModel: "gpt-6.2-sol",
@@ -383,7 +162,7 @@ const CLOUD_PROVIDERS: {
   {
     id: "groq",
     name: "Groq Cloud",
-    desc: "Llama 4 Maverick, Qwen 3.8 & DeepSeek R1 — Inferensi ultra-cepat berbasis chip LPU",
+    desc: "Llama 4 Maverick & Qwen 3.8",
     placeholder: "gsk_...",
     link: "https://console.groq.com/keys",
     defaultTestModel: "meta-llama/llama-4-scout-17b-16e-instruct",
@@ -391,14 +170,38 @@ const CLOUD_PROVIDERS: {
   {
     id: "openrouter",
     name: "OpenRouter",
-    desc: "Akses fleksibel ke Claude 5.5, Gemini 4, GPT-6.2 & 200+ model dalam satu kunci API",
+    desc: "Satu kunci untuk ratusan model AI",
     placeholder: "sk-or-...",
     link: "https://openrouter.ai/keys",
     defaultTestModel: "openrouter/auto",
   },
 ];
 
-type SettingsTab = "models" | "workspaces" | "permissions" | "analytics";
+// Section 5.9: 8 Required Settings Categories
+type SettingsCategory =
+  | "umum"
+  | "tampilan"
+  | "model_ai"
+  | "privasi_data"
+  | "penyimpanan"
+  | "jaringan"
+  | "lanjutan"
+  | "info_aplikasi";
+
+const SETTINGS_CATEGORIES: {
+  id: SettingsCategory;
+  label: string;
+  icon: React.ElementType;
+}[] = [
+  { id: "umum", label: "1. Umum", icon: Settings },
+  { id: "tampilan", label: "2. Tampilan", icon: Palette },
+  { id: "model_ai", label: "3. Model AI", icon: Cpu },
+  { id: "privasi_data", label: "4. Privasi dan data", icon: Shield },
+  { id: "penyimpanan", label: "5. Penyimpanan", icon: HardDrive },
+  { id: "jaringan", label: "6. Jaringan", icon: Globe },
+  { id: "lanjutan", label: "7. Lanjutan", icon: Wrench },
+  { id: "info_aplikasi", label: "8. Informasi aplikasi", icon: Info },
+];
 
 export const FeatureSectionsView: React.FC = () => {
   const {
@@ -411,11 +214,16 @@ export const FeatureSectionsView: React.FC = () => {
     setActiveWorkspace,
     addWorkspaceFolder,
     removeWorkspaceFolder,
-    updateWorkspacePermissions,
     syncWithBackendEngine,
+    setActiveNav,
   } = useAksaStore();
 
-  const [activeTab, setActiveTab] = useState<SettingsTab>("models");
+  const [activeCategory, setActiveCategory] = useState<SettingsCategory>("umum");
+  const [privacyMode, setPrivacyMode] = useState<"local_first" | "strict_local" | "cloud_allowed">(
+    "local_first"
+  );
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [fontScale, setFontScale] = useState<"standar" | "nyaman">("nyaman");
 
   // API Key State
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({
@@ -480,7 +288,7 @@ export const FeatureSectionsView: React.FC = () => {
     setIsSavingKey(provider);
     await saveProviderApiKey(provider, key);
     await loadProviderStatus();
-    setSavedNotice(`Kunci API ${provider.toUpperCase()} berhasil disimpan.`);
+    setSavedNotice(`Kunci layanan ${provider.toUpperCase()} berhasil disimpan di brankas keamanan.`);
     setIsSavingKey(null);
     setTimeout(() => setSavedNotice(null), 3500);
   };
@@ -491,7 +299,6 @@ export const FeatureSectionsView: React.FC = () => {
       [provider]: { loading: true },
     }));
 
-    // If key entered in input, save first
     if (apiKeys[provider]?.trim()) {
       await saveProviderApiKey(provider, apiKeys[provider].trim());
       await loadProviderStatus();
@@ -508,7 +315,7 @@ export const FeatureSectionsView: React.FC = () => {
         [provider]: {
           loading: false,
           ok: true,
-          message: `Berhasil terhubung ke ${defaultModel}! (Respon: "${res.reply?.slice(0, 30)}...")`,
+          message: `Terhubung dengan baik ke ${defaultModel}.`,
         },
       }));
     } else {
@@ -517,25 +324,17 @@ export const FeatureSectionsView: React.FC = () => {
         [provider]: {
           loading: false,
           ok: false,
-          message: res.error || "Gagal menghubungi model. Periksa kembali kunci API Anda.",
+          message: res.error || "Gagal menghubungi layanan. Periksa kembali kunci Anda.",
         },
       }));
     }
-
-    setTimeout(() => {
-      setTestingStatus((prev) => {
-        const next = { ...prev };
-        delete next[provider];
-        return next;
-      });
-    }, 6000);
   };
 
   const handleAddCustomModel = (e: React.FormEvent) => {
     e.preventDefault();
     if (!customModelId.trim()) return;
     setCustomModelSuccess(
-      `Model kustom "${customModelId.trim()}" (${customProvider}) siap digunakan di Tim Agen!`
+      `Model kustom "${customModelId.trim()}" (${customProvider}) siap digunakan di Tim AI.`
     );
     setCustomModelId("");
     setTimeout(() => setCustomModelSuccess(null), 4000);
@@ -545,7 +344,7 @@ export const FeatureSectionsView: React.FC = () => {
     e.preventDefault();
     if (!newFolderPath.trim()) return;
     addWorkspaceFolder(newFolderPath.trim(), newFolderName.trim() || undefined);
-    setFolderNotice(`Folder Kerja "${newFolderPath.trim()}" berhasil ditambahkan.`);
+    setFolderNotice(`Folder Ruang Kerja "${newFolderPath.trim()}" berhasil ditambahkan.`);
     setNewFolderPath("");
     setNewFolderName("");
     setTimeout(() => setFolderNotice(null), 4000);
@@ -571,106 +370,236 @@ export const FeatureSectionsView: React.FC = () => {
   return (
     <div className="flex-1 p-6 md:p-8 overflow-y-auto bg-[#191918]">
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-white/[0.06]">
-          <div>
-            <h1 className="text-lg font-semibold text-zinc-100 flex items-center gap-2">
-              <Settings size={18} className="text-[#D97757]" />
-              Pengaturan Sistem &amp; Preferensi AKSA
-            </h1>
-            <p className="text-xs text-zinc-400 mt-1">
-              Atur model AI cloud &amp; lokal, tentukan folder kerja PC yang diizinkan, dan kelola izin keamanan sandbox.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1.5 rounded-xl bg-white/[0.03] border border-white/[0.08] px-3 py-1.5 text-xs text-zinc-400">
-              <Shield size={13} className="text-emerald-400" />
-              <span>Keamanan Aktif</span>
-            </span>
-          </div>
-        </div>
+        {/* Page Header (Section 5.9 Pengaturan) */}
+        <PageHeader
+          icon={<Settings size={22} className="text-[#D97757]" />}
+          title="Pengaturan AKSA"
+          description="Sesuaikan preferensi umum, tampilan, model AI, privasi data, penyimpanan folder, dan jaringan secara terstruktur."
+        />
 
-        {/* Global Toast / Notice */}
         {savedNotice && (
-          <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 text-xs text-emerald-300 flex items-center gap-2 animate-in fade-in">
-            <CheckCircle2 size={15} className="shrink-0 text-emerald-400" />
+          <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/30 p-3.5 text-[13px] text-emerald-200 flex items-center gap-2">
+            <CheckCircle2 size={16} className="shrink-0 text-emerald-400" />
             <span>{savedNotice}</span>
           </div>
         )}
 
-        {/* Top Navigation Tabs */}
-        <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.06] pb-3">
-          <button
-            onClick={() => setActiveTab("models")}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition-all ${
-              activeTab === "models"
-                ? "bg-[#262624] text-zinc-100 border border-white/[0.12] shadow-sm"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]"
-            }`}
-          >
-            <Cpu size={14} className={activeTab === "models" ? "text-[#D97757]" : ""} />
-            <span>Model AI &amp; Kunci API</span>
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.2 text-[10px] text-zinc-400">
-              {PRELOADED_MODELS.length}+ Model
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("workspaces")}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition-all ${
-              activeTab === "workspaces"
-                ? "bg-[#262624] text-zinc-100 border border-white/[0.12] shadow-sm"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]"
-            }`}
-          >
-            <FolderOpen size={14} className={activeTab === "workspaces" ? "text-emerald-400" : ""} />
-            <span>Lokasi Folder Kerja PC</span>
-            <span className="rounded-full bg-white/[0.06] px-2 py-0.2 text-[10px] text-zinc-400">
-              {workspaces.length} Folder
-            </span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("permissions")}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition-all ${
-              activeTab === "permissions"
-                ? "bg-[#262624] text-zinc-100 border border-white/[0.12] shadow-sm"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]"
-            }`}
-          >
-            <ShieldCheck size={14} className={activeTab === "permissions" ? "text-sky-400" : ""} />
-            <span>Izin &amp; Keamanan PC</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab("analytics")}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2 text-xs font-medium transition-all ${
-              activeTab === "analytics"
-                ? "bg-[#262624] text-zinc-100 border border-white/[0.12] shadow-sm"
-                : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]"
-            }`}
-          >
-            <Zap size={14} className={activeTab === "analytics" ? "text-amber-400" : ""} />
-            <span>Efisiensi Token</span>
-          </button>
+        {/* 8 Structured Category Tabs (Section 5.9) */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-white/[0.07] pb-3">
+          {SETTINGS_CATEGORIES.map((cat) => {
+            const Icon = cat.icon;
+            const isActive = activeCategory === cat.id;
+            return (
+              <button
+                type="button"
+                key={cat.id}
+                onClick={() => setActiveCategory(cat.id)}
+                className={`flex items-center gap-2 rounded-xl px-3.5 py-2 text-[13px] font-medium transition-all ${
+                  isActive
+                    ? "bg-[#262624] text-zinc-100 border border-white/[0.14] shadow-sm"
+                    : "text-zinc-300 hover:text-white hover:bg-white/[0.04]"
+                }`}
+              >
+                <Icon size={15} className={isActive ? "text-[#D97757]" : "text-zinc-400"} />
+                <span>{cat.label}</span>
+              </button>
+            );
+          })}
         </div>
 
-        {/* TAB 1: MODEL AI & KUNCI API */}
-        {activeTab === "models" && (
-          <div className="space-y-8">
-            {/* 1.1 Form Koneksi Kunci API Cloud */}
-            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-5">
-              <div className="flex items-center justify-between">
-                <div className="space-y-1">
-                  <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                    <KeyRound size={16} className="text-[#D97757]" />
-                    Kunci API Model
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Masukkan API Key model AI cloud untuk menghubungkan agen kerja AKSA.
+        {/* 1. UMUM */}
+        {activeCategory === "umum" && (
+          <div className="space-y-4">
+            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+              <SectionHeader
+                title="Pengaturan Umum"
+                description="Preferensi dasar cara AKSA membantu pekerjaan Anda sehari-hari."
+              />
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-1.5">
+                  <div className="text-[14px] font-semibold text-zinc-100">Bahasa Antarmuka</div>
+                  <p className="text-xs text-zinc-300">
+                    Bahasa Indonesia (Natural &amp; Mudah Dipahami)
                   </p>
+                  <StatusBadge tone="success" label="Aktif sebagai bahasa utama" />
+                </div>
+
+                <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-1.5">
+                  <div className="text-[14px] font-semibold text-zinc-100">
+                    Pemilihan Agen &amp; Model Otomatis
+                  </div>
+                  <p className="text-xs text-zinc-300">
+                    AKSA otomatis memilih agen pendukung dan model AI yang paling sesuai dengan
+                    instruksi Anda.
+                  </p>
+                  <StatusBadge tone="accent" label="Otomatis aktif" />
                 </div>
               </div>
+
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-[14px] font-semibold text-zinc-100">
+                    Panduan Pengenalan Awal (Onboarding)
+                  </div>
+                  <p className="text-xs text-zinc-300">
+                    Tampilkan kembali panduan 4 langkah singkat di Ruang Kerja kapan pun Anda
+                    membutuhkannya.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    try {
+                      localStorage.removeItem("aksa_onboarding_completed");
+                    } catch {}
+                    setActiveNav("ruang_kerja");
+                  }}
+                  className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-4 py-2 text-xs font-semibold text-white transition-colors shrink-0"
+                >
+                  Buka Panduan Awal
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 2. TAMPILAN (Separated cleanly from critical security settings per Section 5.9) */}
+        {activeCategory === "tampilan" && (
+          <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+            <SectionHeader
+              title="Tampilan & Kenyamanan Baca"
+              description="Pengaturan visual antarmuka AKSA. Pengaturan keamanan kritis dipisahkan ke Pusat Akses dan Privasi."
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-2">
+                <div className="text-[14px] font-semibold text-zinc-100">Tema Warna AKSA</div>
+                <p className="text-xs text-zinc-300">
+                  Tema Gelap Khas AKSA (<code>#191918</code> dengan aksen hangat{" "}
+                  <code>#D97757</code>) untuk kenyamanan mata jangka panjang.
+                </p>
+                <StatusBadge tone="accent" label="Tema Gelap Aktif" />
+              </div>
+
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-2">
+                <div className="text-[14px] font-semibold text-zinc-100">Ukuran Teks &amp; Keterbacaan</div>
+                <p className="text-xs text-zinc-300">
+                  Skala huruf yang jelas dan kontras tinggi agar mudah dibaca pada berbagai ukuran
+                  layar.
+                </p>
+                <div className="flex items-center gap-2 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => setFontScale("nyaman")}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold border ${
+                      fontScale === "nyaman"
+                        ? "bg-[#D97757] text-white border-[#D97757]"
+                        : "bg-[#191918] text-zinc-300 border-white/10"
+                    }`}
+                  >
+                    Nyaman (Direkomendasikan)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setFontScale("standar")}
+                    className={`rounded-lg px-3 py-1.5 text-xs font-semibold border ${
+                      fontScale === "standar"
+                        ? "bg-[#D97757] text-white border-[#D97757]"
+                        : "bg-[#191918] text-zinc-300 border-white/10"
+                    }`}
+                  >
+                    Ringkas
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <label className="flex items-center justify-between rounded-xl bg-[#262624] border border-white/[0.07] p-4 cursor-pointer">
+              <div className="space-y-0.5">
+                <div className="text-[14px] font-semibold text-zinc-100">
+                  Kurangi Efek Gerakan (Reduced Motion)
+                </div>
+                <p className="text-xs text-zinc-300">
+                  Menyederhanakan animasi perpindahan panel bagi pengguna yang sensitif terhadap
+                  animasi.
+                </p>
+              </div>
+              <input
+                type="checkbox"
+                checked={reducedMotion}
+                onChange={(e) => setReducedMotion(e.target.checked)}
+                className="accent-[#D97757] h-4 w-4"
+              />
+            </label>
+          </div>
+        )}
+
+        {/* 3. MODEL AI */}
+        {activeCategory === "model_ai" && (
+          <div className="space-y-6">
+            {/* Local AI (Ollama) */}
+            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-4">
+              <div className="flex items-center justify-between">
+                <SectionHeader
+                  icon={<Cpu size={18} className="text-emerald-400" />}
+                  title="Model AI Lokal di Komputer Anda (Gratis & Tanpa Internet)"
+                  description="Gunakan Ollama atau LM Studio jika ingin menjalankan AI sepenuhnya di perangkat Anda."
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleCheckOllamaAgain()}
+                  disabled={isCheckingOllama}
+                  title="Periksa ulang status AI lokal"
+                  className="rounded-xl p-2 text-zinc-300 hover:text-white hover:bg-white/[0.06] transition-colors"
+                >
+                  <RefreshCw size={15} className={isCheckingOllama ? "animate-spin" : ""} />
+                </button>
+              </div>
+
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-block w-2.5 h-2.5 rounded-full ${
+                        engineHealth.ollama_online ? "bg-emerald-400" : "bg-zinc-500"
+                      }`}
+                    />
+                    <span className="text-[14px] font-semibold text-zinc-100">
+                      {engineHealth.ollama_online
+                        ? "Ollama Terdeteksi Aktif dan Siap Digunakan"
+                        : "Ollama Belum Berjalan (Opsional)"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-300">
+                    {engineHealth.ollama_online && engineHealth.ollama_models.length > 0
+                      ? `Model lokal siap pakai: ${engineHealth.ollama_models.join(", ")}`
+                      : "Anda tetap dapat menggunakan penyedia AI Cloud di bawah ini."}
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyOllamaCommand}
+                  className="rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] px-3.5 py-2 text-xs text-zinc-200 font-mono transition-colors flex items-center gap-1.5 shrink-0"
+                >
+                  {copiedCmd ? (
+                    <Check size={13} className="text-emerald-400" />
+                  ) : (
+                    <Copy size={13} />
+                  )}
+                  <span>{copiedCmd ? "Perintah Disalin!" : "ollama run qwen3.8:8b"}</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Cloud AI Providers */}
+            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-5">
+              <SectionHeader
+                icon={<KeyRound size={18} className="text-[#D97757]" />}
+                title="Penyedia AI Cloud"
+                description="Hubungkan kunci layanan AI pilihan Anda. Kunci disimpan terenkripsi di brankas keamanan perangkat."
+              />
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {CLOUD_PROVIDERS.map((prov) => {
@@ -681,30 +610,22 @@ export const FeatureSectionsView: React.FC = () => {
                   return (
                     <div
                       key={prov.id}
-                      className="rounded-xl bg-[#262624] border border-white/[0.06] p-4 space-y-3 flex flex-col justify-between"
+                      className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-3 flex flex-col justify-between"
                     >
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-2">
                             <ProviderIcon provider={prov.id} size={15} />
-                            <span className="text-xs font-semibold text-zinc-200">{prov.name}</span>
+                            <span className="text-[14px] font-semibold text-zinc-100">
+                              {prov.name}
+                            </span>
                           </div>
-                          <span
-                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium border ${
-                              isConnected
-                                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                                : "bg-white/[0.03] text-zinc-500 border-white/[0.06]"
-                            }`}
-                          >
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full ${
-                                isConnected ? "bg-emerald-400" : "bg-zinc-600"
-                              }`}
-                            />
-                            {isConnected ? "Terkoneksi" : "Belum Ada Kunci"}
-                          </span>
+                          <StatusBadge
+                            tone={isConnected ? "success" : "neutral"}
+                            label={isConnected ? "Siap digunakan" : "Belum diatur"}
+                          />
                         </div>
-                        <p className="text-[11px] text-zinc-400 leading-relaxed">{prov.desc}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{prov.desc}</p>
                       </div>
 
                       <div className="space-y-2 pt-1">
@@ -716,10 +637,11 @@ export const FeatureSectionsView: React.FC = () => {
                               onChange={(e) =>
                                 setApiKeys((prev) => ({ ...prev, [prov.id]: e.target.value }))
                               }
+                              aria-label={`Kunci layanan ${prov.name}`}
                               placeholder={prov.placeholder}
                               autoComplete="off"
                               spellCheck={false}
-                              className="w-full rounded-lg bg-[#191918] border border-white/[0.08] pl-3 pr-8 py-1.5 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
+                              className="w-full rounded-xl bg-[#191918] border border-white/[0.1] pl-3 pr-8 py-2 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-[#D97757]"
                             />
                             <button
                               type="button"
@@ -729,58 +651,58 @@ export const FeatureSectionsView: React.FC = () => {
                                   [prov.id]: !prev[prov.id],
                                 }))
                               }
-                              title={showKeys[prov.id] ? "Sembunyikan Kunci" : "Tampilkan Kunci"}
-                              className="absolute right-2 text-zinc-500 hover:text-zinc-300 transition-colors p-0.5"
+                              title={showKeys[prov.id] ? "Sembunyikan" : "Tampilkan"}
+                              className="absolute right-2 text-zinc-400 hover:text-zinc-200 p-0.5"
                             >
-                              {showKeys[prov.id] ? <EyeOff size={13} /> : <Eye size={13} />}
+                              {showKeys[prov.id] ? <EyeOff size={14} /> : <Eye size={14} />}
                             </button>
                           </div>
                           <button
+                            type="button"
                             onClick={() => void handleSaveKey(prov.id)}
                             disabled={isSavingKey === prov.id}
-                            className="rounded-lg bg-white/[0.06] hover:bg-[#D97757] hover:text-white border border-white/[0.08] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors shrink-0"
+                            className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-3.5 py-2 text-xs font-semibold text-white transition-colors shrink-0"
                           >
                             {isSavingKey === prov.id ? "Menyimpan..." : "Simpan"}
                           </button>
                           <button
+                            type="button"
                             onClick={() => void handleTestKey(prov.id, prov.defaultTestModel)}
                             disabled={testState?.loading}
-                            title="Uji apakah kunci API valid dan terhubung"
-                            className="rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.08] px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors flex items-center gap-1 shrink-0"
+                            className="rounded-xl bg-white/[0.06] hover:bg-white/[0.12] border border-white/[0.1] px-3 py-2 text-xs font-medium text-zinc-200 transition-colors flex items-center gap-1 shrink-0"
                           >
                             <Play size={11} className={testState?.loading ? "animate-spin" : ""} />
                             <span>Uji</span>
                           </button>
                         </div>
 
-                        {/* Test Connection Result Feedback */}
                         {testState && !testState.loading && (
                           <div
-                            className={`rounded-lg p-2 text-[11px] flex items-start gap-1.5 ${
+                            className={`rounded-xl p-2.5 text-xs flex items-start gap-2 ${
                               testState.ok
-                                ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
-                                : "bg-rose-500/10 text-rose-300 border border-rose-500/20"
+                                ? "bg-emerald-500/10 text-emerald-200 border border-emerald-500/25"
+                                : "bg-rose-500/10 text-rose-200 border border-rose-500/25"
                             }`}
                           >
                             {testState.ok ? (
-                              <CheckCircle2 size={13} className="shrink-0 mt-0.5 text-emerald-400" />
+                              <CheckCircle2 size={14} className="shrink-0 mt-0.5 text-emerald-400" />
                             ) : (
-                              <AlertCircle size={13} className="shrink-0 mt-0.5 text-rose-400" />
+                              <AlertCircle size={14} className="shrink-0 mt-0.5 text-rose-400" />
                             )}
-                            <span className="leading-tight">{testState.message}</span>
+                            <span>{testState.message}</span>
                           </div>
                         )}
 
-                        <div className="flex items-center justify-between text-[10.5px] text-zinc-500">
-                          <span>Model Tes: {prov.defaultTestModel}</span>
+                        <div className="flex items-center justify-between text-xs text-zinc-400">
+                          <span>Model: {prov.defaultTestModel}</span>
                           <a
                             href={prov.link}
                             target="_blank"
                             rel="noreferrer"
-                            className="inline-flex items-center gap-1 text-zinc-400 hover:text-zinc-200 transition-colors"
+                            className="inline-flex items-center gap-1 text-zinc-300 hover:text-white transition-colors"
                           >
-                            <span>Dapatkan Kunci API</span>
-                            <ExternalLink size={10} />
+                            <span>Dapatkan Kunci</span>
+                            <ExternalLink size={11} />
                           </a>
                         </div>
                       </div>
@@ -790,82 +712,306 @@ export const FeatureSectionsView: React.FC = () => {
               </div>
             </div>
 
-            {/* 1.2 Katalog Lengkap Model AI Terbaru (Sudah Pre-Loaded) */}
+            {/* Recommended Model Catalog */}
             <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-white/[0.06] pb-3">
-                <div className="space-y-0.5">
-                  <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                    <Layers size={16} className="text-emerald-400" />
-                    Katalog Model AI Modern Siap Pakai (Otomatis Terpasang)
-                  </h2>
-                  <p className="text-xs text-zinc-400">
-                    Semua model terbaru di bawah ini sudah tersedia langsung di menu <strong>Tim Agen</strong> tanpa perlu konfigurasi manual.
-                  </p>
-                </div>
-                <span className="text-xs text-zinc-400 font-mono">
-                  Total {PRELOADED_MODELS.length} Model Cloud Siap Pakai
-                </span>
-              </div>
+              <SectionHeader
+                icon={<Layers size={18} className="text-emerald-400" />}
+                title="Daftar Model AI Siap Pakai"
+                description="Seluruh model di bawah ini sudah tersedia di menu Tim AI tanpa perlu pengaturan tambahan."
+              />
 
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
                 {PRELOADED_MODELS.map((m) => (
                   <div
                     key={`${m.provider}_${m.model_id}`}
-                    className="rounded-xl bg-[#262624] border border-white/[0.06] hover:border-white/[0.14] p-3.5 space-y-2 transition-all"
+                    className="rounded-xl bg-[#262624] border border-white/[0.07] p-3.5 space-y-2"
                   >
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-1.5 min-w-0">
                         <ProviderIcon provider={m.provider} size={14} />
-                        <span className="text-xs font-semibold text-zinc-200 truncate">{m.name}</span>
+                        <span className="text-[13px] font-semibold text-zinc-100 truncate">
+                          {m.name}
+                        </span>
                       </div>
-                      <span
-                        className={`rounded px-1.5 py-0.5 text-[9.5px] font-medium shrink-0 ${
-                          m.is_recommended
-                            ? "bg-[#D97757]/20 text-[#D97757] border border-[#D97757]/30"
-                            : "bg-white/[0.05] text-zinc-400"
-                        }`}
-                      >
-                        {m.badge_label}
-                      </span>
                     </div>
-
-                    <p className="text-[11px] text-zinc-400 leading-relaxed line-clamp-2">
-                      {m.description}
-                    </p>
-
-                    <div className="flex items-center justify-between pt-1 border-t border-white/[0.04] text-[10px] text-zinc-500 font-mono">
-                      <span className="truncate">{m.model_id}</span>
-                      <span className="uppercase text-zinc-400">{m.provider}</span>
-                    </div>
+                    <span className="inline-block rounded bg-[#D97757]/15 border border-[#D97757]/30 px-2 py-0.5 text-[11px] font-medium text-[#F09373]">
+                      {m.badge_label}
+                    </span>
+                    <p className="text-xs text-zinc-300 leading-relaxed">{m.description}</p>
                   </div>
                 ))}
               </div>
             </div>
+          </div>
+        )}
 
-            {/* 1.3 Form Tambah Model Kustom Manual */}
+        {/* 4. PRIVASI DAN DATA */}
+        {activeCategory === "privasi_data" && (
+          <div className="space-y-4">
             <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
-              <div className="space-y-1">
-                <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                  <Sliders size={16} className="text-sky-400" />
-                  Tambah Model Kustom Secara Manual (Opsional)
-                </h2>
-                <p className="text-xs text-zinc-400">
-                  Ingin menggunakan model baru yang baru rilis, versi preview (misal <code>o3-mini</code> atau <code>gemini-3.1-pro-preview</code>), atau model fine-tuned pribadi? Daftarkan ID model di sini.
-                </p>
+              <SectionHeader
+                icon={<Shield size={18} className="text-emerald-400" />}
+                title="Privasi & Perlindungan Data"
+                description="Atur bagaimana AKSA melindungi dokumen sensitif, data pribadi, dan kredensial di komputer Anda."
+              />
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                {[
+                  {
+                    id: "local_first" as const,
+                    title: "Utamakan Pemrosesan Lokal",
+                    desc: "Mengutamakan model AI lokal untuk dokumen internal dan meminta persetujuan untuk data sensitif.",
+                  },
+                  {
+                    id: "strict_local" as const,
+                    title: "Hanya Lokal (Offline Penuh)",
+                    desc: "Memblokir seluruh pengiriman data ke layanan Cloud. Hanya menggunakan AI lokal di komputer Anda.",
+                  },
+                  {
+                    id: "cloud_allowed" as const,
+                    title: "Izinkan Model Cloud Terpilih",
+                    desc: "Menggunakan model AI Cloud yang Anda pilih dengan pemindaian informasi sensitif otomatis.",
+                  },
+                ].map((opt) => (
+                  <button
+                    type="button"
+                    key={opt.id}
+                    onClick={() => setPrivacyMode(opt.id)}
+                    className={`rounded-xl p-4 border text-left space-y-2 transition-all ${
+                      privacyMode === opt.id
+                        ? "bg-[#262624] border-[#D97757] ring-1 ring-[#D97757]/30"
+                        : "bg-[#262624]/60 border-white/[0.07] hover:border-white/[0.16]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-[14px] font-semibold text-zinc-100">{opt.title}</span>
+                      {privacyMode === opt.id && (
+                        <CheckCircle2 size={15} className="text-[#D97757]" />
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-300 leading-relaxed">{opt.desc}</p>
+                  </button>
+                ))}
               </div>
 
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <div className="text-[14px] font-semibold text-zinc-100">
+                    Pengaturan Hak Akses Komputer &amp; Folder
+                  </div>
+                  <p className="text-xs text-zinc-300">
+                    Untuk mengatur atau mencabut izin akses folder, aplikasi, dan layar secara
+                    mendetail, buka halaman Pusat Akses AKSA.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveNav("izin_pc")}
+                  className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-4 py-2 text-xs font-semibold text-white transition-colors shrink-0"
+                >
+                  Buka Pusat Akses AKSA
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 5. PENYIMPANAN */}
+        {activeCategory === "penyimpanan" && (
+          <div className="space-y-6">
+            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+              <SectionHeader
+                icon={<FolderPlus size={18} className="text-[#D97757]" />}
+                title="Tambah Folder Ruang Kerja"
+                description="Tentukan folder di komputer Anda tempat AKSA membaca dokumen dan menyimpan hasil pekerjaan."
+              />
+
+              {folderNotice && (
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 p-3 text-xs text-emerald-200 flex items-center gap-2">
+                  <CheckCircle2 size={15} className="text-emerald-400" />
+                  <span>{folderNotice}</span>
+                </div>
+              )}
+
+              <form onSubmit={handleAddWorkspace} className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2 space-y-1">
+                    <label
+                      htmlFor="aksa-new-folder-path"
+                      className="text-xs font-medium text-zinc-300"
+                    >
+                      Lokasi Folder di Komputer Anda
+                    </label>
+                    <input
+                      id="aksa-new-folder-path"
+                      type="text"
+                      value={newFolderPath}
+                      onChange={(e) => setNewFolderPath(e.target.value)}
+                      placeholder="Contoh: /Users/nama/Documents/Laporan atau C:\Proyek\Data"
+                      className="w-full rounded-xl bg-[#262624] border border-white/[0.1] px-3.5 py-2.5 text-[13px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-[#D97757]"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="aksa-new-folder-name"
+                      className="text-xs font-medium text-zinc-300"
+                    >
+                      Nama Singkat Folder (Opsional)
+                    </label>
+                    <input
+                      id="aksa-new-folder-name"
+                      type="text"
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      placeholder="Contoh: Laporan Keuangan 2026"
+                      className="w-full rounded-xl bg-[#262624] border border-white/[0.1] px-3.5 py-2.5 text-[13px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-[#D97757]"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="submit"
+                    disabled={!newFolderPath.trim()}
+                    className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] disabled:opacity-40 text-white px-4 py-2 text-[13px] font-semibold transition-colors flex items-center gap-1.5"
+                  >
+                    <Plus size={15} />
+                    <span>Tambahkan Folder Ruang Kerja</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+
+            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+              <SectionHeader
+                icon={<FolderOpen size={18} className="text-emerald-400" />}
+                title={`Daftar Folder Ruang Kerja (${workspaces.length})`}
+                description="Pilih folder aktif atau hapus folder dari daftar ruang kerja AKSA."
+              />
+
+              <div className="space-y-3">
+                {workspaces.map((ws) => {
+                  const isActive = ws.id === activeWorkspaceId;
+                  return (
+                    <div
+                      key={ws.id}
+                      className={`rounded-xl p-4 border flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        isActive
+                          ? "bg-[#262624] border-emerald-500/40"
+                          : "bg-[#262624]/60 border-white/[0.07]"
+                      }`}
+                    >
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2">
+                          <span className="text-[14px] font-semibold text-zinc-100">
+                            {ws.name}
+                          </span>
+                          {isActive && <StatusBadge tone="success" label="Folder Aktif" />}
+                        </div>
+                        <div className="text-xs font-mono text-zinc-400 break-all">
+                          {ws.folder_path}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 shrink-0">
+                        {!isActive && (
+                          <button
+                            type="button"
+                            onClick={() => setActiveWorkspace(ws.id)}
+                            className="rounded-xl bg-white/[0.07] hover:bg-emerald-600 hover:text-white px-3.5 py-1.5 text-xs font-semibold text-zinc-200 transition-colors"
+                          >
+                            Jadikan Aktif
+                          </button>
+                        )}
+                        {workspaces.length > 1 && (
+                          <button
+                            type="button"
+                            onClick={() => removeWorkspaceFolder(ws.id)}
+                            title="Hapus folder ini dari daftar"
+                            className="rounded-xl p-2 text-zinc-400 hover:text-rose-300 hover:bg-rose-500/15 transition-colors"
+                          >
+                            <Trash2 size={15} />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 6. JARINGAN */}
+        {activeCategory === "jaringan" && (
+          <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+            <SectionHeader
+              icon={<Globe size={18} className="text-sky-400" />}
+              title="Status Jaringan & Layanan"
+              description="Status komunikasi antara aplikasi AKSA, layanan AI lokal, dan integrasi eksternal."
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-2">
+                <div className="text-[14px] font-semibold text-zinc-100">Mesin Utama AKSA</div>
+                <p className="text-xs text-zinc-300">
+                  Berjalan secara lokal di perangkat ini dengan otentikasi sesi terlindungi.
+                </p>
+                <StatusBadge
+                  tone={engineHealth.online ? "success" : "warning"}
+                  label={engineHealth.online ? "Terhubung" : "Mode Mandiri"}
+                />
+              </div>
+
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-2">
+                <div className="text-[14px] font-semibold text-zinc-100">Server AI Lokal (Ollama)</div>
+                <p className="text-xs text-zinc-300">
+                  Alamat lokal standar <code>127.0.0.1:11434</code> tanpa lalu lintas internet luar.
+                </p>
+                <StatusBadge
+                  tone={engineHealth.ollama_online ? "success" : "neutral"}
+                  label={engineHealth.ollama_online ? "Aktif" : "Tidak aktif"}
+                />
+              </div>
+
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-2">
+                <div className="text-[14px] font-semibold text-zinc-100">Integrasi Telegram</div>
+                <p className="text-xs text-zinc-300">
+                  Menggunakan koneksi aman tanpa membuka port masuk pada jaringan rumah/kantor Anda.
+                </p>
+                <StatusBadge
+                  tone={engineHealth.telegram_connected ? "success" : "neutral"}
+                  label={engineHealth.telegram_connected ? "Terhubung" : "Belum diatur"}
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 7. LANJUTAN */}
+        {activeCategory === "lanjutan" && (
+          <div className="space-y-6">
+            {/* Custom Model Registration */}
+            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+              <SectionHeader
+                icon={<Sliders size={18} className="text-sky-400" />}
+                title="Daftarkan Model Kustom (Mode Lanjutan)"
+                description="Tambahkan nama model baru atau model khusus dari penyedia AI Anda."
+              />
+
               {customModelSuccess && (
-                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 p-3 text-xs text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 size={14} className="text-emerald-400" />
+                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 p-3 text-xs text-emerald-200 flex items-center gap-2">
+                  <CheckCircle2 size={15} className="text-emerald-400" />
                   <span>{customModelSuccess}</span>
                 </div>
               )}
 
               <form onSubmit={handleAddCustomModel} className="flex flex-col sm:flex-row gap-3">
                 <select
+                  aria-label="Pilih Penyedia AI"
                   value={customProvider}
                   onChange={(e) => setCustomProvider(e.target.value as ModelProvider)}
-                  className="rounded-xl bg-[#262624] border border-white/[0.09] px-3.5 py-2 text-xs text-zinc-200 focus:outline-none focus:border-[#D97757]"
+                  className="rounded-xl bg-[#262624] border border-white/[0.1] px-3.5 py-2.5 text-[13px] text-zinc-100 focus:outline-none focus:border-[#D97757]"
                 >
                   <option value="gemini">Google Gemini</option>
                   <option value="anthropic">Anthropic Claude</option>
@@ -882,407 +1028,89 @@ export const FeatureSectionsView: React.FC = () => {
                   value={customModelId}
                   onChange={(e) => setCustomModelId(e.target.value)}
                   placeholder="Contoh: gemini-4-carbon, claude-opus-5-5, atau gpt-6.2-astra"
-                  className="flex-1 rounded-xl bg-[#262624] border border-white/[0.09] px-3.5 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
+                  className="flex-1 rounded-xl bg-[#262624] border border-white/[0.1] px-3.5 py-2.5 text-[13px] text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-[#D97757]"
                 />
 
                 <button
                   type="submit"
                   disabled={!customModelId.trim()}
-                  className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 text-xs font-medium transition-colors flex items-center justify-center gap-1.5 shrink-0"
+                  className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] disabled:opacity-40 text-white px-4 py-2.5 text-[13px] font-semibold transition-colors flex items-center justify-center gap-1.5 shrink-0"
                 >
-                  <Plus size={14} />
+                  <Plus size={15} />
                   <span>Daftarkan Model Kustom</span>
                 </button>
               </form>
             </div>
 
-            {/* 1.4 AI Lokal (Ollama & LM Studio) */}
-            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Cpu size={16} className="text-emerald-400" />
-                  <span className="text-xs font-semibold text-zinc-100">
-                    Server AI Lokal Komputer Anda (Ollama &amp; LM Studio — 100% Gratis &amp; Offline)
+            {/* Token Efficiency Analytics */}
+            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+              <SectionHeader
+                icon={<Zap size={18} className="text-amber-400" />}
+                title="Statistik Efisiensi Pemakaian Kuota (Token)"
+                description="Ringkasan penghematan kuota AI melalui pemisahan tugas agen pendukung."
+              />
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-1">
+                  <span className="text-xs text-zinc-400">Rasio Penghematan</span>
+                  <div className="text-2xl font-bold text-emerald-400">
+                    {hasTokenActivity ? `${savingsPct}% Hemat` : "0%"}
+                  </div>
+                </div>
+                <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-1">
+                  <span className="text-xs text-zinc-400">Total Token Dihemat</span>
+                  <div className="text-2xl font-bold text-zinc-100">
+                    {formatNumberID(totalTokensSaved)} Token
+                  </div>
+                </div>
+                <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-1">
+                  <span className="text-xs text-zinc-400">Token Koordinator Utama</span>
+                  <div className="text-2xl font-bold text-zinc-100">
+                    {formatNumberID(totalTokensUsed)} Token
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 8. INFORMASI APLIKASI */}
+        {activeCategory === "info_aplikasi" && (
+          <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
+            <SectionHeader
+              icon={<Info size={18} className="text-[#D97757]" />}
+              title="Informasi Aplikasi AKSA"
+              description="Rincian versi aplikasi desktop, mesin asisten, dan prinsip keamanan."
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[13.5px]">
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">Nama Aplikasi:</span>
+                  <span className="font-semibold text-zinc-100">AKSA Desktop AI Agent</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">Versi Mesin:</span>
+                  <span className="font-mono text-zinc-200">v{engineHealth.version || "1.0.0"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-zinc-400">Ruang Kerja Aktif:</span>
+                  <span className="text-zinc-200 truncate max-w-[200px]">
+                    {activeWorkspace?.name || "Belum dipilih"}
                   </span>
                 </div>
-                <button
-                  onClick={() => void handleCheckOllamaAgain()}
-                  disabled={isCheckingOllama}
-                  title="Periksa ulang status koneksi Ollama lokal"
-                  className="rounded-lg p-1.5 text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.04] transition-colors"
-                >
-                  <RefreshCw size={13} className={isCheckingOllama ? "animate-spin" : ""} />
-                </button>
               </div>
 
-              <div className="rounded-xl bg-[#262624] border border-white/[0.06] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`inline-block w-2 h-2 rounded-full ${
-                        engineHealth.ollama_online ? "bg-emerald-400" : "bg-zinc-600"
-                      }`}
-                    />
-                    <span className="text-xs font-semibold text-zinc-200">
-                      {engineHealth.ollama_online
-                        ? "Ollama Terdeteksi Aktif di http://127.0.0.1:11434"
-                        : "Ollama Sedang Tidak Berjalan (Opsional)"}
-                    </span>
-                  </div>
-                  <p className="text-[11px] text-zinc-400">
-                    {engineHealth.ollama_online && engineHealth.ollama_models.length > 0
-                      ? `Model terpasang: ${engineHealth.ollama_models.join(", ")}`
-                      : "Jalankan Ollama di PC Anda jika ingin menjalankan sub-agen tanpa biaya API."}
-                  </p>
-                </div>
-
-                <button
-                  onClick={handleCopyOllamaCommand}
-                  className="rounded-lg bg-white/[0.04] hover:bg-white/[0.08] border border-white/[0.07] px-3 py-1.5 text-[11px] text-zinc-300 font-mono transition-colors flex items-center gap-1.5 shrink-0"
-                >
-                  {copiedCmd ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
-                  <span>{copiedCmd ? "Tersalin!" : "ollama run qwen3.8:8b"}</span>
-                </button>
+              <div className="rounded-xl bg-[#262624] border border-white/[0.07] p-4 space-y-1.5">
+                <div className="font-semibold text-zinc-100">Prinsip Utama AKSA</div>
+                <p className="text-xs text-zinc-300 leading-relaxed">
+                  Kompleksitas teknis berada di dalam mesin AKSA, bukan dibebankan kepada Anda.
+                  Seluruh akses file dan aplikasi berada di bawah kendali serta persetujuan Anda.
+                </p>
               </div>
             </div>
           </div>
         )}
-
-        {/* TAB 2: LOKASI FOLDER KERJA PC */}
-        {activeTab === "workspaces" && (
-          <div className="space-y-6">
-            {/* 2.1 Folder Aktif Highlight Card */}
-            <div className="rounded-2xl bg-gradient-to-br from-[#262624] to-[#21211F] border border-emerald-500/30 p-5 md:p-6 space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/15 border border-emerald-500/30 px-3 py-1 text-xs font-semibold text-emerald-400">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Folder Kerja Aktif Saat Ini
-                </span>
-                <span className="text-xs text-zinc-400 font-mono">
-                  Digunakan di Ruang Kerja &amp; Sub-Agen
-                </span>
-              </div>
-
-              <div className="space-y-1">
-                <h3 className="text-base font-semibold text-zinc-100">{activeWorkspace?.name}</h3>
-                <div className="text-xs font-mono text-zinc-300 bg-black/40 border border-white/[0.08] rounded-xl px-3.5 py-2.5 break-all">
-                  {activeWorkspace?.folder_path}
-                </div>
-              </div>
-
-              <p className="text-xs text-zinc-400 leading-relaxed pt-1">
-                Seluruh file baru (seperti <code>.xlsx</code>, <code>.docx</code>, <code>.pptx</code>, <code>.pdf</code>) yang dibuat oleh tim agen akan langsung disimpan di dalam folder ini.
-              </p>
-            </div>
-
-            {/* 2.2 Form Tambah Folder Kerja Baru */}
-            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
-              <div className="space-y-1">
-                <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                  <FolderPlus size={16} className="text-[#D97757]" />
-                  Tambahkan Lokasi Folder Kerja Baru
-                </h2>
-                <p className="text-xs text-zinc-400">
-                  Masukkan path folder di komputer Anda (misal folder proyek kantor atau laporan).
-                </p>
-              </div>
-
-              {folderNotice && (
-                <div className="rounded-xl bg-emerald-500/10 border border-emerald-500/25 p-3 text-xs text-emerald-300 flex items-center gap-2">
-                  <CheckCircle2 size={14} className="text-emerald-400" />
-                  <span>{folderNotice}</span>
-                </div>
-              )}
-
-              <form onSubmit={handleAddWorkspace} className="space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                  <div className="sm:col-span-2 space-y-1">
-                    <label className="text-[11px] font-medium text-zinc-400">
-                      Path Direktori Lengkap di PC
-                    </label>
-                    <input
-                      type="text"
-                      value={newFolderPath}
-                      onChange={(e) => setNewFolderPath(e.target.value)}
-                      placeholder="Contoh: /Users/nama/Documents/Laporan atau C:\Proyek\Data"
-                      className="w-full rounded-xl bg-[#262624] border border-white/[0.09] px-3.5 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label className="text-[11px] font-medium text-zinc-400">Nama Alias Folder (Opsional)</label>
-                    <input
-                      type="text"
-                      value={newFolderName}
-                      onChange={(e) => setNewFolderName(e.target.value)}
-                      placeholder="Contoh: Berkas Keuangan 2026"
-                      className="w-full rounded-xl bg-[#262624] border border-white/[0.09] px-3.5 py-2 text-xs text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:border-[#D97757]"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end pt-1">
-                  <button
-                    type="submit"
-                    disabled={!newFolderPath.trim()}
-                    className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 text-xs font-medium transition-colors flex items-center gap-1.5"
-                  >
-                    <Plus size={14} />
-                    <span>Otorisasikan &amp; Tambah Folder</span>
-                  </button>
-                </div>
-              </form>
-            </div>
-
-            {/* 2.3 Daftar Folder Terdaftar & Kontrol Hak Akses Granular */}
-            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 space-y-4">
-              <div className="flex items-center justify-between border-b border-white/[0.06] pb-3">
-                <div className="space-y-0.5">
-                  <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-                    <FolderLock size={15} className="text-emerald-400" />
-                    Daftar Folder Kerja Diotorisasi ({workspaces.length})
-                  </h3>
-                  <p className="text-xs text-zinc-400">
-                    Folder di luar daftar ini otomatis diblokir oleh Python Sandbox Engine demi keamanan Anda.
-                  </p>
-                </div>
-              </div>
-
-              <div className="space-y-3 pt-1">
-                {workspaces.map((ws) => {
-                  const isActive = ws.id === activeWorkspaceId;
-
-                  return (
-                    <div
-                      key={ws.id}
-                      className={`rounded-xl p-4 border transition-all flex flex-col md:flex-row md:items-center justify-between gap-4 ${
-                        isActive
-                          ? "bg-[#262624] border-emerald-500/40 ring-1 ring-emerald-500/20"
-                          : "bg-[#21211F] border-white/[0.07] hover:border-white/[0.14]"
-                      }`}
-                    >
-                      <div className="space-y-1 min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-semibold text-zinc-100">{ws.name}</span>
-                          {isActive && (
-                            <span className="rounded-full bg-emerald-500/15 border border-emerald-500/30 px-2 py-0.2 text-[10px] font-medium text-emerald-400">
-                              Aktif
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-[11px] font-mono text-zinc-400 break-all">
-                          {ws.folder_path}
-                        </div>
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2 shrink-0">
-                        {/* Granular Permission Toggles */}
-                        <label className="flex items-center gap-1.5 rounded-lg bg-[#191918] border border-white/[0.07] px-2.5 py-1 text-[11px] text-zinc-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={ws.allow_read}
-                            onChange={(e) =>
-                              updateWorkspacePermissions(ws.id, { allow_read: e.target.checked })
-                            }
-                            className="accent-emerald-500"
-                          />
-                          <span>Baca Berkas</span>
-                        </label>
-
-                        <label className="flex items-center gap-1.5 rounded-lg bg-[#191918] border border-white/[0.07] px-2.5 py-1 text-[11px] text-zinc-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={ws.allow_write}
-                            onChange={(e) =>
-                              updateWorkspacePermissions(ws.id, { allow_write: e.target.checked })
-                            }
-                            className="accent-emerald-500"
-                          />
-                          <span>Tulis Dokumen</span>
-                        </label>
-
-                        <label className="flex items-center gap-1.5 rounded-lg bg-[#191918] border border-white/[0.07] px-2.5 py-1 text-[11px] text-zinc-300 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={ws.allow_execute}
-                            onChange={(e) =>
-                              updateWorkspacePermissions(ws.id, { allow_execute: e.target.checked })
-                            }
-                            className="accent-emerald-500"
-                          />
-                          <span>Eksekusi Python</span>
-                        </label>
-
-                        {!isActive && (
-                          <button
-                            onClick={() => setActiveWorkspace(ws.id)}
-                            className="rounded-lg bg-white/[0.06] hover:bg-emerald-600 hover:text-white px-3 py-1 text-xs font-medium text-zinc-200 transition-colors"
-                          >
-                            Pilih Aktif
-                          </button>
-                        )}
-
-                        {workspaces.length > 1 && (
-                          <button
-                            onClick={() => removeWorkspaceFolder(ws.id)}
-                            title="Hapus otorisasi folder ini"
-                            className="rounded-lg p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                          >
-                            <Trash2 size={13} />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* 2.4 Penjelasan Keamanan Sandbox */}
-            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-2">
-              <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
-                <Info size={14} className="text-[#D97757]" />
-                <span>Bagaimana Sistem Keamanan Folder AKSA Melindungi Komputer Anda?</span>
-              </div>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                AKSA menerapkan prinsip <strong>Path Jail (Sandbox)</strong> di tingkat engine backend. Sub-agen hanya memiliki izin untuk beroperasi di dalam direktori folder yang telah Anda cantumkan di atas. Perintah pembacaan atau penulisan yang mencoba mengakses file sistem, folder pengguna lain, atau disk luar akan langsung ditolak secara otomatis.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 3: IZIN & KEAMANAN PC */}
-        {activeTab === "permissions" && <PermissionsTabContent />}
-
-        {/* TAB 4: EFISIENSI TOKEN */}
-        {activeTab === "analytics" && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-2">
-                <span className="text-xs text-zinc-400 flex items-center gap-1.5">
-                  <Zap size={14} className="text-emerald-400" /> Rasio Penghematan Token
-                </span>
-                <div className="text-3xl font-bold tracking-tight text-emerald-400">
-                  {hasTokenActivity ? `${savingsPct}% Hemat` : "0%"}
-                </div>
-                <p className="text-xs text-zinc-500">
-                  {hasTokenActivity
-                    ? "Isolasi Konteks Sub-Agen & Lazy Tool Injection aktif"
-                    : "Belum ada tugas dijalankan di Ruang Kerja"}
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-2">
-                <span className="text-xs text-zinc-400">Total Token Dihemat</span>
-                <div className="text-3xl font-bold tracking-tight text-zinc-100">
-                  {formatNumberID(totalTokensSaved)} Token
-                </div>
-                <p className="text-xs text-zinc-500">
-                  Token dokumen mentah yang diproses sub-agen tanpa membebani supervisor.
-                </p>
-              </div>
-
-              <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-2">
-                <span className="text-xs text-zinc-400">Token Manajer Utama (Supervisor)</span>
-                <div className="text-3xl font-bold tracking-tight text-zinc-100">
-                  {formatNumberID(totalTokensUsed)} Token
-                </div>
-                <p className="text-xs text-zinc-500">
-                  Supervisor hanya mengonsumsi intisari ringkas hasil kerja.
-                </p>
-              </div>
-            </div>
-
-            <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-3">
-              <h3 className="text-xs font-semibold text-zinc-200">
-                Arsitektur Efisiensi Token Bertingkat (Token Economy)
-              </h3>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Tanpa isolasi konteks, mengirimkan instruksi beserta ratusan baris data dokumen ke model utama akan menghabiskan puluhan ribu token dalam satu kali percakapan. AKSA memecah tugas ke sub-agen spesialis yang bekerja di ruang memori terisolasi, menyaring hasilnya, dan hanya menyerahkan intisari eksekutif kepada Manajer Utama.
-              </p>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-// Reusable Permissions Tab Content
-const PermissionsTabContent: React.FC = () => {
-  const {
-    emergencyStopActive,
-    toggleEmergencyStop,
-    requestSampleApproval,
-  } = useAksaStore();
-
-  return (
-    <div className="space-y-6">
-      {/* Banner & Emergency Stop */}
-      <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 md:p-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <h2 className="text-sm font-semibold text-zinc-100 flex items-center gap-2">
-            <ShieldCheck size={18} className="text-emerald-400" />
-            Keamanan Tingkat Sistem &amp; Tombol Stop Darurat Global
-          </h2>
-          <p className="text-xs text-zinc-400">
-            Kendalikan hak akses eksekusi PC, uji simulasi konfirmasi HITL, atau aktifkan pemutus darurat seketika.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => void requestSampleApproval()}
-            className="rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/30 px-3.5 py-2 text-xs font-medium text-amber-300 transition-colors"
-          >
-            Uji Dialog Konfirmasi (HITL)
-          </button>
-          <button
-            onClick={() => void toggleEmergencyStop(!emergencyStopActive)}
-            className={`rounded-xl px-4 py-2 text-xs font-semibold flex items-center gap-1.5 border transition-colors ${
-              emergencyStopActive
-                ? "bg-emerald-600/20 border-emerald-500/40 text-emerald-300"
-                : "bg-rose-600/20 hover:bg-rose-600/30 border-rose-500/40 text-rose-300"
-            }`}
-          >
-            <OctagonAlert size={14} />
-            <span>
-              {emergencyStopActive ? "Batalkan Stop Darurat" : "Stop Darurat (Ctrl+Shift+Q)"}
-            </span>
-          </button>
-        </div>
-      </div>
-
-      {/* Security Policies Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
-            <FolderLock size={15} className="text-[#D97757]" />
-            <span>Sandbox Path Jail</span>
-          </div>
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            Semua operasi berkas divalidasi di tingkat Python menggunakan <code>os.path.realpath</code>. Upaya pembacaan path traversal (seperti <code>../../</code>) otomatis dicegah.
-          </p>
-        </div>
-
-        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
-            <Shield size={15} className="text-emerald-400" />
-            <span>Auto-Backup Dokumen</span>
-          </div>
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            Sebelum sub-agen mengedit atau menimpa dokumen Excel atau Word yang ada, AKSA otomatis menyalin berkas asli ke dalam sub-folder tersembunyi <code>.aksa_backup/</code>.
-          </p>
-        </div>
-
-        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-5 space-y-2">
-          <div className="flex items-center gap-2 text-xs font-semibold text-zinc-200">
-            <Sparkles size={15} className="text-sky-400" />
-            <span>Human-in-the-Loop (HITL)</span>
-          </div>
-          <p className="text-xs text-zinc-400 leading-relaxed">
-            Tindakan yang berisiko tinggi (seperti menjalankan skrip Python eksternal atau kontrol mouse) wajib disetujui secara sadar oleh pengguna melalui jendela modal persetujuan.
-          </p>
-        </div>
       </div>
     </div>
   );

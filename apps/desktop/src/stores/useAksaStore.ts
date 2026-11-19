@@ -168,7 +168,12 @@ interface AksaState {
   removeWorkspaceFolder: (workspaceId: string) => void;
   updateWorkspacePermissions: (
     workspaceId: string,
-    updates: Partial<Pick<WorkspaceFolder, "allow_read" | "allow_write" | "allow_execute">>
+    updates: Partial<
+      Pick<
+        WorkspaceFolder,
+        "allow_read" | "allow_write" | "allow_execute" | "granular_permissions"
+      >
+    >
   ) => void;
   updateAgentConfig: (agentId: string, updates: Partial<AgentNodeConfig>) => Promise<void>;
   addSubAgent: (parentAgent: AgentNodeConfig) => void;
@@ -313,9 +318,59 @@ export const useAksaStore = create<AksaState>((set, get) => ({
 
   updateWorkspacePermissions: (workspaceId, updates) => {
     set((state) => ({
-      workspaces: state.workspaces.map((ws) =>
-        ws.id === workspaceId ? { ...ws, ...updates } : ws
-      ),
+      workspaces: state.workspaces.map((ws) => {
+        if (ws.id !== workspaceId) return ws;
+        const baseGranular = ws.granular_permissions ?? {
+          list_files: ws.allow_read,
+          read_content: ws.allow_read,
+          create_files: ws.allow_write,
+          modify_files: ws.allow_write,
+          move_files: ws.allow_write,
+          delete_files: false,
+          execute_programs: ws.allow_execute,
+        };
+        const mergedGranular = updates.granular_permissions
+          ? { ...baseGranular, ...updates.granular_permissions }
+          : {
+              ...baseGranular,
+              ...(updates.allow_read !== undefined
+                ? { list_files: updates.allow_read, read_content: updates.allow_read }
+                : {}),
+              ...(updates.allow_write !== undefined
+                ? {
+                    create_files: updates.allow_write,
+                    modify_files: updates.allow_write,
+                    move_files: updates.allow_write,
+                  }
+                : {}),
+              ...(updates.allow_execute !== undefined
+                ? { execute_programs: updates.allow_execute }
+                : {}),
+            };
+        const nextRead =
+          updates.allow_read !== undefined
+            ? updates.allow_read
+            : mergedGranular.list_files || mergedGranular.read_content;
+        const nextWrite =
+          updates.allow_write !== undefined
+            ? updates.allow_write
+            : mergedGranular.create_files ||
+              mergedGranular.modify_files ||
+              mergedGranular.move_files ||
+              mergedGranular.delete_files;
+        const nextExec =
+          updates.allow_execute !== undefined
+            ? updates.allow_execute
+            : mergedGranular.execute_programs;
+        return {
+          ...ws,
+          ...updates,
+          allow_read: nextRead,
+          allow_write: nextWrite,
+          allow_execute: nextExec,
+          granular_permissions: mergedGranular,
+        };
+      }),
     }));
   },
 
@@ -335,9 +390,9 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       id: newId,
       team_id: parentAgent.team_id,
       parent_id: parentAgent.id,
-      name: "Sub-Agen Spesialis Baru",
-      role_title: "Sub-Agen Bantuan Khusus",
-      description: "Membantu menyelesaikan sub-tugas spesifik secara terisolasi dan hemat token.",
+      name: "Agen Pendukung Baru",
+      role_title: "Agen Pendukung Khusus",
+      description: "Membantu menyelesaikan tugas tertentu secara terfokus sesuai kemampuan yang Anda pilih.",
       avatar_icon: "bot",
       tier_level: parentAgent.tier_level + 1,
       provider: "ollama",
@@ -345,8 +400,8 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       temperature: 0.2,
       max_tokens: 2048,
       system_prompt:
-        "Anda adalah Sub-Agen Spesialis di dalam tim AKSA. Kerjakan instruksi dari atasan Anda secara akurat dan kirimkan ringkasan padat.",
-      tool_categories: ["filesystem", "rag_search"],
+        "Anda adalah Agen Pendukung di dalam tim AKSA. Kerjakan instruksi secara akurat dan berikan ringkasan hasil yang jelas.",
+      tool_categories: ["filesystem"],
       position_x: parentAgent.position_x + 40,
       position_y: parentAgent.position_y + 220,
     };

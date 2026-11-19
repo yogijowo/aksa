@@ -301,6 +301,8 @@ def test_engine_manifest_includes_launch_id_and_strict_mode_0600(tmp_path: Path)
         [sys.executable, "-m", "app.main", "--host", "127.0.0.1", "--port", "0", "--production"],
         cwd=ENGINE_ROOT,
         env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         text=True,
     )

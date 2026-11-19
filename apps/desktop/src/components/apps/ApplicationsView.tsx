@@ -7,7 +7,6 @@ import {
   Activity,
   Layers,
   ShieldCheck,
-  ShieldAlert,
   Link2,
   Unlink2,
   FileSpreadsheet,
@@ -16,6 +15,9 @@ import {
   MessageSquare,
   Wrench,
   Laptop,
+  ChevronDown,
+  ChevronRight,
+  Info,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -24,24 +26,51 @@ import {
   launchDesktopAppRemote,
   toggleDesktopAppConnectionRemote,
 } from "@/services/engineClient";
+import {
+  PageHeader,
+  StatusBadge,
+  EmptyStateCard,
+  LoadingStateCard,
+  ErrorStateCard,
+} from "@/components/ui/UXPrimitives";
 import type { DesktopApp } from "@/types/aksa";
+
+function getFriendlyAppFunction(app: DesktopApp): string {
+  const cat = app.category_label || "";
+  if (cat.includes("Office")) {
+    return "Membaca, membuat, dan merapikan dokumen kerja, tabel, atau presentasi.";
+  }
+  if (cat.includes("Web")) {
+    return "Membuka halaman web dan membantu mencari informasi atau mengunduh dokumen.";
+  }
+  if (cat.includes("Kode")) {
+    return "Membuka dan menyunting file teks, catatan, atau kode program.";
+  }
+  if (cat.includes("Komunikasi")) {
+    return "Membantu komunikasi kerja dan pengelolaan pesan.";
+  }
+  return "Aplikasi komputer yang dapat dibuka atau dibantu pengoperasiannya oleh AKSA.";
+}
 
 export const ApplicationsView: React.FC = () => {
   const [apps, setApps] = useState<DesktopApp[]>([]);
   const [search, setSearch] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | "connected" | "disconnected">("all");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [expandedTechIds, setExpandedTechIds] = useState<Record<string, boolean>>({});
 
   const loadApps = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await fetchDesktopAppsRemote();
       if (data) setApps(data);
-    } catch {
-      toast.error("Gagal memuat daftar aplikasi dari sistem.");
+    } catch (err: any) {
+      setLoadError(err?.message || "Gagal memuat daftar aplikasi dari komputer Anda.");
     } finally {
       setLoading(false);
     }
@@ -49,14 +78,16 @@ export const ApplicationsView: React.FC = () => {
 
   const handleRefresh = async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await refreshDesktopAppsRemote();
       if (data) {
         setApps(data);
-        toast.success(`Berhasil memperbarui ${data.length} aplikasi terpasang di komputer.`);
+        toast.success(`Berhasil menemukan ${data.length} aplikasi di komputer Anda.`);
       }
-    } catch {
-      toast.error("Gagal memindai ulang aplikasi di sistem.");
+    } catch (err: any) {
+      setLoadError(err?.message || "Gagal memindai ulang aplikasi di perangkat.");
+      toast.error("Gagal memindai ulang aplikasi di perangkat.");
     } finally {
       setLoading(false);
     }
@@ -70,8 +101,8 @@ export const ApplicationsView: React.FC = () => {
       if (res && res.success) {
         toast.success(
           nextState
-            ? `Aplikasi '${app.display_name}' berhasil dihubungkan ke AKSA.`
-            : `Izin akses aplikasi '${app.display_name}' berhasil diputuskan.`
+            ? `Izin akses aplikasi "${app.display_name}" berhasil diberikan.`
+            : `Izin akses aplikasi "${app.display_name}" berhasil dicabut.`
         );
         setApps((prev) =>
           prev.map((item) =>
@@ -79,10 +110,10 @@ export const ApplicationsView: React.FC = () => {
           )
         );
       } else {
-        toast.error("Gagal mengubah status izin aplikasi.");
+        toast.error("Gagal memperbarui izin akses aplikasi.");
       }
     } catch (err: any) {
-      toast.error(`Gagal menghubungkan aplikasi: ${err?.message || err}`);
+      toast.error(`Gagal mengubah izin aplikasi: ${err?.message || err}`);
     } finally {
       setConnectingId(null);
     }
@@ -98,14 +129,14 @@ export const ApplicationsView: React.FC = () => {
         toast.error(res.message);
       }
     } catch (err: any) {
-      toast.error(`Gagal meluncurkan aplikasi: ${err?.message || err}`);
+      toast.error(`Gagal membuka aplikasi: ${err?.message || err}`);
     } finally {
       setLaunchingId(null);
     }
   };
 
   useEffect(() => {
-    loadApps();
+    void loadApps();
   }, []);
 
   const categories = Array.from(
@@ -117,8 +148,7 @@ export const ApplicationsView: React.FC = () => {
     const matchesSearch =
       a.display_name.toLowerCase().includes(q) ||
       (a.publisher && a.publisher.toLowerCase().includes(q)) ||
-      (a.category_label && a.category_label.toLowerCase().includes(q)) ||
-      a.available_adapters.some((ad) => ad.toLowerCase().includes(q));
+      (a.category_label && a.category_label.toLowerCase().includes(q));
 
     const matchesStatus =
       statusFilter === "all"
@@ -128,7 +158,8 @@ export const ApplicationsView: React.FC = () => {
         : !a.is_connected;
 
     const matchesCategory =
-      selectedCategory === "all" || (a.category_label || "Aplikasi Komputer Umum") === selectedCategory;
+      selectedCategory === "all" ||
+      (a.category_label || "Aplikasi Komputer Umum") === selectedCategory;
 
     return matchesSearch && matchesStatus && matchesCategory;
   });
@@ -136,17 +167,17 @@ export const ApplicationsView: React.FC = () => {
   const getCategoryIcon = (category?: string) => {
     switch (category) {
       case "Otomasi Dokumen Office":
-        return <FileSpreadsheet className="w-3.5 h-3.5 text-[#D97757]" />;
+        return <FileSpreadsheet className="w-4 h-4 text-[#D97757]" />;
       case "Navigasi & Analisis Web":
-        return <Globe className="w-3.5 h-3.5 text-[#38BDF8]" />;
+        return <Globe className="w-4 h-4 text-[#38BDF8]" />;
       case "Penyunting Kode & Teks":
-        return <Code2 className="w-3.5 h-3.5 text-[#A78BFA]" />;
+        return <Code2 className="w-4 h-4 text-[#A78BFA]" />;
       case "Komunikasi & Produktivitas":
-        return <MessageSquare className="w-3.5 h-3.5 text-[#34D399]" />;
+        return <MessageSquare className="w-4 h-4 text-[#34D399]" />;
       case "Alat Sistem & Utilitas":
-        return <Wrench className="w-3.5 h-3.5 text-[#FBBF24]" />;
+        return <Wrench className="w-4 h-4 text-[#FBBF24]" />;
       default:
-        return <Laptop className="w-3.5 h-3.5 text-[#9C9A92]" />;
+        return <Laptop className="w-4 h-4 text-[#9C9A92]" />;
     }
   };
 
@@ -154,137 +185,143 @@ export const ApplicationsView: React.FC = () => {
   const runningCount = apps.filter((a) => a.is_running).length;
 
   return (
-    <div className="flex-1 overflow-y-auto px-8 py-8 bg-[#191918] text-[#ECECEB]">
+    <div className="flex-1 overflow-y-auto px-6 md:px-8 py-8 bg-[#191918] text-[#ECECEB]">
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#D97757]">
-              <LayoutGrid className="w-4 h-4" />
-              <span>Intelijensi Desktop &amp; Aplikasi PC</span>
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">Aplikasi PC Terinstall</h1>
-            <p className="text-sm text-[#9C9A92]">
-              Daftar aplikasi yang terdeteksi di komputer Anda. Hubungkan atau putuskan izin akses agen ke aplikasi secara mandiri tanpa harus membuka aplikasinya terlebih dahulu.
-            </p>
-          </div>
+        <PageHeader
+          icon={<LayoutGrid className="w-5 h-5 text-[#D97757]" />}
+          title="Aplikasi Komputer"
+          description="Lihat aplikasi yang terdeteksi di komputer Anda dan atur aplikasi mana saja yang boleh digunakan oleh AKSA."
+          actions={
+            <button
+              type="button"
+              onClick={() => void handleRefresh()}
+              disabled={loading}
+              className="flex items-center gap-2 px-4 py-2 rounded-xl bg-[#242422] hover:bg-[#2a2a28] border border-white/10 text-[13px] font-medium transition-all text-zinc-100 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+              <span>Periksa Ulang Aplikasi</span>
+            </button>
+          }
+        />
 
-          <button
-            onClick={handleRefresh}
-            disabled={loading}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-lg bg-[#242422] hover:bg-[#2a2a28] border border-[#FFFFFF]/10 text-xs font-medium transition-all text-[#ECECEB] disabled:opacity-50"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-            <span>Pindai Ulang Perangkat</span>
-          </button>
+        {/* Clear Security Notice (Section 5.5) */}
+        <div className="rounded-2xl bg-[#21211F] border border-white/[0.08] p-4 flex items-start gap-3 text-[13px] text-zinc-300">
+          <Info size={18} className="text-[#D97757] shrink-0 mt-0.5" />
+          <p className="leading-relaxed">
+            Aplikasi yang terdeteksi di komputer Anda <strong>tidak otomatis dapat dikontrol oleh AKSA</strong>.{" "}
+            AKSA dapat menggunakan aplikasi ini setelah Anda memberikan izin yang diperlukan.
+          </p>
         </div>
 
-        {/* Stats Row */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div className="p-4 rounded-xl bg-[#21211F] border border-[#FFFFFF]/10 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#D97757]/15 flex items-center justify-center text-[#D97757]">
+        {/* Summary Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+          <div className="p-4 rounded-2xl bg-[#21211F] border border-white/10 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-[#D97757]/15 flex items-center justify-center text-[#D97757]">
               <Layers className="w-5 h-5" />
             </div>
             <div>
               <div className="text-xl font-bold text-white">{apps.length}</div>
-              <div className="text-[11px] text-[#9C9A92]">Total Aplikasi Terinstall</div>
+              <div className="text-xs text-zinc-400">Aplikasi Terdeteksi di Perangkat</div>
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-[#21211F] border border-[#FFFFFF]/10 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#10B981]/15 flex items-center justify-center text-[#10B981]">
+          <div className="p-4 rounded-2xl bg-[#21211F] border border-white/10 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-emerald-500/15 flex items-center justify-center text-emerald-400">
               <ShieldCheck className="w-5 h-5" />
             </div>
             <div>
               <div className="text-xl font-bold text-white">{connectedCount}</div>
-              <div className="text-[11px] text-[#9C9A92]">Diizinkan &amp; Terhubung ke AKSA</div>
+              <div className="text-xs text-zinc-400">Izin Diberikan ke AKSA</div>
             </div>
           </div>
 
-          <div className="p-4 rounded-xl bg-[#21211F] border border-[#FFFFFF]/10 flex items-center gap-3">
-            <div className="w-9 h-9 rounded-lg bg-[#38BDF8]/15 flex items-center justify-center text-[#38BDF8]">
+          <div className="p-4 rounded-2xl bg-[#21211F] border border-white/10 flex items-center gap-3.5">
+            <div className="w-10 h-10 rounded-xl bg-sky-500/15 flex items-center justify-center text-sky-400">
               <Activity className="w-5 h-5" />
             </div>
             <div>
               <div className="text-xl font-bold text-white">{runningCount}</div>
-              <div className="text-[11px] text-[#9C9A92]">Sedang Berjalan di Sistem</div>
+              <div className="text-xs text-zinc-400">Sedang Terbuka Saat Ini</div>
             </div>
           </div>
         </div>
 
-        {/* Filters and Search Bar */}
+        {/* Search & Filters */}
         <div className="space-y-3">
           <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-            {/* Search Input */}
             <div className="relative flex-1">
-              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#71716E]" />
+              <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-400" />
               <input
                 type="text"
-                placeholder="Cari nama aplikasi, penerbit, atau kategori (misal: Excel, Chrome, VS Code)..."
+                aria-label="Cari aplikasi komputer"
+                placeholder="Cari nama aplikasi (misal: Excel, Word, Chrome)..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full bg-[#21211F] border border-[#FFFFFF]/10 rounded-lg pl-10 pr-4 py-2.5 text-xs text-[#ECECEB] placeholder-[#71716E] focus:outline-none focus:border-[#D97757]/60"
+                className="w-full bg-[#21211F] border border-white/10 rounded-xl pl-10 pr-4 py-2.5 text-[13.5px] text-zinc-100 placeholder-zinc-500 focus:outline-none focus:border-[#D97757]"
               />
             </div>
 
-            {/* Status Filter Tabs */}
-            <div className="flex items-center gap-1.5 p-1 rounded-lg bg-[#21211F] border border-[#FFFFFF]/10 shrink-0">
+            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#21211F] border border-white/10 shrink-0">
               <button
+                type="button"
                 onClick={() => setStatusFilter("all")}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   statusFilter === "all"
                     ? "bg-[#D97757] text-white"
-                    : "text-[#9C9A92] hover:text-[#ECECEB]"
+                    : "text-zinc-300 hover:text-white"
                 }`}
               >
                 Semua ({apps.length})
               </button>
               <button
+                type="button"
                 onClick={() => setStatusFilter("connected")}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-1.5 ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 ${
                   statusFilter === "connected"
-                    ? "bg-[#10B981] text-white"
-                    : "text-[#9C9A92] hover:text-[#ECECEB]"
+                    ? "bg-emerald-600 text-white"
+                    : "text-zinc-300 hover:text-white"
                 }`}
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Terhubung ({connectedCount})</span>
+                <span>Izin diberikan ({connectedCount})</span>
               </button>
               <button
+                type="button"
                 onClick={() => setStatusFilter("disconnected")}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
                   statusFilter === "disconnected"
-                    ? "bg-[#262624] text-white border border-white/[0.08]"
-                    : "text-[#9C9A92] hover:text-[#ECECEB]"
+                    ? "bg-[#262624] text-white border border-white/10"
+                    : "text-zinc-300 hover:text-white"
                 }`}
               >
-                Belum Diizinkan ({apps.length - connectedCount})
+                Belum diizinkan ({apps.length - connectedCount})
               </button>
             </div>
           </div>
 
-          {/* Category Filter Pills */}
           {categories.length > 0 && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
-              <span className="text-[#71716E] text-[11px] whitespace-nowrap">Kategori:</span>
+              <span className="text-zinc-400 text-xs whitespace-nowrap">Jenis Aplikasi:</span>
               <button
+                type="button"
                 onClick={() => setSelectedCategory("all")}
-                className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all whitespace-nowrap ${
+                className={`px-3 py-1 rounded-full text-xs font-medium transition-all whitespace-nowrap ${
                   selectedCategory === "all"
                     ? "bg-white/[0.12] text-white border border-white/[0.2]"
-                    : "bg-[#21211F] text-[#9C9A92] hover:text-white border border-transparent"
+                    : "bg-[#21211F] text-zinc-300 hover:text-white border border-transparent"
                 }`}
               >
-                Semua Kategori
+                Semua Jenis
               </button>
               {categories.map((cat) => (
                 <button
+                  type="button"
                   key={cat}
                   onClick={() => setSelectedCategory(cat)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${
+                  className={`px-3 py-1 rounded-full text-xs font-medium transition-all flex items-center gap-1.5 whitespace-nowrap ${
                     selectedCategory === cat
                       ? "bg-white/[0.12] text-white border border-white/[0.2]"
-                      : "bg-[#21211F] text-[#9C9A92] hover:text-white border border-transparent"
+                      : "bg-[#21211F] text-zinc-300 hover:text-white border border-transparent"
                   }`}
                 >
                   {getCategoryIcon(cat)}
@@ -295,115 +332,163 @@ export const ApplicationsView: React.FC = () => {
           )}
         </div>
 
-        {/* Application Cards List */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-          {filteredApps.map((app) => (
-            <div
-              key={app.id}
-              className={`p-4 rounded-xl bg-[#21211F] border transition-all flex flex-col justify-between space-y-3 ${
-                app.is_connected
-                  ? "border-[#10B981]/40 shadow-sm"
-                  : "border-[#FFFFFF]/10 hover:border-[#FFFFFF]/20"
-              }`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div className="space-y-1.5">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-sm text-white">{app.display_name}</span>
-                    {app.is_running && (
-                      <span className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#10B981]/15 text-[#10B981] border border-[#10B981]/30">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#10B981] animate-pulse" />
-                        Sedang Berjalan
-                      </span>
-                    )}
+        {loadError && (
+          <ErrorStateCard
+            title="Daftar aplikasi belum dapat dimuat"
+            cause={loadError}
+            nextStep="Klik tombol Coba Lagi atau Periksa Ulang Aplikasi di sudut kanan atas."
+            onRetry={() => void loadApps()}
+          />
+        )}
+
+        {loading && apps.length === 0 ? (
+          <LoadingStateCard
+            title="Memindai aplikasi yang terpasang di komputer Anda..."
+            description="AKSA sedang mengenali aplikasi produktivitas agar Anda dapat mengatur aksesnya dengan mudah."
+          />
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {filteredApps.map((app) => {
+              const showTech = expandedTechIds[app.id] ?? false;
+              return (
+                <div
+                  key={app.id}
+                  className={`p-5 rounded-2xl bg-[#21211F] border transition-all flex flex-col justify-between space-y-4 ${
+                    app.is_connected
+                      ? "border-emerald-500/40 shadow-sm"
+                      : "border-white/10 hover:border-white/20"
+                  }`}
+                >
+                  <div className="space-y-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                        <div className="w-10 h-10 rounded-xl bg-white/[0.04] border border-white/[0.08] flex items-center justify-center shrink-0 mt-0.5">
+                          {getCategoryIcon(app.category_label)}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-semibold text-[15px] text-white">
+                              {app.display_name}
+                            </h3>
+                            <StatusBadge
+                              tone={app.is_installed ? "neutral" : "warning"}
+                              label={app.is_installed ? "Terdeteksi" : "Tidak terdeteksi"}
+                            />
+                            {app.is_running && (
+                              <StatusBadge tone="success" label="Sedang berjalan" />
+                            )}
+                          </div>
+                          <div className="text-xs text-zinc-400 mt-0.5">
+                            {app.category_label || "Aplikasi Komputer Umum"}
+                            {app.version ? ` • Versi ${app.version}` : ""}
+                          </div>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleLaunch(app)}
+                        disabled={launchingId === app.id}
+                        className="px-3 py-1.5 rounded-xl bg-[#262624] hover:bg-[#343431] border border-white/10 text-xs font-medium text-zinc-100 flex items-center gap-1.5 transition-all disabled:opacity-50 shrink-0"
+                        title="Buka aplikasi ini di komputer Anda"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>{launchingId === app.id ? "Membuka..." : "Buka Aplikasi"}</span>
+                      </button>
+                    </div>
+
+                    <p className="text-[13px] text-zinc-300 leading-relaxed">
+                      {getFriendlyAppFunction(app)}
+                    </p>
                   </div>
 
-                  <div className="text-xs text-[#9C9A92]">
-                    {app.publisher || "Penerbit Terverifikasi Sistem"}
-                    {app.version && <span className="ml-1.5 text-[#71716E]">v{app.version}</span>}
+                  {/* Permission Status & Action (Section 5.5) */}
+                  <div className="space-y-3 pt-3 border-t border-white/[0.07]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-xs text-zinc-400">Status izin AKSA:</span>
+                      <StatusBadge
+                        tone={app.is_connected ? "success" : "neutral"}
+                        label={app.is_connected ? "Izin diberikan" : "Belum diizinkan"}
+                      />
+                    </div>
+
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                      <p className="text-xs text-zinc-300 leading-relaxed">
+                        AKSA dapat menggunakan aplikasi ini setelah Anda memberikan izin yang
+                        diperlukan.
+                      </p>
+
+                      <button
+                        type="button"
+                        onClick={() => void handleToggleConnection(app)}
+                        disabled={connectingId === app.id}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-semibold flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 shrink-0 ${
+                          app.is_connected
+                            ? "bg-[#262624] hover:bg-rose-500/15 border border-white/10 hover:border-rose-500/30 text-rose-300"
+                            : "bg-[#D97757] hover:bg-[#c96a4b] text-white shadow-sm"
+                        }`}
+                      >
+                        {connectingId === app.id ? (
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        ) : app.is_connected ? (
+                          <Unlink2 className="w-3.5 h-3.5" />
+                        ) : (
+                          <Link2 className="w-3.5 h-3.5" />
+                        )}
+                        <span>
+                          {connectingId === app.id
+                            ? "Memproses..."
+                            : app.is_connected
+                            ? "Cabut Akses"
+                            : "Hubungkan & Atur Akses"}
+                        </span>
+                      </button>
+                    </div>
+
+                    {/* Advanced Technical Details Disclosure */}
+                    <div className="pt-1">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setExpandedTechIds((prev) => ({ ...prev, [app.id]: !prev[app.id] }))
+                        }
+                        className="inline-flex items-center gap-1 text-[11.5px] text-zinc-400 hover:text-zinc-200"
+                      >
+                        {showTech ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        <span>Detail teknis (Mode Lanjutan)</span>
+                      </button>
+                      {showTech && (
+                        <div className="mt-2 rounded-xl bg-[#191918] border border-white/[0.06] p-2.5 text-[11px] font-mono text-zinc-400 space-y-1">
+                          <div>ID: {app.platform_app_id || app.id}</div>
+                          {app.install_location && <div>Lokasi: {app.install_location}</div>}
+                          {app.available_adapters.length > 0 && (
+                            <div>Jembatan: {app.available_adapters.join(", ")}</div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
+              );
+            })}
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <button
-                    onClick={() => handleLaunch(app)}
-                    disabled={launchingId === app.id}
-                    className="px-2.5 py-1.5 rounded-md bg-[#262624] hover:bg-[#343431] border border-[#FFFFFF]/10 text-[11px] font-medium text-[#ECECEB] flex items-center gap-1 transition-all disabled:opacity-50"
-                    title="Buka aplikasi langsung di sistem operasi"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                    <span>{launchingId === app.id ? "Membuka..." : "Buka"}</span>
-                  </button>
-                </div>
+            {filteredApps.length === 0 && !loading && (
+              <div className="col-span-full">
+                <EmptyStateCard
+                  icon={<Laptop size={22} />}
+                  title="Belum ada aplikasi yang cocok"
+                  description={
+                    search
+                      ? `Tidak ditemukan aplikasi dengan kata kunci "${search}". Coba gunakan kata kunci lain.`
+                      : "Klik tombol Periksa Ulang Aplikasi untuk mendeteksi aplikasi yang terpasang di komputer Anda."
+                  }
+                  actionLabel="Periksa Ulang Aplikasi"
+                  onAction={() => void handleRefresh()}
+                />
               </div>
-
-              {/* Status and Category info */}
-              <div className="space-y-2 pt-2 border-t border-[#FFFFFF]/05">
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-[11px] text-[#71716E] flex items-center gap-1.5">
-                    {getCategoryIcon(app.category_label)}
-                    <span className="font-medium text-zinc-300">
-                      {app.category_label || "Aplikasi Komputer Umum"}
-                    </span>
-                  </span>
-
-                  {/* Authorization Status Badge */}
-                  {app.is_connected ? (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-[#10B981]/15 text-[#10B981] border border-[#10B981]/30">
-                      <ShieldCheck className="w-3 h-3" />
-                      <span>Diizinkan (Terhubung)</span>
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium bg-zinc-800/80 text-zinc-400 border border-white/[0.06]">
-                      <ShieldAlert className="w-3 h-3 text-zinc-500" />
-                      <span>Belum Diizinkan</span>
-                    </span>
-                  )}
-                </div>
-
-                {/* Connect / Disconnect Action Button */}
-                <div className="pt-1 flex items-center justify-between">
-                  <span className="text-[10px] text-[#71716E]">
-                    {app.is_connected
-                      ? "Agen diizinkan mengakses data & automasi aplikasi ini."
-                      : "Akses diblokir hingga Anda menghubungkannya secara eksplisit."}
-                  </span>
-
-                  <button
-                    onClick={() => handleToggleConnection(app)}
-                    disabled={connectingId === app.id}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all disabled:opacity-50 ${
-                      app.is_connected
-                        ? "bg-[#262624] hover:bg-rose-500/15 border border-white/[0.08] hover:border-rose-500/30 text-rose-300"
-                        : "bg-[#10B981] hover:bg-[#059669] text-white shadow-sm"
-                    }`}
-                  >
-                    {connectingId === app.id ? (
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    ) : app.is_connected ? (
-                      <Unlink2 className="w-3.5 h-3.5" />
-                    ) : (
-                      <Link2 className="w-3.5 h-3.5" />
-                    )}
-                    <span>
-                      {connectingId === app.id
-                        ? "Memproses..."
-                        : app.is_connected
-                        ? "Putuskan Akses"
-                        : "Hubungkan ke AKSA"}
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {filteredApps.length === 0 && (
-            <div className="col-span-full py-12 text-center text-[#71716E] text-xs border border-dashed border-[#FFFFFF]/10 rounded-xl">
-              Tidak ada aplikasi terinstall yang cocok dengan kriteria pencarian "{search}".
-            </div>
-          )}
-        </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

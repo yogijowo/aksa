@@ -55,8 +55,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p ../../build
-          set -o pipefail
-          python -m pytest tests -v -rs --timeout=90 --timeout-method=thread -o faulthandler_timeout=75 --durations=25 --junitxml=../../build/junit-pytest-${{ matrix.os }}.xml 2>&1 | tee ../../build/pytest-${{ matrix.os }}.log
+          python -m pytest tests -v -rs --timeout=90 --timeout-method=thread -o faulthandler_timeout=75 --durations=25 --junitxml=../../build/junit-pytest-${{ matrix.os }}.xml
 
       - name: Enforce native Windows AppContainer runtime tests (fail on skip)
         if: matrix.os == 'windows-latest'

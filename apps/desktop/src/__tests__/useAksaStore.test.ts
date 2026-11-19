@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { useAksaStore } from "../stores/useAksaStore";
+import { formatPermissionStatusLabel, TOOL_CATEGORY_LABELS } from "../lib/utils";
 
 describe("useAksaStore state management tests", () => {
   beforeEach(() => {
@@ -65,5 +66,62 @@ describe("useAksaStore state management tests", () => {
 
     selectAgent(null);
     expect(useAksaStore.getState().selectedAgentId).toBeNull();
+  });
+
+  it("maps technical permission enums to everyday Bahasa Indonesia status labels (Cycle 15 UX)", () => {
+    expect(formatPermissionStatusLabel("GRANTED").label).toBe("Izin diberikan");
+    expect(formatPermissionStatusLabel("DENIED").label).toBe("Akses ditolak");
+    expect(formatPermissionStatusLabel("NEEDS_USER_ACTION").label).toBe("Memerlukan tindakan Anda");
+    expect(formatPermissionStatusLabel("automatic_sandbox").label).toBe("Dilindungi otomatis");
+    expect(formatPermissionStatusLabel("UNSUPPORTED").label).toBe(
+      "Tidak tersedia pada perangkat ini"
+    );
+    expect(TOOL_CATEGORY_LABELS.rag_search).toBe("Pencarian dalam Dokumen");
+  });
+
+  it("updates granular folder permissions without automatically enabling high-risk delete or execute", () => {
+    useAksaStore.setState({
+      workspaces: [
+        {
+          id: "ws_test_1",
+          name: "Dokumen Kerja",
+          folder_path: "/tmp/dokumen",
+          allow_read: true,
+          allow_write: false,
+          allow_execute: false,
+          auto_rag_sync: true,
+        },
+      ],
+      activeWorkspaceId: "ws_test_1",
+    });
+
+    const { updateWorkspacePermissions, addSubAgent } = useAksaStore.getState();
+    updateWorkspacePermissions("ws_test_1", {
+      granular_permissions: {
+        list_files: true,
+        read_content: true,
+        create_files: true,
+        modify_files: false,
+        move_files: false,
+        delete_files: false,
+        execute_programs: false,
+      },
+    });
+
+    const ws = useAksaStore.getState().workspaces[0];
+    expect(ws.allow_read).toBe(true);
+    expect(ws.allow_write).toBe(true);
+    expect(ws.allow_execute).toBe(false);
+    expect(ws.granular_permissions?.delete_files).toBe(false);
+    expect(ws.granular_permissions?.execute_programs).toBe(false);
+
+    // Adding a supporting agent must not automatically inherit high-risk permissions
+    const parent = useAksaStore.getState().teams[0].agents[0];
+    addSubAgent(parent);
+    const created = useAksaStore
+      .getState()
+      .teams[0].agents.find((a) => a.id === useAksaStore.getState().selectedAgentId);
+    expect(created).toBeDefined();
+    expect(created?.tool_categories).toEqual(["filesystem"]);
   });
 });

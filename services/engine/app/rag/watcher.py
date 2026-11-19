@@ -34,10 +34,13 @@ class _AksaFolderEventHandler(FileSystemEventHandler):
         if path.suffix.lower() not in SUPPORTED_RAG_EXTENSIONS:
             return
         if path.exists() and path.is_file():
-            asyncio.run_coroutine_threadsafe(
-                self.store.index_file(self.workspace_id, path),
-                self.loop,
-            )
+            if self.loop.is_closed() or not self.loop.is_running():
+                return
+            coro = self.store.index_file(self.workspace_id, path)
+            try:
+                asyncio.run_coroutine_threadsafe(coro, self.loop)
+            except RuntimeError:
+                coro.close()
 
     def on_created(self, event: FileSystemEvent) -> None:
         if not event.is_directory:
