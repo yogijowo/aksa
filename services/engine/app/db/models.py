@@ -229,6 +229,7 @@ CREATE TABLE IF NOT EXISTS installed_skills (
     package_hash TEXT NOT NULL,
     trust_level TEXT DEFAULT 'unreviewed',
     enabled INTEGER DEFAULT 0,
+    target_agent_id TEXT,
     installed_at TEXT DEFAULT CURRENT_TIMESTAMP,
     last_verified_at TEXT DEFAULT CURRENT_TIMESTAMP
 );
@@ -367,6 +368,10 @@ class DatabaseManager:
                 pass
             try:
                 await db.execute("ALTER TABLE sessions ADD COLUMN principal_id TEXT DEFAULT 'default_user'")
+            except Exception:
+                pass
+            try:
+                await db.execute("ALTER TABLE installed_skills ADD COLUMN target_agent_id TEXT")
             except Exception:
                 pass
 
@@ -946,15 +951,16 @@ class DatabaseManager:
                 INSERT INTO installed_skills (
                     id, skill_id, display_name, publisher, source_id,
                     installed_version, package_hash, trust_level, enabled,
-                    installed_at, last_verified_at
+                    target_agent_id, installed_at, last_verified_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(skill_id) DO UPDATE SET
                     display_name = excluded.display_name,
                     publisher = excluded.publisher,
                     installed_version = excluded.installed_version,
                     package_hash = excluded.package_hash,
                     trust_level = excluded.trust_level,
+                    target_agent_id = COALESCE(excluded.target_agent_id, installed_skills.target_agent_id),
                     last_verified_at = excluded.last_verified_at
                 """,
                 (
@@ -967,6 +973,7 @@ class DatabaseManager:
                     payload.get("package_hash", ""),
                     payload.get("trust_level", "unreviewed"),
                     int(payload.get("enabled", False)),  # Disabled by default
+                    payload.get("target_agent_id"),
                     now,
                     now,
                 ),

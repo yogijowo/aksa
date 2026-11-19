@@ -119,17 +119,30 @@ def classify_mcp_tool_risk(
 
 
 def check_mcp_server_permissions(server: MCPServerConfig, tool_name: str) -> tuple[bool, str | None]:
-    """Verify that the MCP server declares the required permissions for the given tool (AKSA-SEC-001-R2).
+    """Verify that the MCP server declares the required permissions for the given tool (AKSA-SEC-001-R2, AKSA-SEC-001-R3).
 
     Fail-closed: Rejects any server without permissions or any unmapped/unknown tool without explicit capability.
+    Wildcard permissions ('*' or 'all') are strictly forbidden for third-party, community, or untrusted servers.
+    Wildcard bypass is ONLY allowed if server.trust_level == 'system_trusted'.
     """
     server_perms = set(server.permissions or [])
     if not server_perms:
         return False, f"Server MCP '{server.name}' tidak mendeklarasikan izin apa pun. Eksekusi tool '{tool_name}' ditolak (fail-closed)."
 
-    # If server has administrative wildcard, allow
-    if "*" in server_perms or "all" in server_perms:
-        return True, None
+    # AKSA-SEC-001-R3: Restrict wildcard to system-trusted internal servers only
+    has_wildcard = "*" in server_perms or "all" in server_perms
+    if has_wildcard:
+        if getattr(server, "trust_level", "") == "system_trusted":
+            return True, None
+        # Discard wildcards for third-party or unreviewed servers
+        server_perms.discard("*")
+        server_perms.discard("all")
+        if not server_perms:
+            return (
+                False,
+                f"Server MCP '{server.name}' dengan tingkat kepercayaan '{getattr(server, 'trust_level', 'unreviewed')}' "
+                f"mencoba menggunakan izin wildcard ('*' atau 'all'). Izin wildcard ditolak untuk server non-system (fail-closed).",
+            )
 
     needed = MCP_TOOL_REQUIRED_PERMISSIONS.get(tool_name)
     if not needed:

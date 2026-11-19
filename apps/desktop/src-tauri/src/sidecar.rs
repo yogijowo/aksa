@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
-use std::net::TcpListener;
+use std::io::{Read, Write};
+use std::net::{TcpListener, TcpStream};
 use std::sync::Mutex;
+use std::time::Duration;
 use tauri_plugin_shell::process::CommandChild;
 use uuid::Uuid;
 
@@ -133,6 +135,45 @@ impl SidecarState {
 impl Drop for SidecarState {
     fn drop(&mut self) {
         self.shutdown();
+    }
+}
+
+pub fn verify_engine_health(port: u16, auth_token: &str, timeout_ms: u64) -> Result<bool, String> {
+    let addr = format!("127.0.0.1:{}", port);
+    let socket_addr = addr
+        .parse()
+        .map_err(|e| format!("Alamat loopback tidak valid: {}", e))?;
+
+    let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_millis(timeout_ms))
+        .map_err(|e| format!("Gagal menyambung ke engine sidecar pada port {}: {}", port, e))?;
+
+    stream
+        .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
+        .map_err(|e| format!("Gagal mengatur timeout baca: {}", e))?;
+    stream
+        .set_write_timeout(Some(Duration::from_millis(timeout_ms)))
+        .map_err(|e| format!("Gagal mengatur timeout tulis: {}", e))?;
+
+    let request = format!(
+        "GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-Aksa-Token: {}\r\nConnection: close\r\n\r\n",
+        port, auth_token
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|e| format!("Gagal mengirim health probe ke engine: {}", e))?;
+
+    let mut response = String::new();
+    stream
+        .read_to_string(&mut response)
+        .map_err(|e| format!("Gagal membaca respons health probe: {}", e))?;
+
+    if response.contains("200 OK") && response.contains("\"status\"") {
+        Ok(true)
+    } else {
+        Err(format!(
+            "Health probe mengembalikan respons tidak terduga: {}",
+            response.lines().next().unwrap_or("Kosong")
+        ))
     }
 }
 
@@ -274,5 +315,30 @@ mod tests {
 
         let info = state.info.lock().unwrap();
         assert_ne!(info.port, 43188);
+    }
+
+    #[test]
+    fn test_verify_engine_health_connection_refused() {
+        let res = verify_engine_health(59999, "test-token", 200);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_verify_engine_health_mock_success() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind test mock listener");
+        let port = listener.local_addr().unwrap().port();
+
+        std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                let mut buf = [0u8; 1024];
+                let _ = stream.read(&mut buf);
+                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"ok\",\"version\":\"1.0.0\"}";
+                let _ = stream.write_all(response.as_bytes());
+            }
+        });
+
+        let res = verify_engine_health(port, "aksa-valid-token", 1000);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), true);
     }
 }

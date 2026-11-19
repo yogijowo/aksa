@@ -51,14 +51,56 @@ pub fn run() {
                                         CommandEvent::Stderr(line_bytes) | CommandEvent::Stdout(line_bytes) => {
                                             let text = String::from_utf8_lossy(&line_bytes);
                                             if text.contains("[AKSA_ENGINE_READY:") {
+                                                let mut ready_port: Option<u16> = None;
+                                                let mut ready_pid: Option<u32> = None;
+
                                                 if let Some(port_start) = text.find("port=") {
                                                     let sub = &text[port_start + 5..];
-                                                    let parts: Vec<&str> = sub.split(':').collect();
-                                                    if let Some(port_str) = parts.first() {
-                                                        if let Ok(p) = port_str.trim_end_matches(']').parse::<u16>() {
-                                                            let s = app_handle.state::<SidecarState>();
-                                                            s.sync_port(p);
-                                                            eprintln!("[AKSA Tauri] Sidecar port synchronized from runtime readiness event: {}", p);
+                                                    let port_str = sub.split(|c| c == ':' || c == ']').next().unwrap_or("");
+                                                    ready_port = port_str.parse::<u16>().ok();
+                                                }
+                                                if let Some(pid_start) = text.find("pid=") {
+                                                    let sub = &text[pid_start + 4..];
+                                                    let pid_str = sub.split(|c| c == ':' || c == ']').next().unwrap_or("");
+                                                    ready_pid = pid_str.parse::<u32>().ok();
+                                                }
+
+                                                if let (Some(p), Some(reported_pid)) = (ready_port, ready_pid) {
+                                                    let s = app_handle.state::<SidecarState>();
+                                                    if reported_pid != child_pid {
+                                                        eprintln!(
+                                                            "[AKSA Tauri Security Alert] PID mismatch in readiness marker: reported {} != child {}. Rejecting engine handshake!",
+                                                            reported_pid, child_pid
+                                                        );
+                                                        s.set_state(LifecycleState::Failed);
+                                                        s.shutdown();
+                                                    } else {
+                                                        s.sync_port(p);
+                                                        let auth_token = s.info.lock().map(|i| i.auth_token.clone()).unwrap_or_default();
+                                                        match crate::sidecar::verify_engine_health(p, &auth_token, 3000) {
+                                                            Ok(true) => {
+                                                                s.set_state(LifecycleState::Ready);
+                                                                eprintln!(
+                                                                    "[AKSA Tauri] Sidecar port {} and PID {} verified & health check passed. Lifecycle: Ready",
+                                                                    p, child_pid
+                                                                );
+                                                            }
+                                                            Ok(false) => {
+                                                                eprintln!(
+                                                                    "[AKSA Tauri Security Alert] Health check returned false for sidecar on port {}",
+                                                                    p
+                                                                );
+                                                                s.set_state(LifecycleState::Failed);
+                                                                s.shutdown();
+                                                            }
+                                                            Err(e) => {
+                                                                eprintln!(
+                                                                    "[AKSA Tauri Security Alert] Health check failed for sidecar on port {}: {}",
+                                                                    p, e
+                                                                );
+                                                                s.set_state(LifecycleState::Failed);
+                                                                s.shutdown();
+                                                            }
                                                         }
                                                     }
                                                 }

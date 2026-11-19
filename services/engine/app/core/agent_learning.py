@@ -91,6 +91,8 @@ class CandidateSkill(BaseModel):
     confidence: float = 0.85
     occurrences_count: int = 1
     source_task_ids: list[str] = Field(default_factory=list)
+    structured_traces: list[dict[str, Any]] = Field(default_factory=list)
+    empirical_metrics: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
@@ -282,6 +284,47 @@ class SkillCandidateExtractor:
             f"Alur kerja harus dapat direproduksi secara deterministik untuk agen '{self.agent_id}'",
         ]
 
+        # Extract structured traces with strict PII sanitization (AKSA-AGENT-001-R3)
+        structured_traces: list[dict[str, Any]] = []
+        if execution_trace:
+            for trace_step in execution_trace:
+                tool_name = trace_step.get("action_label") or trace_step.get("tool_name") or ""
+                agent_name = trace_step.get("agent_name") or self.agent_id
+                input_args = trace_step.get("input") or trace_step.get("arguments") or trace_step.get("detail") or {}
+                output_data = trace_step.get("output") or trace_step.get("result") or trace_step.get("artifact") or ""
+                clean_input = (
+                    LearningPrivacyFilter.redact_dict(input_args)
+                    if isinstance(input_args, dict)
+                    else LearningPrivacyFilter.redact(str(input_args))
+                )
+                clean_output = (
+                    LearningPrivacyFilter.redact_dict(output_data)
+                    if isinstance(output_data, dict)
+                    else LearningPrivacyFilter.redact(str(output_data))
+                )
+                structured_traces.append({
+                    "tool_name": tool_name,
+                    "agent_name": agent_name,
+                    "status": trace_step.get("status", "success"),
+                    "input_summary": clean_input,
+                    "output_summary": clean_output,
+                })
+
+        # Calculate empirical confidence score based on verified multi-run metrics (AKSA-AGENT-001-R3)
+        base_score = 0.65
+        repetition_bonus = min(occurrences * 0.05, 0.20)
+        trace_bonus = 0.08 if execution_trace else 0.0
+        user_bonus = 0.07 if user_explicit_teach else 0.0
+        empirical_confidence = round(min(base_score + repetition_bonus + trace_bonus + user_bonus, 0.98), 2)
+        empirical_metrics = {
+            "base_score": base_score,
+            "occurrences_count": occurrences,
+            "repetition_bonus": repetition_bonus,
+            "trace_bonus": trace_bonus,
+            "user_explicit_teach": user_explicit_teach,
+            "final_confidence": empirical_confidence,
+        }
+
         candidate = CandidateSkill(
             skill_id=skill_id,
             name=f"Alur {intent[:30]}",
@@ -289,9 +332,11 @@ class SkillCandidateExtractor:
             owner_agent=self.agent_id,
             steps=steps,
             validations=validations,
-            confidence=0.88 if user_explicit_teach else 0.75,
+            confidence=empirical_confidence,
             occurrences_count=occurrences,
             source_task_ids=[t.task_id for t in matching_tasks[:5]] + [task_id],
+            structured_traces=structured_traces,
+            empirical_metrics=empirical_metrics,
         )
 
         # Save to agent's candidates directory

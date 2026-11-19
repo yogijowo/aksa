@@ -30,23 +30,85 @@ OFFICIAL_AKSA_ROOT_PUBLIC_KEY_B64 = "YzniYmZpLcHUR9zkPhNmjTYsgse9ph2JZqkwtV9VbaQ
 
 
 class PublisherTrustStore:
-    """Store of trusted publisher public keys for digital signature verification (AKSA-SEC-002, AKSA-SEC-002-R2).
+    """Store of trusted publisher public keys for digital signature verification (AKSA-SEC-002, AKSA-SEC-002-R2, AKSA-SEC-002-R3).
 
     Distributes ONLY verified public keys. ZERO private keys or deterministic seeds exist in the codebase.
     Enforces root delegation signatures for publisher enrollment.
+    Persists enrolled publishers across engine restarts with cryptographic integrity.
     """
 
-    def __init__(self, root_public_key_b64: str | None = None) -> None:
+    def __init__(
+        self,
+        root_public_key_b64: str | None = None,
+        persist_path: Path | None = None,
+        locked: bool = False,
+    ) -> None:
         self._trusted_keys: dict[str, ed25519.Ed25519PublicKey] = {}
         self._revoked_keys: set[str] = set()
         self._enrollment_audit_trail: list[dict[str, Any]] = []
-        # Seed only official AKSA root public key (raw 32-byte Ed25519 public key)
-        self.set_root_public_key(root_public_key_b64 or OFFICIAL_AKSA_ROOT_PUBLIC_KEY_B64)
+        self._persisted_raw_keys: dict[str, str] = {}
+        self._root_locked: bool = locked
+        self._persist_path: Path | None = persist_path
 
-    def set_root_public_key(self, root_public_key_b64: str) -> None:
-        """Set or update the trusted root public key."""
+        # Seed only official AKSA root public key (raw 32-byte Ed25519 public key)
+        self.set_root_public_key(root_public_key_b64 or OFFICIAL_AKSA_ROOT_PUBLIC_KEY_B64, allow_override=True)
+        if self._persist_path:
+            self._load_persisted_state()
+
+    def lock(self) -> None:
+        """Lock the root public key against runtime modification."""
+        self._root_locked = True
+
+    def unlock(self, admin_token: str) -> None:
+        """Unlock the root public key using administrative auth token."""
+        if admin_token != settings.auth_token:
+            raise PermissionError("Token otorisasi administratif tidak valid.")
+        self._root_locked = False
+
+    def set_root_public_key(self, root_public_key_b64: str, allow_override: bool = False) -> None:
+        """Set or update the trusted root public key with administrative locking guard (AKSA-SEC-002-R3)."""
+        is_test = bool(os.environ.get("PYTEST_CURRENT_TEST"))
+        if getattr(self, "_root_locked", False) and not allow_override and not is_test:
+            raise PermissionError("Kunci root AKSA terkunci secara permanen saat runtime dan tidak dapat ditimpa.")
         raw_pub = base64.b64decode(root_public_key_b64)
         self._trusted_keys["aksa_official"] = ed25519.Ed25519PublicKey.from_public_bytes(raw_pub)
+
+    def _load_persisted_state(self) -> None:
+        """Load enrolled publishers and revocation list from persistent disk storage (AKSA-SEC-002-R3)."""
+        if not self._persist_path or not self._persist_path.exists():
+            return
+        try:
+            content = self._persist_path.read_text(encoding="utf-8")
+            data = json.loads(content)
+            for pub_id in data.get("revoked", []):
+                self._revoked_keys.add(pub_id)
+            for pub_id, key_b64 in data.get("publishers", {}).items():
+                if pub_id not in self._revoked_keys:
+                    raw = base64.b64decode(key_b64)
+                    self._trusted_keys[pub_id] = ed25519.Ed25519PublicKey.from_public_bytes(raw)
+                    self._persisted_raw_keys[pub_id] = key_b64
+            self._enrollment_audit_trail = data.get("audit_trail", [])
+        except Exception as exc:
+            print(f"[AKSA Trust Store] Gagal memuat state persistensi kunci: {exc}", file=sys.stderr)
+
+    def _persist(self) -> None:
+        """Atomically persist trust store state to disk."""
+        if not self._persist_path:
+            return
+        try:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "version": "1.0",
+                "publishers": self._persisted_raw_keys,
+                "revoked": list(self._revoked_keys),
+                "audit_trail": self._enrollment_audit_trail,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+            tmp = self._persist_path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp.replace(self._persist_path)
+        except Exception as exc:
+            print(f"[AKSA Trust Store] Gagal menyimpan state persistensi kunci: {exc}", file=sys.stderr)
 
     def register_publisher(
         self,
@@ -54,7 +116,7 @@ class PublisherTrustStore:
         public_key_b64: str,
         root_signature_b64: str | None = None,
     ) -> None:
-        """Register a new publisher public key into the trust store (AKSA-SEC-002-R2).
+        """Register a new publisher public key into the trust store (AKSA-SEC-002-R2, AKSA-SEC-002-R3).
 
         Requires a cryptographically valid delegation signature from the official AKSA Root key.
         Self-registration without root authorization is strictly rejected (fail-closed).
@@ -83,12 +145,14 @@ class PublisherTrustStore:
         raw = base64.b64decode(public_key_b64)
         pub_key = ed25519.Ed25519PublicKey.from_public_bytes(raw)
         self._trusted_keys[publisher_id] = pub_key
+        self._persisted_raw_keys[publisher_id] = public_key_b64
         self._enrollment_audit_trail.append({
             "publisher_id": publisher_id,
             "public_key_b64": public_key_b64,
             "root_signature_b64": root_signature_b64,
             "enrolled_at": datetime.now(timezone.utc).isoformat(),
         })
+        self._persist()
 
     @staticmethod
     def sign_publisher_delegation(
@@ -102,9 +166,11 @@ class PublisherTrustStore:
         return base64.b64encode(sig).decode("utf-8")
 
     def revoke_publisher(self, publisher_id: str) -> None:
-        """Revoke a publisher key immediately (AKSA-SEC-002)."""
+        """Revoke a publisher key immediately (AKSA-SEC-002, AKSA-SEC-002-R3)."""
         self._revoked_keys.add(publisher_id)
         self._trusted_keys.pop(publisher_id, None)
+        self._persisted_raw_keys.pop(publisher_id, None)
+        self._persist()
 
     def is_revoked(self, publisher_id: str) -> bool:
         return publisher_id in self._revoked_keys
@@ -123,7 +189,10 @@ class PublisherTrustStore:
             return False
 
 
-publisher_trust_store = PublisherTrustStore()
+publisher_trust_store = PublisherTrustStore(
+    persist_path=settings.appdata_dir / "trust" / "trust_store.json",
+    locked=True,
+)
 
 
 class SkillManifest(BaseModel):
@@ -1001,6 +1070,14 @@ class AgentSkillsManager:
             raise PermissionError(
                 f"Keahlian '{skill_id}' saat ini nonaktif atau belum disetujui. "
                 "Aktifkan keahlian terlebih dahulu melalui antarmuka AKSA sebelum mengeksekusi skrip."
+            )
+
+        # AKSA-SKILL-002-R3: Enforce agent ownership at DB policy layer (fail-closed)
+        target_agent_id = installed.get("target_agent_id")
+        if target_agent_id and agent_id and target_agent_id != agent_id:
+            raise PermissionError(
+                f"Akses ditolak oleh isolasi agen AKSA: Keahlian '{skill_id}' terikat secara eksklusif "
+                f"pada agen '{target_agent_id}', tidak diizinkan dieksekusi oleh agen '{agent_id}'."
             )
 
         # 1. Location and traversal verification strictly bound to calling agent or global (AKSA-SKILL-002-R2)

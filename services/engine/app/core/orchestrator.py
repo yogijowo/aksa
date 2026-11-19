@@ -43,6 +43,52 @@ def _generate_non_colliding_path(directory: Path, base_stem: str, extension: str
         counter += 1
 
 
+def verify_artifact_postcondition(art_path: Path) -> tuple[bool, str]:
+    """Verify that an artifact file exists, is non-empty, and satisfies format-specific integrity (AKSA-AGENT-003-R3)."""
+    if not art_path.exists():
+        return False, f"File tidak ditemukan: {art_path}"
+    try:
+        if art_path.stat().st_size == 0:
+            return False, f"File berukuran 0 byte: {art_path}"
+    except Exception as exc:
+        return False, f"Gagal membaca stat file: {exc}"
+
+    suffix = art_path.suffix.lower()
+    if suffix in (".xlsx", ".xlsm"):
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(str(art_path), read_only=True)
+            if not wb.sheetnames:
+                return False, f"Buku kerja Excel kosong tanpa lembar kerja: {art_path}"
+            wb.close()
+        except Exception as exc:
+            return False, f"Integritas Excel (.xlsx) tidak valid atau korup: {exc}"
+    elif suffix == ".docx":
+        try:
+            import docx
+            _ = docx.Document(str(art_path))
+        except Exception as exc:
+            return False, f"Integritas dokumen Word (.docx) tidak valid atau korup: {exc}"
+    elif suffix == ".pdf":
+        try:
+            import pymupdf as fitz
+            doc = fitz.open(str(art_path))
+            if doc.page_count < 1:
+                doc.close()
+                return False, f"Dokumen PDF tidak memiliki halaman: {art_path}"
+            doc.close()
+        except Exception as exc:
+            return False, f"Integritas PDF tidak valid atau korup: {exc}"
+    elif suffix == ".json":
+        try:
+            import json
+            json.loads(art_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            return False, f"Integritas JSON tidak valid atau korup: {exc}"
+
+    return True, "Valid"
+
+
 def _create_word_duplicate_from_pdf(source_pdf: Path, target_docx: Path) -> str:
     """Generate a clean Word document duplicated dynamically from source PDF."""
     import docx
@@ -868,14 +914,18 @@ class HierarchicalOrchestrator:
                 task_outcome = TaskOutcome.PARTIAL_SUCCESS if has_succeeded_step else TaskOutcome.FAILED
             else:
                 postcondition_failed = False
+                postcondition_error_reason: str | None = None
                 if artifacts:
                     for art_path_str in artifacts:
                         art_path = Path(art_path_str)
-                        if not art_path.exists() or art_path.stat().st_size == 0:
+                        ok, reason = verify_artifact_postcondition(art_path)
+                        if not ok:
                             postcondition_failed = True
+                            postcondition_error_reason = reason
                             break
                 if postcondition_failed:
                     task_outcome = TaskOutcome.UNVERIFIED
+                    logger.warning("[AKSA Orchestrator] Validasi postcondition artefak gagal: %s", postcondition_error_reason)
                 else:
                     task_outcome = TaskOutcome.SUCCESS
 
