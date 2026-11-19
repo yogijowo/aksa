@@ -199,9 +199,14 @@ class SkillCandidateExtractor:
         tools_used: list[str],
         success: bool,
         user_explicit_teach: bool = False,
+        outcome: str | None = None,
+        execution_trace: list[dict[str, Any]] | None = None,
     ) -> CandidateSkill | None:
-        """Examine completed task against learning thresholds."""
-        if not success and not user_explicit_teach:
+        """Examine completed task against learning thresholds and extract trace-based procedural steps (AKSA-AGENT-001-R2, AKSA-AGENT-003-R2)."""
+        eff_outcome = (outcome or ("success" if success else "failed")).lower()
+        if eff_outcome != "success" and not user_explicit_teach:
+            return None
+        if eff_outcome in ("partial_success", "failed", "cancelled", "unverified") and not user_explicit_teach:
             return None
 
         # Fetch recent episodic tasks
@@ -224,33 +229,49 @@ class SkillCandidateExtractor:
         if not user_explicit_teach and occurrences < self.MIN_OCCURRENCES:
             return None
 
-        # Formulate concrete, tool-specific procedural steps (AKSA-AGENT-001)
+        # Formulate trace-driven procedural steps (AKSA-AGENT-001-R2)
         safe_name = "-".join(sorted(tools_used)[:2]) or "workflow"
         skill_id = f"cand-{safe_name}-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}"
 
         steps: list[str] = []
         step_num = 1
-        steps.append(f"{step_num}. Inisialisasi dan verifikasi parameter input untuk sasaran: '{intent.strip()[:100]}'")
+        steps.append(f"{step_num}. Inisialisasi sasaran tugas: '{intent.strip()[:100]}' dan verifikasi batasan folder kerja.")
         step_num += 1
 
-        for tool in tools_used:
-            t_clean = tool.strip()
-            if not t_clean:
-                continue
-            t_lower = t_clean.lower()
-            if "excel" in t_lower or "xlsx" in t_lower:
-                steps.append(f"{step_num}. Muat dataset tabel dan terapkan kalkulasi formula numerik via {t_clean}")
-            elif "word" in t_lower or "docx" in t_lower:
-                steps.append(f"{step_num}. Susun draf struktur dokumen resmi dengan paragraf dan tabel via {t_clean}")
-            elif "ppt" in t_lower or "slide" in t_lower:
-                steps.append(f"{step_num}. Rancang tata letak visual slide presentasi eksekutif via {t_clean}")
-            elif "pdf" in t_lower:
-                steps.append(f"{step_num}. Ekstrak teks atau render dokumen keluaran format PDF via {t_clean}")
-            elif "rag" in t_lower or "search" in t_lower:
-                steps.append(f"{step_num}. Cari konteks dokumen relevan pada basis pengetahuan lokal via {t_clean}")
-            else:
-                steps.append(f"{step_num}. Eksekusi operasi alat terspesialisasi '{t_clean}' pada authorized workspace")
-            step_num += 1
+        if execution_trace:
+            for trace_step in execution_trace:
+                label = trace_step.get("action_label") or trace_step.get("tool_name") or ""
+                detail = trace_step.get("detail") or ""
+                agent = trace_step.get("agent_name") or self.agent_id
+                art = trace_step.get("artifact") or trace_step.get("artifacts") or ""
+                if not label:
+                    continue
+                step_desc = f"{step_num}. [{agent}] Jalankan '{label}'"
+                if detail:
+                    step_desc += f": {detail}"
+                if art:
+                    step_desc += f" -> Menghasilkan artefak '{art}'"
+                steps.append(step_desc)
+                step_num += 1
+        else:
+            for tool in tools_used:
+                t_clean = tool.strip()
+                if not t_clean:
+                    continue
+                t_lower = t_clean.lower()
+                if "excel" in t_lower or "xlsx" in t_lower:
+                    steps.append(f"{step_num}. Muat dataset tabel dan terapkan kalkulasi formula numerik via {t_clean}")
+                elif "word" in t_lower or "docx" in t_lower:
+                    steps.append(f"{step_num}. Susun draf struktur dokumen resmi dengan paragraf dan tabel via {t_clean}")
+                elif "ppt" in t_lower or "slide" in t_lower:
+                    steps.append(f"{step_num}. Rancang tata letak visual slide presentasi eksekutif via {t_clean}")
+                elif "pdf" in t_lower:
+                    steps.append(f"{step_num}. Ekstrak teks atau render dokumen keluaran format PDF via {t_clean}")
+                elif "rag" in t_lower or "search" in t_lower:
+                    steps.append(f"{step_num}. Cari konteks dokumen relevan pada basis pengetahuan lokal via {t_clean}")
+                else:
+                    steps.append(f"{step_num}. Eksekusi operasi alat terspesialisasi '{t_clean}' pada authorized workspace")
+                step_num += 1
 
         steps.append(f"{step_num}. Verifikasi integritas artefak keluaran, periksa batasan sandbox, dan laporkan ringkasan ke pengguna.")
 

@@ -30,24 +30,76 @@ OFFICIAL_AKSA_ROOT_PUBLIC_KEY_B64 = "YzniYmZpLcHUR9zkPhNmjTYsgse9ph2JZqkwtV9VbaQ
 
 
 class PublisherTrustStore:
-    """Store of trusted publisher public keys for digital signature verification (AKSA-SEC-002).
+    """Store of trusted publisher public keys for digital signature verification (AKSA-SEC-002, AKSA-SEC-002-R2).
 
     Distributes ONLY verified public keys. ZERO private keys or deterministic seeds exist in the codebase.
+    Enforces root delegation signatures for publisher enrollment.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, root_public_key_b64: str | None = None) -> None:
         self._trusted_keys: dict[str, ed25519.Ed25519PublicKey] = {}
         self._revoked_keys: set[str] = set()
+        self._enrollment_audit_trail: list[dict[str, Any]] = []
         # Seed only official AKSA root public key (raw 32-byte Ed25519 public key)
-        raw_pub = base64.b64decode(OFFICIAL_AKSA_ROOT_PUBLIC_KEY_B64)
+        self.set_root_public_key(root_public_key_b64 or OFFICIAL_AKSA_ROOT_PUBLIC_KEY_B64)
+
+    def set_root_public_key(self, root_public_key_b64: str) -> None:
+        """Set or update the trusted root public key."""
+        raw_pub = base64.b64decode(root_public_key_b64)
         self._trusted_keys["aksa_official"] = ed25519.Ed25519PublicKey.from_public_bytes(raw_pub)
 
-    def register_publisher(self, publisher_id: str, public_key_b64: str) -> None:
+    def register_publisher(
+        self,
+        publisher_id: str,
+        public_key_b64: str,
+        root_signature_b64: str | None = None,
+    ) -> None:
+        """Register a new publisher public key into the trust store (AKSA-SEC-002-R2).
+
+        Requires a cryptographically valid delegation signature from the official AKSA Root key.
+        Self-registration without root authorization is strictly rejected (fail-closed).
+        """
         if publisher_id in self._revoked_keys or public_key_b64 in self._revoked_keys:
             raise PermissionError(f"Publisher atau kunci publik '{publisher_id}' telah dicabut (revoked).")
+
+        if not root_signature_b64:
+            raise PermissionError(
+                f"Pendaftaran publisher '{publisher_id}' ditolak: Wajib menyertakan tanda tangan delegasi resmi dari AKSA Root (fail-closed)."
+            )
+
+        delegation_msg = f"aksa-publisher-delegation:v1:{publisher_id}:{public_key_b64}".encode("utf-8")
+        root_key = self._trusted_keys.get("aksa_official")
+        if not root_key:
+            raise PermissionError("Kunci publik resmi AKSA Root tidak tersedia di trust store.")
+
+        try:
+            sig_bytes = base64.b64decode(root_signature_b64)
+            root_key.verify(sig_bytes, delegation_msg)
+        except Exception as exc:
+            raise PermissionError(
+                f"Otorisasi root gagal: Tanda tangan delegasi untuk publisher '{publisher_id}' tidak valid atau dipalsukan: {exc}"
+            )
+
         raw = base64.b64decode(public_key_b64)
         pub_key = ed25519.Ed25519PublicKey.from_public_bytes(raw)
         self._trusted_keys[publisher_id] = pub_key
+        self._enrollment_audit_trail.append({
+            "publisher_id": publisher_id,
+            "public_key_b64": public_key_b64,
+            "root_signature_b64": root_signature_b64,
+            "enrolled_at": datetime.now(timezone.utc).isoformat(),
+        })
+
+    @staticmethod
+    def sign_publisher_delegation(
+        publisher_id: str,
+        public_key_b64: str,
+        root_private_key: ed25519.Ed25519PrivateKey,
+    ) -> str:
+        """Helper for authorized offline CA tools / tests to generate a valid root delegation signature."""
+        msg = f"aksa-publisher-delegation:v1:{publisher_id}:{public_key_b64}".encode("utf-8")
+        sig = root_private_key.sign(msg)
+        return base64.b64encode(sig).decode("utf-8")
 
     def revoke_publisher(self, publisher_id: str) -> None:
         """Revoke a publisher key immediately (AKSA-SEC-002)."""
@@ -941,8 +993,9 @@ class AgentSkillsManager:
         workspace_path: str,
         args: list[str] | None = None,
         timeout: float = 15.0,
+        agent_id: str | None = None,
     ) -> dict[str, Any]:
-        """Execute a skill script in a strict least-privilege sandbox with process group containment (AKSA-SEC-003)."""
+        """Execute a skill script in a strict OS-level sandbox bound to the calling agent (AKSA-SEC-003-R2, AKSA-SKILL-002-R2)."""
         installed = await db_manager.get_installed_skill(skill_id)
         if not installed or not installed.get("enabled"):
             raise PermissionError(
@@ -950,31 +1003,48 @@ class AgentSkillsManager:
                 "Aktifkan keahlian terlebih dahulu melalui antarmuka AKSA sebelum mengeksekusi skrip."
             )
 
-        # 1. Location and traversal verification across global and per-agent dirs
+        # 1. Location and traversal verification strictly bound to calling agent or global (AKSA-SKILL-002-R2)
         from app.core.agent_directory import agent_directory_service
         script_file: Path | None = None
-        cand_file = (self.skills_dir / skill_id / script_rel_path).resolve()
-        if cand_file.exists() and cand_file.is_relative_to(self.skills_dir.resolve()):
-            script_file = cand_file
+
+        if agent_id:
+            agent_root = agent_directory_service.resolve_agent_path(agent_id, "").resolve()
+            cand_installed = (
+                agent_directory_service.resolve_agent_path(agent_id, f"skills/installed/{skill_id}") / script_rel_path
+            ).resolve()
+            cand_learned = (
+                agent_directory_service.resolve_agent_path(agent_id, f"skills/learned/{skill_id}") / script_rel_path
+            ).resolve()
+            cand_global = (self.skills_dir / skill_id / script_rel_path).resolve()
+
+            if cand_installed.exists() and cand_installed.is_relative_to(agent_root):
+                script_file = cand_installed
+            elif cand_learned.exists() and cand_learned.is_relative_to(agent_root):
+                script_file = cand_learned
+            elif cand_global.exists() and cand_global.is_relative_to(self.skills_dir.resolve()):
+                script_file = cand_global
+            else:
+                raise PermissionError(
+                    f"Akses ditolak oleh isolasi agen AKSA: Skrip '{script_rel_path}' untuk keahlian '{skill_id}' "
+                    f"tidak ditemukan pada direktori agen pemanggil '{agent_id}' maupun repositori global."
+                )
         else:
-            for agent_id in agent_directory_service.list_agent_ids():
-                cand_agent = (agent_directory_service.resolve_agent_path(agent_id, f"skills/installed/{skill_id}") / script_rel_path).resolve()
-                if cand_agent.exists() and cand_agent.is_relative_to(agent_directory_service.root_dir.resolve()):
-                    script_file = cand_agent
-                    break
+            cand_global = (self.skills_dir / skill_id / script_rel_path).resolve()
+            if cand_global.exists() and cand_global.is_relative_to(self.skills_dir.resolve()):
+                script_file = cand_global
+            else:
+                raise PermissionError(
+                    f"Eksekusi skrip keahlian per-agen memerlukan identitas 'agent_id' yang terverifikasi. "
+                    f"Keahlian '{skill_id}' bukan keahlian global."
+                )
 
         if not script_file or not script_file.exists():
             raise FileNotFoundError(f"Skrip '{script_rel_path}' tidak ditemukan di dalam paket keahlian '{skill_id}'.")
 
-        # 2. Pre-execution static security scan (AKSA-SEC-003)
+        # 2. Pre-execution static AST security scan (AKSA-SEC-003-R2)
         script_content = script_file.read_text(encoding="utf-8", errors="replace")
-        static_warnings = self.inspect_script_content(script_content, script_file.name)
-        critical_warnings = [
-            w for w in static_warnings
-            if any(c in w.lower() for c in ("berbahaya", "lingkungan", "injection", "os.environ", "rmtree", "eval("))
-        ]
-        if critical_warnings:
-            raise PermissionError(f"Skrip '{script_rel_path}' ditolak oleh inspeksi keamanan statis: {'; '.join(critical_warnings)}")
+        from app.skills.sandbox_runner import scan_ast_security
+        scan_ast_security(script_content, filename=script_file.name)
 
         # 3. Workspace sandbox verification
         ws = Path(workspace_path).resolve()
@@ -988,17 +1058,34 @@ class AgentSkillsManager:
             "TEMP": str(ws),
             "TMP": str(ws),
             "AKSA_WORKSPACE": str(ws),
+            "PYTHONPATH": os.path.pathsep.join([
+                str(Path(__file__).resolve().parent.parent.parent),
+                os.environ.get("PYTHONPATH", ""),
+            ]),
         }
 
-        # 5. Process group containment (AKSA-SEC-003)
+        # 5. OS and Python Runtime Sandbox Harness Execution (AKSA-SEC-003-R2)
+        runner_cmd = [
+            sys.executable,
+            "-m",
+            "app.skills.sandbox_runner",
+            "--script",
+            str(script_file),
+            "--workspace",
+            str(ws),
+            "--script-args",
+            json.dumps(args or []),
+        ]
+
         popen_kwargs: dict[str, Any] = {}
         if sys.platform != "win32":
             popen_kwargs["start_new_session"] = True
+        else:
+            import subprocess
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
 
         proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            str(script_file),
-            *(args or []),
+            *runner_cmd,
             cwd=str(ws),
             env=safe_env,
             stdout=asyncio.subprocess.PIPE,

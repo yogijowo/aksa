@@ -31,17 +31,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await seed_default_indonesian_team(db_manager)
     await privacy_policy_gate.ensure_loaded_from_db(db_manager)
 
-    # Write atomic runtime port file (AKSA-SEC-004)
+    # Write atomic runtime port file (AKSA-SEC-004-R2)
     port_file = settings.runtime_dir / "engine_port.json"
     runtime_info = {
         "host": settings.host,
         "port": settings.port,
         "pid": os.getpid(),
         "version": "1.0.0",
+        "created_at": datetime.now(timezone.utc).isoformat(),
     }
     try:
         import json
-        port_file.write_text(json.dumps(runtime_info, indent=2), encoding="utf-8")
+        temp_port_file = settings.runtime_dir / f"engine_port.json.tmp.{os.getpid()}"
+        temp_port_file.write_text(json.dumps(runtime_info, indent=2), encoding="utf-8")
+        os.replace(temp_port_file, port_file)
         sys.stderr.write(f"[AKSA_ENGINE_READY:port={settings.port}:pid={os.getpid()}]\n")
         sys.stderr.flush()
     except Exception:

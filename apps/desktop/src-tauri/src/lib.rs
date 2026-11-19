@@ -34,13 +34,46 @@ pub fn run() {
                         .env("PYTHONUNBUFFERED", "1");
 
                     match cmd.spawn() {
-                        Ok((_rx, child)) => {
+                        Ok((mut rx, child)) => {
+                            let child_pid = child.pid();
                             if let Ok(mut lock) = state.child_process.lock() {
                                 *lock = Some(child);
                             }
                             // Keep in Starting state until health check & HMAC identity are verified
                             state.set_state(LifecycleState::Starting);
-                            eprintln!("[AKSA Tauri] Sidecar spawned pada port {}, awaiting HMAC identity verification", info.port);
+                            eprintln!("[AKSA Tauri] Sidecar spawned (PID: {}), awaiting port sync & HMAC identity verification", child_pid);
+
+                            let app_handle = app.handle().clone();
+                            tauri::async_runtime::spawn(async move {
+                                use tauri_plugin_shell::process::CommandEvent;
+                                while let Some(event) = rx.recv().await {
+                                    match event {
+                                        CommandEvent::Stderr(line_bytes) | CommandEvent::Stdout(line_bytes) => {
+                                            let text = String::from_utf8_lossy(&line_bytes);
+                                            if text.contains("[AKSA_ENGINE_READY:") {
+                                                if let Some(port_start) = text.find("port=") {
+                                                    let sub = &text[port_start + 5..];
+                                                    let parts: Vec<&str> = sub.split(':').collect();
+                                                    if let Some(port_str) = parts.first() {
+                                                        if let Ok(p) = port_str.trim_end_matches(']').parse::<u16>() {
+                                                            let s = app_handle.state::<SidecarState>();
+                                                            s.sync_port(p);
+                                                            eprintln!("[AKSA Tauri] Sidecar port synchronized from runtime readiness event: {}", p);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        CommandEvent::Terminated(payload) => {
+                                            eprintln!("[AKSA Tauri] Sidecar terminated: {:?}", payload);
+                                            let s = app_handle.state::<SidecarState>();
+                                            s.set_state(LifecycleState::Failed);
+                                            break;
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            });
                         }
                         Err(e) => {
                             state.set_state(LifecycleState::Failed);

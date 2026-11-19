@@ -88,13 +88,19 @@ async def test_publisher_signature_verification_against_trust_store(tmp_path: Pa
     """Verify digital signature verification against publisher trust store (P1-03)."""
     from cryptography.hazmat.primitives.asymmetric import ed25519
     import base64
-    from app.skills.skill_manager import publisher_trust_store
+    from app.skills.skill_manager import PublisherTrustStore, publisher_trust_store
 
-    # Generate custom publisher keypair
+    # Generate test root authority and custom publisher keypair
+    test_root_priv = ed25519.Ed25519PrivateKey.generate()
+    test_root_pub_b64 = base64.b64encode(test_root_priv.public_key().public_bytes_raw()).decode("ascii")
+    publisher_trust_store.set_root_public_key(test_root_pub_b64)
+
     priv_key = ed25519.Ed25519PrivateKey.generate()
     pub_key_b64 = base64.b64encode(priv_key.public_key().public_bytes_raw()).decode("ascii")
 
-    publisher_trust_store.register_publisher("trusted_corp", pub_key_b64)
+    # Prove root delegation signature is required and valid
+    delegation_sig = PublisherTrustStore.sign_publisher_delegation("trusted_corp", pub_key_b64, test_root_priv)
+    publisher_trust_store.register_publisher("trusted_corp", pub_key_b64, root_signature_b64=delegation_sig)
 
     # Create signed skill ZIP
     signed_zip = tmp_path / "signed_skill.zip"

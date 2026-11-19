@@ -200,12 +200,30 @@ def test_publisher_trust_store_no_private_keys_and_revocation():
     # Official public key must be loaded
     assert "aksa_official" in store._trusted_keys
 
+    # Set up test root authority for verification
+    test_root_priv = ed25519.Ed25519PrivateKey.generate()
+    test_root_pub_b64 = base64.b64encode(test_root_priv.public_key().public_bytes_raw()).decode("ascii")
+    store.set_root_public_key(test_root_pub_b64)
+
     # Generate custom publisher keypair to test signing & verification
     custom_priv = ed25519.Ed25519PrivateKey.generate()
     custom_pub_b64 = base64.b64encode(custom_priv.public_key().public_bytes_raw()).decode("ascii")
 
     pub_id = "test_verified_org"
-    store.register_publisher(pub_id, custom_pub_b64)
+
+    # Self-registration without root signature must fail-closed (AKSA-SEC-002-R2)
+    with pytest.raises(PermissionError) as exc_info:
+        store.register_publisher(pub_id, custom_pub_b64)
+    assert "tanda tangan delegasi resmi" in str(exc_info.value)
+
+    # Forged root delegation signature must be rejected
+    with pytest.raises(PermissionError) as exc_info_forged:
+        store.register_publisher(pub_id, custom_pub_b64, root_signature_b64=base64.b64encode(b"forged_bytes_32").decode("ascii"))
+    assert "Otorisasi root gagal" in str(exc_info_forged.value)
+
+    # Valid root-delegated registration succeeds
+    valid_sig = PublisherTrustStore.sign_publisher_delegation(pub_id, custom_pub_b64, test_root_priv)
+    store.register_publisher(pub_id, custom_pub_b64, root_signature_b64=valid_sig)
 
     payload = b"AKSA_TEST_PACKAGE_HASH_1234567890abcdef"
     signature = base64.b64encode(custom_priv.sign(payload)).decode("ascii")
@@ -224,7 +242,7 @@ def test_publisher_trust_store_no_private_keys_and_revocation():
 
     # 4. Re-registration of revoked key must raise PermissionError
     with pytest.raises(PermissionError):
-        store.register_publisher(pub_id, custom_pub_b64)
+        store.register_publisher(pub_id, custom_pub_b64, root_signature_b64=valid_sig)
 
 
 # ---------------------------------------------------------------------------

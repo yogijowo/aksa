@@ -5,10 +5,21 @@ from __future__ import annotations
 import base64
 import json
 import uuid
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
 import aiosqlite
+
+
+class TaskOutcome(str, Enum):
+    """Granular task outcome classification for multi-agent workflows (AKSA-AGENT-003-R2)."""
+
+    SUCCESS = "success"                  # All steps succeeded, and all postcondition artifacts verified
+    PARTIAL_SUCCESS = "partial_success"  # Some steps succeeded but others failed or incomplete
+    FAILED = "failed"                    # Tool failure or fatal execution exception
+    CANCELLED = "cancelled"              # Cancelled by user, ambiguity guard, or policy rejection
+    UNVERIFIED = "unverified"            # Execution finished but postconditions (artifacts on disk) failed
 
 from app.api.ws import ws_manager
 from app.core.llm_router import UnifiedLLMRouter
@@ -845,12 +856,30 @@ class HierarchicalOrchestrator:
             sup_agent_id = supervisor.get("id") or "supervisor"
             tools_called = [s.get("action_label", "") for s in execution_steps]
 
-            # Compute genuine task success reflecting actual tool outcomes
-            actual_success = (
-                not tool_failed
-                and not is_ambiguous_duplication
-                and not any(s.get("status") == "failed" for s in execution_steps)
-            )
+            # Compute granular task outcome reflecting actual tool execution & artifact postconditions (AKSA-AGENT-003-R2)
+            has_failed_step = any(s.get("status") == "failed" for s in execution_steps)
+            has_succeeded_step = any(s.get("status") in ("completed", "success") for s in execution_steps)
+
+            if is_ambiguous_duplication:
+                task_outcome = TaskOutcome.CANCELLED
+            elif tool_failed:
+                task_outcome = TaskOutcome.PARTIAL_SUCCESS if has_succeeded_step else TaskOutcome.FAILED
+            elif has_failed_step:
+                task_outcome = TaskOutcome.PARTIAL_SUCCESS if has_succeeded_step else TaskOutcome.FAILED
+            else:
+                postcondition_failed = False
+                if artifacts:
+                    for art_path_str in artifacts:
+                        art_path = Path(art_path_str)
+                        if not art_path.exists() or art_path.stat().st_size == 0:
+                            postcondition_failed = True
+                            break
+                if postcondition_failed:
+                    task_outcome = TaskOutcome.UNVERIFIED
+                else:
+                    task_outcome = TaskOutcome.SUCCESS
+
+            actual_success = (task_outcome == TaskOutcome.SUCCESS)
 
             task_uid = f"task_{uuid.uuid4().hex[:8]}"
 
@@ -863,7 +892,7 @@ class HierarchicalOrchestrator:
                         task_id=f"{task_uid}_{sub_id[:6]}",
                         session_id=session_id or "default",
                         intent=prompt[:150],
-                        summary=f"[{sub.get('name')}] " + final_reply[:200],
+                        summary=f"[{sub.get('name')}] [{task_outcome.value}] " + final_reply[:200],
                         tools_used=tools_called,
                         success=actual_success,
                     )
@@ -875,6 +904,8 @@ class HierarchicalOrchestrator:
                             tools_used=tools_called,
                             success=actual_success,
                             user_explicit_teach="jadikan skill" in prompt.lower() or "pelajari ini" in prompt.lower(),
+                            outcome=task_outcome.value,
+                            execution_trace=execution_steps,
                         )
 
             # 2. Record in supervisor isolated memory
@@ -883,7 +914,7 @@ class HierarchicalOrchestrator:
                 task_id=task_uid,
                 session_id=session_id or "default",
                 intent=prompt[:150],
-                summary=final_reply[:200],
+                summary=f"[{task_outcome.value}] " + final_reply[:200],
                 tools_used=tools_called,
                 success=actual_success,
             )
@@ -894,6 +925,8 @@ class HierarchicalOrchestrator:
                 tools_used=tools_called,
                 success=actual_success,
                 user_explicit_teach="jadikan skill" in prompt.lower() or "pelajari ini" in prompt.lower(),
+                outcome=task_outcome.value,
+                execution_trace=execution_steps,
             )
         except Exception:
             pass

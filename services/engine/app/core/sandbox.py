@@ -24,11 +24,12 @@ from app.core.auth_context import get_default_host_principal
 
 
 class RiskLevel(str, Enum):
-    """Risk classification for tool operations (R0-R4 enterprise baseline + aliases)."""
+    """Risk classification for tool operations (R0-R4 enterprise baseline + aliases + UNKNOWN)."""
 
     LOW = "low"                                   # R0/R1 alias: Read-only or safe workspace inspect
     MEDIUM = "medium"                             # R2 alias: Reversible write with auto-backup
     HIGH = "high"                                 # R3/R4 alias: High-risk / external / destructive
+    UNKNOWN = "unknown"                           # Fail-closed: unclassified / third-party MCP tool (AKSA-SEC-001-R2)
     R0_READ_LOW = "R0"
     R1_READ_SENSITIVE = "R1"
     R2_REVERSIBLE_WRITE = "R2"
@@ -342,6 +343,7 @@ class ExecutionPolicyGateway:
 
         requires_approval = risk_level in (
             RiskLevel.HIGH,
+            RiskLevel.UNKNOWN,
             RiskLevel.R3_EXTERNAL_SIDE_EFFECT,
             RiskLevel.R4_DESTRUCTIVE_PRIVILEGED,
         )
@@ -358,12 +360,19 @@ class ExecutionPolicyGateway:
                 resource_path=resource_path,
                 tool_version=tool_version,
             ):
-                return ToolResult(
-                    success=False,
-                    summary=(
+                is_unknown = risk_level == RiskLevel.UNKNOWN
+                summary_msg = (
+                    f"Aksi dengan klasifikasi risiko tidak dikenal (UNKNOWN) '{tool_name}' dicegah oleh ExecutionPolicyGateway: "
+                    "Tool MCP belum terverifikasi aman dan memerlukan persetujuan pengguna (HITL Approval Gate) secara eksplisit."
+                    if is_unknown
+                    else (
                         f"Aksi berisiko tinggi '{tool_name}' dicegah oleh ExecutionPolicyGateway: "
                         "Memerlukan persetujuan pengguna (HITL Approval Gate) yang sah, terikat pada argumen, dan belum pernah digunakan."
-                    ),
+                    )
+                )
+                return ToolResult(
+                    success=False,
+                    summary=summary_msg,
                     data={
                         "hitl_required": True,
                         "tool_name": tool_name,

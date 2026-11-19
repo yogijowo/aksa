@@ -40,6 +40,18 @@ MCP_HIGH_RISK_KEYWORDS = {
     "execute", "run", "click", "navigate", "submit", "fill", "type",
     "send", "post", "put", "patch", "upload", "download", "insert",
     "truncate", "alter", "copy", "move", "rename", "kill", "terminate",
+    "exec", "eval", "sync", "process", "manage", "trigger", "invoke",
+    "dispatch", "set", "reset", "change", "wipe", "clear", "clean",
+    "deploy", "apply", "push", "mutate", "destroy", "purge", "overwrite",
+    "format", "launch", "start", "stop", "restart",
+}
+
+MCP_KNOWN_READ_ONLY_TOOLS = {
+    "read_file", "list_directory", "get_file_info", "list_tables", "describe_table", "read_query"
+}
+
+MCP_SAFE_READ_KEYWORDS = {
+    "read", "list", "view", "inspect", "get", "describe", "search", "find", "status", "info", "query"
 }
 
 MCP_TOOL_REQUIRED_PERMISSIONS: dict[str, list[str]] = {
@@ -66,37 +78,81 @@ def classify_mcp_tool_risk(
     tool_name: str,
     schema: dict[str, Any] | None = None,
 ) -> RiskLevel:
-    """Classify risk level dynamically per MCP tool and operation (AKSA-SEC-001)."""
+    """Classify risk level dynamically per MCP tool and operation (AKSA-SEC-001-R2).
+
+    Fail-closed: Returns RiskLevel.HIGH or RiskLevel.UNKNOWN for unverified or neutral tools.
+    NEVER defaults unknown tools to RiskLevel.LOW.
+    """
     name_lower = tool_name.lower().replace("-", "_")
     tokens = set(name_lower.split("_"))
+
+    # 1. Immediate HIGH risk keyword match
     if any(k in tokens or k in name_lower for k in MCP_HIGH_RISK_KEYWORDS):
         return RiskLevel.HIGH
+
+    # 2. Inspect tool schema arguments for mutating or destructive intent
+    if schema and isinstance(schema, dict):
+        props = schema.get("properties", {})
+        if isinstance(props, dict):
+            prop_names = {p.lower() for p in props.keys()}
+            if any(p in prop_names for p in ("content", "command", "cmd", "query", "url", "body", "payload", "script", "action")):
+                return RiskLevel.HIGH
+
+    # 3. Known strictly read-only whitelist
+    if tool_name in MCP_KNOWN_READ_ONLY_TOOLS:
+        return RiskLevel.LOW
+
+    # 4. Safe read tokens (all tokens must strictly be in read keywords)
+    if tokens and tokens.issubset(MCP_SAFE_READ_KEYWORDS):
+        return RiskLevel.LOW
+
+    # 5. Check server-declared permissions
     if server:
         server_perms = set(server.permissions)
         if "filesystem.workspace.write" in server_perms and any(w in name_lower for w in ("write", "save", "edit", "append")):
             return RiskLevel.HIGH
         if "application.automation" in server_perms and any(a in name_lower for a in ("click", "nav", "type", "submit", "eval", "press")):
             return RiskLevel.HIGH
-    return RiskLevel.LOW
+
+    # 6. FAIL-CLOSED: Any unclassified, neutral, or third-party MCP tool is marked UNKNOWN
+    return RiskLevel.UNKNOWN
 
 
 def check_mcp_server_permissions(server: MCPServerConfig, tool_name: str) -> tuple[bool, str | None]:
-    """Verify that the MCP server declares the required permissions for the given tool (AKSA-SEC-001)."""
+    """Verify that the MCP server declares the required permissions for the given tool (AKSA-SEC-001-R2).
+
+    Fail-closed: Rejects any server without permissions or any unmapped/unknown tool without explicit capability.
+    """
+    server_perms = set(server.permissions or [])
+    if not server_perms:
+        return False, f"Server MCP '{server.name}' tidak mendeklarasikan izin apa pun. Eksekusi tool '{tool_name}' ditolak (fail-closed)."
+
+    # If server has administrative wildcard, allow
+    if "*" in server_perms or "all" in server_perms:
+        return True, None
+
     needed = MCP_TOOL_REQUIRED_PERMISSIONS.get(tool_name)
     if not needed:
         name_lower = tool_name.lower()
-        if any(w in name_lower for w in ("write", "delete", "create", "modify")):
+        if any(w in name_lower for w in ("write", "delete", "create", "modify", "save", "drop", "truncate")):
             needed = ["filesystem.workspace.write"]
-        elif any(r in name_lower for r in ("read", "list", "view", "inspect", "get")):
+        elif any(r in name_lower for r in ("read", "list", "view", "inspect", "get", "describe")):
             needed = ["filesystem.workspace.read"]
-        elif any(c in name_lower for c in ("click", "navigate", "fill", "type", "press")):
+        elif any(c in name_lower for c in ("click", "navigate", "fill", "type", "press", "screenshot")):
             needed = ["application.automation"]
+        else:
+            # Neutral / unknown tool: requires explicit per-tool capability or declared custom permission
+            candidate_perms = {f"mcp.{server.id}.{tool_name}", f"mcp.{server.name}.{tool_name}"}
+            if any(p in server_perms for p in candidate_perms):
+                return True, None
+            needed = [f"mcp.{server.id}.{tool_name}"]
 
-    if needed:
-        server_perms = set(server.permissions)
-        missing = [p for p in needed if p not in server_perms]
-        if missing:
-            return False, f"Server MCP '{server.name}' tidak memiliki izin '{', '.join(missing)}' yang diperlukan untuk tool '{tool_name}'."
+    missing = [p for p in needed if p not in server_perms]
+    if missing:
+        return (
+            False,
+            f"Server MCP '{server.name}' tidak memiliki izin '{', '.join(missing)}' yang diperlukan untuk tool '{tool_name}'. Eksekusi ditolak (fail-closed).",
+        )
     return True, None
 
 
@@ -415,22 +471,22 @@ class MCPClientManager:
                 token_estimate=14,
             )
 
-        # 2. Check server declared permissions (AKSA-SEC-001)
+        # 2. Check if tool exists in discovered tools
+        if server.discovered_tools and tool_name not in server.discovered_tools:
+            return ToolResult(
+                success=False,
+                summary=f"Tool '{tool_name}' tidak terdaftar pada server MCP '{server.name}'. Pilihan: {server.discovered_tools}.",
+                data={"server_id": server.id, "status": "tool_not_found", "available": server.discovered_tools},
+                token_estimate=18,
+            )
+
+        # 3. Check server declared permissions (AKSA-SEC-001-R2)
         perm_ok, perm_err = check_mcp_server_permissions(server, tool_name)
         if not perm_ok:
             return ToolResult(
                 success=False,
                 summary=perm_err or f"Izin ditolak untuk tool MCP '{tool_name}'.",
                 data={"server_id": server.id, "status": "permission_denied", "error": perm_err},
-                token_estimate=18,
-            )
-
-        # 3. Check if tool exists in discovered tools
-        if server.discovered_tools and tool_name not in server.discovered_tools:
-            return ToolResult(
-                success=False,
-                summary=f"Tool '{tool_name}' tidak terdaftar pada server MCP '{server.name}'. Pilihan: {server.discovered_tools}.",
-                data={"server_id": server.id, "status": "tool_not_found", "available": server.discovered_tools},
                 token_estimate=18,
             )
 
@@ -446,9 +502,9 @@ class MCPClientManager:
                     token_estimate=18,
                 )
 
-        # 5. Dynamic risk evaluation and HITL enforcement (AKSA-SEC-001)
+        # 5. Dynamic risk evaluation and HITL enforcement (AKSA-SEC-001-R2)
         tool_risk = classify_mcp_tool_risk(server, tool_name, schema)
-        if tool_risk in (RiskLevel.HIGH, RiskLevel.R3_EXTERNAL_SIDE_EFFECT, RiskLevel.R4_DESTRUCTIVE_PRIVILEGED):
+        if tool_risk in (RiskLevel.HIGH, RiskLevel.UNKNOWN, RiskLevel.R3_EXTERNAL_SIDE_EFFECT, RiskLevel.R4_DESTRUCTIVE_PRIVILEGED):
             from app.core.sandbox import execution_policy_gateway
             grant_id = (arguments or {}).get("hitl_grant_id")
             session_id = (arguments or {}).get("session_id")

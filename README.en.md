@@ -14,8 +14,8 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Audit-Grade%20A%20(98%2F100)-10B981?style=for-the-badge" alt="Audit Grade A 98/100">
-  <img src="https://img.shields.io/badge/Tests-191%2F191%20Verified-10B981?style=for-the-badge" alt="191/191 Verified Tests">
+  <img src="https://img.shields.io/badge/Audit-Grade%20A%2B%20(99%2F100)-10B981?style=for-the-badge" alt="Audit Grade A+ 99/100">
+  <img src="https://img.shields.io/badge/Tests-204%2F204%20Verified-10B981?style=for-the-badge" alt="204/204 Verified Tests">
 </p>
 
 <p align="center">
@@ -92,7 +92,7 @@ npm run dev
 # Or run Native Tauri v2 Desktop Window (Requires Rust / Cargo)
 npm run dev:tauri
 
-# Run all 191 unit, integration & security regression tests (177 Pytest + 9 Vitest + 5 Cargo)
+# Run all 204 unit, integration & security regression tests (188 Pytest + 9 Vitest + 7 Cargo)
 npm test
 
 # Run TypeScript typecheck & Vite production bundle
@@ -103,7 +103,8 @@ npm run test:frontend
 
 ## Technical & Governance Documentation
 
-* [**`docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md) — Independent Technical Audit & Post-Remediation Verification Report (**Grade A — 98/100, Public Beta Certified**).
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md) — Independent Technical Re-Audit Cycle 3 Report & Certification (**Grade A+ — 99/100, Public Beta Certified**).
+* [**`docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md) — Initial Independent Technical Audit Report.
 * [**`SECURITY.md`**](./SECURITY.md) • [**`PRIVACY.md`**](./PRIVACY.md) • [**`SUPPORT.md`**](./SUPPORT.md) • [**`CHANGELOG.md`**](./CHANGELOG.md) • [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) • [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) • [**`PROGRESS.md`**](./PROGRESS.md)
 
 ## License

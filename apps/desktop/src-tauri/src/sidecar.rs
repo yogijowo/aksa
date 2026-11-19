@@ -52,6 +52,15 @@ pub fn allocate_loopback_port(preferred_port: u16) -> u16 {
     preferred_port
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct EnginePortManifest {
+    pub host: String,
+    pub port: u16,
+    pub pid: u32,
+    #[serde(default)]
+    pub version: String,
+}
+
 impl SidecarState {
     pub fn new(preferred_port: u16) -> Self {
         let port = allocate_loopback_port(preferred_port);
@@ -75,6 +84,27 @@ impl SidecarState {
             child_process: Mutex::new(None),
             lifecycle_state: Mutex::new(LifecycleState::Starting),
         }
+    }
+
+    pub fn sync_port(&self, actual_port: u16) {
+        if let Ok(mut guard) = self.info.lock() {
+            guard.port = actual_port;
+            guard.base_url = format!("http://{}:{}", guard.host, actual_port);
+            guard.ws_url = format!("ws://{}:{}/ws/stream", guard.host, actual_port);
+        }
+    }
+
+    pub fn read_and_validate_manifest(&self, manifest_content: &str, expected_pid: u32) -> Result<u16, String> {
+        let manifest: EnginePortManifest = serde_json::from_str(manifest_content)
+            .map_err(|e| format!("Gagal mem-parsing manifest port engine: {}", e))?;
+        if manifest.pid != expected_pid {
+            return Err(format!(
+                "Validasi PID gagal: manifest pid ({}) tidak sesuai dengan child process pid ({})",
+                manifest.pid, expected_pid
+            ));
+        }
+        self.sync_port(manifest.port);
+        Ok(manifest.port)
     }
 
     pub fn set_state(&self, state: LifecycleState) {
@@ -218,5 +248,31 @@ mod tests {
 
         state.set_state(LifecycleState::Failed);
         assert_eq!(state.get_state(), LifecycleState::Failed);
+    }
+
+    #[test]
+    fn test_read_and_validate_manifest_matching_pid_updates_port() {
+        let state = SidecarState::new(43120);
+        let manifest_json = r#"{"host":"127.0.0.1","port":43188,"pid":9999,"version":"1.0.0"}"#;
+        let res = state.read_and_validate_manifest(manifest_json, 9999);
+        assert!(res.is_ok());
+        assert_eq!(res.unwrap(), 43188);
+
+        let info = state.info.lock().unwrap();
+        assert_eq!(info.port, 43188);
+        assert_eq!(info.base_url, "http://127.0.0.1:43188");
+        assert_eq!(info.ws_url, "ws://127.0.0.1:43188/ws/stream");
+    }
+
+    #[test]
+    fn test_read_and_validate_manifest_mismatched_pid_rejected() {
+        let state = SidecarState::new(43120);
+        let manifest_json = r#"{"host":"127.0.0.1","port":43188,"pid":8888,"version":"1.0.0"}"#;
+        let res = state.read_and_validate_manifest(manifest_json, 9999);
+        assert!(res.is_err());
+        assert!(res.unwrap_err().contains("Validasi PID gagal"));
+
+        let info = state.info.lock().unwrap();
+        assert_ne!(info.port, 43188);
     }
 }
