@@ -439,8 +439,6 @@ class CredentialVault:
             raise ValueError("Secret tidak boleh kosong.")
 
         self._migrate_all_legacy_vaults_if_needed()
-        if credential_ref in self._memory_cache:
-            return self._memory_cache[credential_ref]
         cred_ref = existing_ref or f"cred_{provider}_{uuid.uuid4().hex[:10]}"
 
         # 1. Attempt OS Keyring storage first

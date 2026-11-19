@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS agents (
     tier_level INTEGER DEFAULT 0,
     provider TEXT NOT NULL,
     model_id TEXT NOT NULL,
+    model_selection_mode TEXT DEFAULT 'auto',
     temperature REAL DEFAULT 0.2,
     max_tokens INTEGER DEFAULT 4096,
     system_prompt TEXT NOT NULL,
@@ -381,6 +382,10 @@ class DatabaseManager:
                 await db.execute("ALTER TABLE installed_skills ADD COLUMN target_agent_id TEXT")
             except Exception:
                 pass
+            try:
+                await db.execute("ALTER TABLE agents ADD COLUMN model_selection_mode TEXT DEFAULT 'auto'")
+            except Exception:
+                pass
 
             now = _now_iso()
             for ver, name in (
@@ -413,23 +418,120 @@ class DatabaseManager:
                 agents_raw = [_row_to_dict(a) for a in await agent_cursor.fetchall()]
                 for agent in agents_raw:
                     agent["tool_categories"] = json.loads(agent.pop("tool_categories_json", "[]"))
+                    if not agent.get("model_selection_mode"):
+                        agent["model_selection_mode"] = "auto"
                 team["agents"] = agents_raw
                 team["is_default"] = bool(team["is_default"])
             return teams
 
+    async def _validate_agent_hierarchy(
+        self,
+        db: aiosqlite.Connection,
+        team_id: str,
+        agent_id: str | None,
+        candidate_parent_id: str | None,
+    ) -> int:
+        """Validate parent-child relationship to prevent self-parenting, cycles, and invalid orphan nodes.
+
+        Returns the computed tier_level for the agent.
+        """
+        if agent_id and candidate_parent_id == agent_id:
+            raise ValueError("Relasi tidak valid: Agen tidak dapat menjadi induk bagi dirinya sendiri.")
+
+        cursor = await db.execute(
+            "SELECT id, parent_id, tier_level FROM agents WHERE team_id = ?",
+            (team_id,),
+        )
+        rows = await cursor.fetchall()
+        agents_by_id = {r["id"]: _row_to_dict(r) for r in rows}
+
+        if candidate_parent_id is None:
+            # Only one root supervisor allowed per team if other agents already exist
+            existing_roots = [
+                aid for aid, ag in agents_by_id.items()
+                if ag.get("parent_id") is None and aid != agent_id
+            ]
+            if existing_roots and agents_by_id:
+                raise ValueError(
+                    "Struktur tim sudah memiliki Koordinator Utama (root). Agen pendukung harus memiliki agen induk."
+                )
+            return 0
+
+        if candidate_parent_id not in agents_by_id:
+            raise ValueError(f"Agen induk '{candidate_parent_id}' tidak ditemukan di dalam tim ini.")
+
+        # Walk up ancestor chain from candidate_parent_id to detect circular dependency
+        visited: set[str] = set()
+        curr_id: str | None = candidate_parent_id
+        depth = 0
+        while curr_id is not None:
+            if agent_id and curr_id == agent_id:
+                raise ValueError(
+                    "Relasi melingkar (circular dependency) ditolak: Agen induk tidak boleh berada di bawah sub-agen ini."
+                )
+            if curr_id in visited or depth > 16:
+                raise ValueError("Struktur hierarki melampaui batas kedalaman atau mengandung relasi melingkar.")
+            visited.add(curr_id)
+            parent_row = agents_by_id.get(curr_id)
+            if not parent_row:
+                break
+            curr_id = parent_row.get("parent_id")
+            depth += 1
+
+        parent_tier = int(agents_by_id[candidate_parent_id].get("tier_level") or 0)
+        return parent_tier + 1
+
+    async def _recompute_team_tiers(self, db: aiosqlite.Connection, team_id: str) -> None:
+        """Recompute tier_level for all agents in a team based on parent-child tree depth."""
+        cursor = await db.execute(
+            "SELECT id, parent_id, tier_level FROM agents WHERE team_id = ?",
+            (team_id,),
+        )
+        rows = [_row_to_dict(r) for r in await cursor.fetchall()]
+        by_id = {r["id"]: r for r in rows}
+
+        def compute_depth(aid: str) -> int:
+            seen: set[str] = set()
+            curr = by_id.get(aid)
+            d = 0
+            while curr and curr.get("parent_id") and curr["parent_id"] in by_id:
+                pid = curr["parent_id"]
+                if pid in seen:
+                    break
+                seen.add(pid)
+                d += 1
+                curr = by_id.get(pid)
+            return d
+
+        for r in rows:
+            new_tier = compute_depth(r["id"])
+            if new_tier != r.get("tier_level"):
+                await db.execute(
+                    "UPDATE agents SET tier_level = ? WHERE id = ?",
+                    (new_tier, r["id"]),
+                )
+
     async def create_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Insert a new agent node into a team hierarchy."""
+        """Insert a new agent node into a team hierarchy with parent/cycle validation."""
         agent_id = payload.get("id") or f"agt_{uuid.uuid4().hex[:10]}"
         tool_categories_json = json.dumps(payload.get("tool_categories", []))
+        selection_mode = payload.get("model_selection_mode") or "auto"
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
+            computed_tier = await self._validate_agent_hierarchy(
+                db,
+                team_id=payload["team_id"],
+                agent_id=agent_id,
+                candidate_parent_id=payload.get("parent_id"),
+            )
+            tier_level = computed_tier if payload.get("parent_id") is not None else payload.get("tier_level", 0)
             await db.execute(
                 """
                 INSERT INTO agents (
                     id, team_id, parent_id, name, role_title, description,
-                    avatar_icon, tier_level, provider, model_id, temperature,
-                    max_tokens, system_prompt, tool_categories_json, position_x, position_y, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    avatar_icon, tier_level, provider, model_id, model_selection_mode,
+                    temperature, max_tokens, system_prompt, tool_categories_json, position_x, position_y, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     agent_id,
@@ -439,9 +541,10 @@ class DatabaseManager:
                     payload["role_title"],
                     payload["description"],
                     payload.get("avatar_icon", "bot"),
-                    payload.get("tier_level", 1),
+                    tier_level,
                     payload["provider"],
                     payload["model_id"],
+                    selection_mode,
                     payload.get("temperature", 0.2),
                     payload.get("max_tokens", 4096),
                     payload["system_prompt"],
@@ -456,36 +559,58 @@ class DatabaseManager:
             row = await cursor.fetchone()
             result = _row_to_dict(row)
             result["tool_categories"] = json.loads(result.pop("tool_categories_json", "[]"))
+            if not result.get("model_selection_mode"):
+                result["model_selection_mode"] = "auto"
             return result
 
     async def update_agent(self, agent_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
-        """Update an existing agent's model, prompt, position, or tools."""
+        """Update an existing agent's model, prompt, parent relationship, position, or tools."""
         allowed_fields = {
             "parent_id", "name", "role_title", "description", "avatar_icon",
-            "tier_level", "provider", "model_id", "temperature", "max_tokens",
-            "system_prompt", "position_x", "position_y"
+            "tier_level", "provider", "model_id", "model_selection_mode",
+            "temperature", "max_tokens", "system_prompt", "position_x", "position_y"
         }
         set_clauses: list[str] = []
         values: list[Any] = []
 
-        for key, value in updates.items():
-            if key == "tool_categories":
-                set_clauses.append("tool_categories_json = ?")
-                values.append(json.dumps(value))
-            elif key in allowed_fields:
-                set_clauses.append(f"{key} = ?")
-                values.append(value)
-
-        if not set_clauses:
-            return None
-
-        values.append(agent_id)
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+            existing = await cur.fetchone()
+            if not existing:
+                return None
+            existing_dict = _row_to_dict(existing)
+
+            if "parent_id" in updates:
+                new_parent_id = updates["parent_id"]
+                if existing_dict.get("parent_id") is None and new_parent_id is not None:
+                    raise ValueError("Koordinator Utama (root) tidak dapat dipindahkan menjadi sub-agen.")
+                computed_tier = await self._validate_agent_hierarchy(
+                    db,
+                    team_id=existing_dict["team_id"],
+                    agent_id=agent_id,
+                    candidate_parent_id=new_parent_id,
+                )
+                updates["tier_level"] = computed_tier
+
+            for key, value in updates.items():
+                if key == "tool_categories":
+                    set_clauses.append("tool_categories_json = ?")
+                    values.append(json.dumps(value))
+                elif key in allowed_fields:
+                    set_clauses.append(f"{key} = ?")
+                    values.append(value)
+
+            if not set_clauses:
+                return None
+
+            values.append(agent_id)
             await db.execute(
                 f"UPDATE agents SET {', '.join(set_clauses)} WHERE id = ?",
                 tuple(values),
             )
+            if "parent_id" in updates:
+                await self._recompute_team_tiers(db, existing_dict["team_id"])
             await db.commit()
             cursor = await db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
             row = await cursor.fetchone()
@@ -493,12 +618,30 @@ class DatabaseManager:
                 return None
             result = _row_to_dict(row)
             result["tool_categories"] = json.loads(result.pop("tool_categories_json", "[]"))
+            if not result.get("model_selection_mode"):
+                result["model_selection_mode"] = "auto"
             return result
 
     async def delete_agent(self, agent_id: str) -> bool:
-        """Delete an agent node by ID."""
+        """Delete an agent node by ID, protecting the root supervisor and reassigning sub-agents to parent."""
         async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,))
+            existing = await cur.fetchone()
+            if not existing:
+                return False
+            existing_dict = _row_to_dict(existing)
+            if existing_dict.get("parent_id") is None:
+                raise ValueError("Koordinator Utama memimpin tim dan tidak dapat dihapus.")
+            parent_id = existing_dict.get("parent_id")
+            team_id = existing_dict["team_id"]
+            # Reassign any children of this agent to its parent so no orphan nodes are created
+            await db.execute(
+                "UPDATE agents SET parent_id = ? WHERE parent_id = ?",
+                (parent_id, agent_id),
+            )
             cursor = await db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+            await self._recompute_team_tiers(db, team_id)
             await db.commit()
             return cursor.rowcount > 0
 
@@ -607,12 +750,49 @@ class DatabaseManager:
                 item["owner_id"] = owner_id
             return item
 
+    async def update_workspace(self, workspace_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
+        """Update an existing workspace's permissions or name."""
+        set_clauses: list[str] = []
+        values: list[Any] = []
+        if "name" in updates and updates["name"] is not None:
+            set_clauses.append("name = ?")
+            values.append(str(updates["name"]))
+        for bfield in ("allow_read", "allow_write", "allow_execute", "auto_rag_sync"):
+            if bfield in updates and updates[bfield] is not None:
+                set_clauses.append(f"{bfield} = ?")
+                values.append(int(bool(updates[bfield])))
+        if not set_clauses:
+            return await self.get_workspace(workspace_id)
+        values.append(workspace_id)
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute(
+                f"UPDATE workspaces SET {', '.join(set_clauses)} WHERE id = ?",
+                tuple(values),
+            )
+            await db.commit()
+        return await self.get_workspace(workspace_id)
+
     async def delete_workspace(self, workspace_id: str) -> bool:
         """Remove an authorized PC workspace folder from the database."""
         async with aiosqlite.connect(self.db_path) as db:
             cursor = await db.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
             await db.commit()
             return cursor.rowcount > 0
+
+    async def delete_rag_document(self, document_id: str) -> dict[str, Any] | None:
+        """Delete an indexed RAG document and its chunks from the index without modifying the source file on disk."""
+        async with aiosqlite.connect(self.db_path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT * FROM rag_documents WHERE id = ?", (document_id,))
+            row = await cur.fetchone()
+            if not row:
+                return None
+            doc = _row_to_dict(row)
+            await db.execute("DELETE FROM rag_chunks_fts WHERE document_id = ?", (document_id,))
+            await db.execute("DELETE FROM rag_vector_chunks WHERE document_id = ?", (document_id,))
+            await db.execute("DELETE FROM rag_documents WHERE id = ?", (document_id,))
+            await db.commit()
+            return doc
 
     async def list_sessions(self) -> list[dict[str, Any]]:
         """List chat sessions ordered by most recently updated."""

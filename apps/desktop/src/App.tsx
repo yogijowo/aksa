@@ -15,11 +15,43 @@ const FeatureSectionsView = React.lazy(() =>
 );
 
 export const App: React.FC = () => {
-  const { activeNav, syncWithBackendEngine, toggleEmergencyStop } = useAksaStore();
+  const {
+    activeNav,
+    resolvedTheme,
+    themeMode,
+    uiDensity,
+    reducedMotion,
+    syncSystemTheme,
+    syncWithBackendEngine,
+    toggleEmergencyStop,
+  } = useAksaStore();
 
   useEffect(() => {
     void syncWithBackendEngine();
   }, [syncWithBackendEngine]);
+
+  // Apply theme, density, and reduced-motion design tokens to document root
+  useEffect(() => {
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-theme", resolvedTheme);
+      document.documentElement.setAttribute("data-density", uiDensity);
+      document.documentElement.setAttribute("data-reduce-motion", String(reducedMotion));
+    }
+  }, [resolvedTheme, uiDensity, reducedMotion]);
+
+  // Follow OS color scheme changes live when themeMode === "system" (Section 2 Sistem tema)
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (e: MediaQueryListEvent) => {
+      syncSystemTheme(e.matches);
+    };
+    if (themeMode === "system") {
+      syncSystemTheme(mediaQuery.matches);
+    }
+    mediaQuery.addEventListener("change", handleChange);
+    return () => mediaQuery.removeEventListener("change", handleChange);
+  }, [themeMode, syncSystemTheme]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -33,7 +65,12 @@ export const App: React.FC = () => {
   }, [toggleEmergencyStop]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-[#191918] text-[#ECECEB]">
+    <div
+      data-theme={resolvedTheme}
+      data-density={uiDensity}
+      data-reduce-motion={String(reducedMotion)}
+      className="flex h-screen w-screen overflow-hidden bg-[#191918] text-[#ECECEB]"
+    >
       {/* Global Human-in-the-Loop Confirmation Modal */}
       <HITLApprovalModal />
 
@@ -46,7 +83,13 @@ export const App: React.FC = () => {
 
         <div className="flex-1 flex min-h-0 overflow-hidden">
           {/* Pane 2: Active Workspace / Agent Hierarchy / RAG / Telegram View with Suspense */}
-          <Suspense fallback={<div className="flex-1 flex items-center justify-center text-sm text-[#8E8D8A]">Memuat modul...</div>}>
+          <Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center text-sm text-[#8E8D8A]">
+                Memuat modul...
+              </div>
+            }
+          >
             {activeNav === "ruang_kerja" && <WorkspaceChatView />}
             {activeNav === "tim_agen" && <AgentHierarchyView />}
             {activeNav !== "ruang_kerja" && activeNav !== "tim_agen" && <FeatureSectionsView />}
@@ -61,4 +104,3 @@ export const App: React.FC = () => {
 };
 
 export default App;
-

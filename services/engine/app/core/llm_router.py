@@ -127,6 +127,7 @@ class UnifiedLLMRouter:
     def __init__(self, db: DatabaseManager) -> None:
         self.db = db
         self.vault = CredentialVault(vault_dir=self.db.db_path.parent)
+        self._connection_test_results: dict[str, dict[str, Any]] = {}
 
     async def migrate_legacy_plaintext_keys(self) -> int:
         """One-time transactional migration of plaintext API keys from app_settings to OS Credential Vault."""
@@ -190,18 +191,26 @@ class UnifiedLLMRouter:
         existing_meta = await self.db.get_credential_metadata(provider)
         existing_ref = existing_meta.get("credential_ref") if existing_meta else None
 
-        if api_key.strip():
-            stored = self.vault.store_secret(provider, api_key.strip(), existing_ref=existing_ref)
+        cleaned = api_key.strip()
+        if "••••" in cleaned or cleaned.startswith("****"):
+            raise ValueError(
+                "Format token tidak valid: nilai yang dikirim merupakan tampilan tersembunyi (masked), bukan token baru."
+            )
+
+        if cleaned:
+            stored = self.vault.store_secret(provider, cleaned, existing_ref=existing_ref)
             await self.db.upsert_credential_metadata(
                 provider=provider,
                 credential_ref=stored["credential_ref"],
                 masked_preview=stored["masked_preview"],
                 backend=stored["backend"],
             )
+            self._connection_test_results.pop(provider, None)
         else:
             if existing_ref:
                 self.vault.delete_secret(existing_ref)
             await self.db.delete_credential_metadata(provider)
+            self._connection_test_results.pop(provider, None)
 
         keys = await self.get_saved_api_keys()
         return {p["id"]: bool(keys.get(p["id"])) for p in SUPPORTED_PROVIDERS if not p["is_local"]}
@@ -211,7 +220,25 @@ class UnifiedLLMRouter:
         existing_meta = await self.db.get_credential_metadata(provider)
         if existing_meta and existing_meta.get("credential_ref"):
             self.vault.delete_secret(existing_meta["credential_ref"])
+        self._connection_test_results.pop(provider, None)
         return await self.db.delete_credential_metadata(provider)
+
+    def record_connection_test(
+        self,
+        provider: str,
+        ok: bool,
+        message: str,
+        model_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Record the outcome of an explicit provider connection verification test."""
+        entry = {
+            "ok": bool(ok),
+            "tested_at": _now_iso(),
+            "message": message,
+            "model_id": model_id,
+        }
+        self._connection_test_results[provider.lower().strip()] = entry
+        return entry
 
     async def discover_local_models(self) -> dict[str, Any]:
         """Auto-detect running Ollama and LM Studio instances and their installed models."""
@@ -260,21 +287,34 @@ class UnifiedLLMRouter:
 
         for prov in SUPPORTED_PROVIDERS:
             pid = prov["id"]
+            test_info = self._connection_test_results.get(pid)
             if pid == "ollama":
+                is_on = local_info["ollama"]["online"]
                 results.append(
                     {
                         **prov,
                         "configured": True,
-                        "online": local_info["ollama"]["online"],
+                        "has_saved_token": False,
+                        "online": is_on,
+                        "token_status": "connected" if is_on else "not_connected",
+                        "last_test_ok": is_on,
+                        "last_tested_at": test_info["tested_at"] if test_info else None,
+                        "last_test_message": test_info["message"] if test_info else None,
                         "installed_models": local_info["ollama"]["models"],
                     }
                 )
             elif pid == "lmstudio":
+                is_on = local_info["lmstudio"]["online"]
                 results.append(
                     {
                         **prov,
                         "configured": True,
-                        "online": local_info["lmstudio"]["online"],
+                        "has_saved_token": False,
+                        "online": is_on,
+                        "token_status": "connected" if is_on else "not_connected",
+                        "last_test_ok": is_on,
+                        "last_tested_at": test_info["tested_at"] if test_info else None,
+                        "last_test_message": test_info["message"] if test_info else None,
                         "installed_models": local_info["lmstudio"]["models"],
                     }
                 )
@@ -288,11 +328,23 @@ class UnifiedLLMRouter:
                     if meta and meta.get("masked_preview")
                     else (mask_secret(env_val) if env_val else "")
                 )
+                if not has_key:
+                    token_status = "not_connected"
+                elif test_info is not None:
+                    token_status = "connected" if test_info["ok"] else "connection_failed"
+                else:
+                    token_status = "token_saved"
+
                 results.append(
                     {
                         **prov,
                         "configured": has_key,
-                        "online": has_key,
+                        "has_saved_token": has_key,
+                        "online": bool(has_key and (test_info is None or test_info["ok"])),
+                        "token_status": token_status,
+                        "last_test_ok": test_info["ok"] if test_info else None,
+                        "last_tested_at": test_info["tested_at"] if test_info else None,
+                        "last_test_message": test_info["message"] if test_info else None,
                         "credential_ref": meta["credential_ref"] if meta else None,
                         "api_key_masked": masked,
                         "installed_models": prov["recommended_models"],

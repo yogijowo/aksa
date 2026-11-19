@@ -8,6 +8,25 @@ export type NavSection =
   | "izin_pc"
   | "pengaturan";
 
+export type ThemeMode = "dark" | "light" | "system";
+export type ResolvedTheme = "dark" | "light";
+export type UIDensityMode = "comfortable" | "compact";
+export type ModelSelectionMode = "auto" | "manual";
+
+export type ProviderTokenStatus =
+  | "not_connected"
+  | "token_saved"
+  | "needs_check"
+  | "connected"
+  | "connection_failed";
+
+export type WorkspaceFolderStatus =
+  | "accessible"
+  | "read_only"
+  | "not_found"
+  | "permission_denied"
+  | "unavailable";
+
 export type ModelProvider =
   | "openai"
   | "anthropic"
@@ -29,6 +48,7 @@ export interface AgentNodeConfig {
   tier_level: number;
   provider: ModelProvider;
   model_id: string;
+  model_selection_mode?: ModelSelectionMode;
   temperature: number;
   max_tokens: number;
   system_prompt: string;
@@ -65,6 +85,35 @@ export interface WorkspaceFolder {
   auto_rag_sync: boolean;
   last_indexed_at?: string | null;
   granular_permissions?: WorkspaceFolderPermissionsGranular;
+  folder_status?: WorkspaceFolderStatus;
+  folder_status_label?: string;
+  recovery_hint?: string | null;
+}
+
+export interface WorkspaceFolderInspection {
+  folder_path: string;
+  name: string;
+  folder_status: WorkspaceFolderStatus;
+  folder_status_label: string;
+  is_valid_directory: boolean;
+  readable: boolean;
+  writable: boolean;
+  recovery_hint: string | null;
+}
+
+export interface ProviderStatusDetail {
+  id: ModelProvider;
+  name: string;
+  is_local: boolean;
+  configured: boolean;
+  has_saved_token: boolean;
+  online: boolean;
+  token_status: ProviderTokenStatus;
+  api_key_masked?: string;
+  last_test_ok?: boolean | null;
+  last_tested_at?: string | null;
+  last_test_message?: string | null;
+  installed_models: string[];
 }
 
 export interface FileArtifact {
@@ -76,6 +125,7 @@ export interface FileArtifact {
   created_by_agent: string;
   created_at_label: string;
   summary: string;
+  artifact_category?: "final" | "temporary" | "log";
 }
 
 export interface ExecutionStep {

@@ -2,7 +2,8 @@ pub mod sidecar;
 
 use sidecar::{
     get_engine_connection_info, get_engine_lifecycle_state, prepare_runtime_manifest_slot,
-    sync_engine_port, update_engine_lifecycle_state, LifecycleState, SidecarState,
+    sync_engine_port, update_engine_lifecycle_state, validate_workspace_folder_native,
+    LifecycleState, SidecarState,
 };
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
@@ -20,7 +21,8 @@ pub fn run() {
             get_engine_connection_info,
             get_engine_lifecycle_state,
             update_engine_lifecycle_state,
-            sync_engine_port
+            sync_engine_port,
+            validate_workspace_folder_native
         ])
         .setup(|app| {
             let state = app.state::<SidecarState>();

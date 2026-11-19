@@ -599,10 +599,20 @@ export const PermissionsAndPCView: React.FC = () => {
                             {cap.scope_type === "workspace" ? "Ruang Kerja" : cap.scope_type}
                           </td>
                           <td className="py-3 pr-4 whitespace-nowrap">
-                            <StatusBadge tone={osBadge.tone} label={osBadge.label} />
+                            <div className="space-y-0.5">
+                              <StatusBadge tone={osBadge.tone} label={osBadge.label} />
+                              <div className="text-[10.5px] font-mono text-zinc-400">
+                                Status OS: {cap.os_status}
+                              </div>
+                            </div>
                           </td>
                           <td className="py-3 pr-4 whitespace-nowrap">
-                            <StatusBadge tone={aksaBadge.tone} label={aksaBadge.label} />
+                            <div className="space-y-0.5">
+                              <StatusBadge tone={aksaBadge.tone} label={aksaBadge.label} />
+                              <div className="text-[10.5px] font-mono text-zinc-400">
+                                Status AKSA: {cap.aksa_status}
+                              </div>
+                            </div>
                           </td>
                           <td className="py-3 text-right whitespace-nowrap">
                             {cap.grant_id ? (

@@ -453,6 +453,143 @@ pub fn sync_engine_port(
     Ok(guard.clone())
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceFolderValidationResult {
+    pub folder_path: String,
+    pub name: String,
+    pub folder_status: String,
+    pub folder_status_label: String,
+    pub is_valid_directory: bool,
+    pub readonly: bool,
+    pub recovery_hint: Option<String>,
+}
+
+pub fn validate_workspace_folder_path(raw_path: &str) -> WorkspaceFolderValidationResult {
+    let trimmed = raw_path.trim();
+    if trimmed.is_empty() {
+        return WorkspaceFolderValidationResult {
+            folder_path: String::new(),
+            name: String::new(),
+            folder_status: "unavailable".to_string(),
+            folder_status_label: "Tidak tersedia".to_string(),
+            is_valid_directory: false,
+            readonly: false,
+            recovery_hint: Some("Pilih lokasi folder melalui tombol Pilih folder.".to_string()),
+        };
+    }
+
+    if trimmed.starts_with("\\\\") || trimmed.starts_with("//") {
+        return WorkspaceFolderValidationResult {
+            folder_path: trimmed.to_string(),
+            name: trimmed.to_string(),
+            folder_status: "unavailable".to_string(),
+            folder_status_label: "Tidak tersedia (Jaringan UNC ditolak)".to_string(),
+            is_valid_directory: false,
+            readonly: false,
+            recovery_hint: Some(
+                "Demi keamanan, pilih folder lokal di komputer Anda (bukan alamat jaringan UNC)."
+                    .to_string(),
+            ),
+        };
+    }
+
+    let path = std::path::Path::new(trimmed);
+    let fallback_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(trimmed)
+        .to_string();
+
+    let meta = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(err) => {
+            if err.kind() == std::io::ErrorKind::NotFound {
+                return WorkspaceFolderValidationResult {
+                    folder_path: trimmed.to_string(),
+                    name: fallback_name,
+                    folder_status: "not_found".to_string(),
+                    folder_status_label: "Tidak ditemukan".to_string(),
+                    is_valid_directory: false,
+                    readonly: false,
+                    recovery_hint: Some(
+                        "Folder ini tidak ditemukan di komputer Anda. Klik Pilih folder… untuk menentukan lokasi baru."
+                            .to_string(),
+                    ),
+                };
+            }
+            if err.kind() == std::io::ErrorKind::PermissionDenied {
+                return WorkspaceFolderValidationResult {
+                    folder_path: trimmed.to_string(),
+                    name: fallback_name,
+                    folder_status: "permission_denied".to_string(),
+                    folder_status_label: "Izin ditolak".to_string(),
+                    is_valid_directory: false,
+                    readonly: false,
+                    recovery_hint: Some(
+                        "Sistem operasi menolak akses ke folder ini. Pilih folder di area Dokumen pengguna Anda."
+                            .to_string(),
+                    ),
+                };
+            }
+            return WorkspaceFolderValidationResult {
+                folder_path: trimmed.to_string(),
+                name: fallback_name,
+                folder_status: "unavailable".to_string(),
+                folder_status_label: "Tidak tersedia".to_string(),
+                is_valid_directory: false,
+                readonly: false,
+                recovery_hint: Some("Lokasi folder tidak dapat diakses.".to_string()),
+            };
+        }
+    };
+
+    if !meta.is_dir() {
+        return WorkspaceFolderValidationResult {
+            folder_path: trimmed.to_string(),
+            name: fallback_name,
+            folder_status: "unavailable".to_string(),
+            folder_status_label: "Tidak tersedia (Bukan folder)".to_string(),
+            is_valid_directory: false,
+            readonly: false,
+            recovery_hint: Some(
+                "Lokasi yang dipilih adalah file, bukan folder. Silakan pilih sebuah folder."
+                    .to_string(),
+            ),
+        };
+    }
+
+    let readonly = meta.permissions().readonly();
+    if readonly {
+        return WorkspaceFolderValidationResult {
+            folder_path: trimmed.to_string(),
+            name: fallback_name,
+            folder_status: "read_only".to_string(),
+            folder_status_label: "Hanya baca (Read-only)".to_string(),
+            is_valid_directory: true,
+            readonly: true,
+            recovery_hint: Some(
+                "Folder ini berstatus hanya-baca. AKSA dapat membaca dokumen referensi, tetapi tidak dapat menyimpan file baru di sini."
+                    .to_string(),
+            ),
+        };
+    }
+
+    WorkspaceFolderValidationResult {
+        folder_path: trimmed.to_string(),
+        name: fallback_name,
+        folder_status: "accessible".to_string(),
+        folder_status_label: "Dapat diakses".to_string(),
+        is_valid_directory: true,
+        readonly: false,
+        recovery_hint: None,
+    }
+}
+
+#[tauri::command]
+pub fn validate_workspace_folder_native(path: String) -> WorkspaceFolderValidationResult {
+    validate_workspace_folder_path(&path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -730,5 +867,39 @@ mod tests {
         assert!(err.contains("symlink"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_validate_workspace_folder_path_handles_spaces_non_ascii_and_errors() {
+        let base = std::env::temp_dir().join(format!(
+            "aksa_ws_test_Ruang Kerja Документы 日本語_{}",
+            Uuid::new_v4().as_simple()
+        ));
+        std::fs::create_dir_all(&base).unwrap();
+
+        let res_ok = validate_workspace_folder_path(base.to_str().unwrap());
+        assert!(res_ok.is_valid_directory);
+        assert_eq!(res_ok.folder_status, "accessible");
+        assert!(res_ok.name.contains("Ruang Kerja"));
+
+        // File path rejected as not a directory
+        let file_p = base.join("dokumen.txt");
+        std::fs::write(&file_p, "tes").unwrap();
+        let res_file = validate_workspace_folder_path(file_p.to_str().unwrap());
+        assert!(!res_file.is_valid_directory);
+        assert_eq!(res_file.folder_status, "unavailable");
+
+        // Non-existent path
+        let missing = base.join("folder_tidak_ada_12345");
+        let res_missing = validate_workspace_folder_path(missing.to_str().unwrap());
+        assert!(!res_missing.is_valid_directory);
+        assert_eq!(res_missing.folder_status, "not_found");
+
+        // UNC path rejected
+        let res_unc = validate_workspace_folder_path("\\\\server\\share\\folder");
+        assert!(!res_unc.is_valid_directory);
+        assert_eq!(res_unc.folder_status, "unavailable");
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

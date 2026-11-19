@@ -556,8 +556,18 @@ export const WorkspaceChatView: React.FC = () => {
                                   )}
                                 </div>
                                 <div className="min-w-0 flex-1">
-                                  <div className="text-[13.5px] font-semibold text-zinc-100 truncate">
-                                    {art.name}
+                                  <div className="flex items-center gap-2">
+                                    <div className="text-[13.5px] font-semibold text-zinc-100 truncate">
+                                      {art.name}
+                                    </div>
+                                    <StatusBadge
+                                      tone="success"
+                                      label={
+                                        art.artifact_category === "temporary"
+                                          ? "File Sementara"
+                                          : "Hasil Final"
+                                      }
+                                    />
                                   </div>
                                   <div className="text-xs text-zinc-400 truncate mt-0.5">
                                     {art.summary || `Dokumen ${art.file_type.toUpperCase()} (${art.size_label})`}
@@ -800,8 +810,8 @@ export const WorkspaceChatView: React.FC = () => {
                 setInputPrompt(e.target.value);
                 if (emptyHintWarning) setEmptyHintWarning(null);
               }}
-              aria-label="Ceritakan pekerjaan yang ingin Anda selesaikan"
-              placeholder="Ceritakan pekerjaan yang ingin Anda selesaikan..."
+              aria-label="Apa yang ingin Anda kerjakan?"
+              placeholder="Apa yang ingin Anda kerjakan? (Contoh: Buatkan rekap Excel atau rangkum PDF di folder ini)"
               className="flex-1 bg-transparent text-[14px] text-zinc-100 placeholder:text-zinc-400 focus:outline-none"
             />
 

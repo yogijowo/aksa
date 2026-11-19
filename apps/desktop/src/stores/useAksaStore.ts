@@ -9,9 +9,13 @@ import type {
   HITLApprovalItem,
   MCPServerItem,
   NavSection,
+  ResolvedTheme,
+  ThemeMode,
+  UIDensityMode,
   WorkspaceFolder,
 } from "@/types/aksa";
 import {
+  createAgentRemote,
   createHITLApprovalRemote,
   createWorkspaceRemote,
   deleteAgentRemote,
@@ -25,15 +29,22 @@ import {
   fetchWorkspaces,
   resolveHITLApprovalRemote,
   saveAgentUpdate,
+  saveSystemSettingRemote,
   setEmergencyStopRemote,
   toggleMCPServerRemote,
+  updateWorkspaceRemote,
 } from "@/services/engineClient";
+import {
+  computeAutoHierarchyLayout,
+  extractFolderDisplayName,
+  wouldCreateAgentCycle,
+} from "@/lib/utils";
 
 const INITIAL_INDONESIAN_TEAM: AgentTeam = {
   id: "team_nusantara_default",
   name: "Tim Produktivitas Kantor Indonesia",
   description:
-    "Tim agen bertingkat siap pakai untuk pengolahan dokumen Office, riset arsip RAG, dan automasi PC.",
+    "Tim asisten bertingkat siap pakai untuk pengolahan dokumen Office, pencarian referensi dokumen, dan automasi komputer.",
   is_default: true,
   agents: [
     {
@@ -41,17 +52,18 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       team_id: "team_nusantara_default",
       parent_id: null,
       name: "Manajer Eksekutif",
-      role_title: "Manajer Utama (Supervisor)",
+      role_title: "Koordinator Utama (Asisten Utama)",
       description:
-        "Menerima instruksi pengguna, menyusun rencana kerja bertahap, mendelegasikan tugas ke sub-agen spesialis, dan merangkum hasil akhir.",
+        "Menerima instruksi pengguna, menyusun rencana kerja bertahap, mendelegasikan tugas ke agen pendukung spesialis, dan merangkum hasil akhir.",
       avatar_icon: "brain-circuit",
       tier_level: 0,
       provider: "gemini",
       model_id: "gemini-4-carbon",
+      model_selection_mode: "auto",
       temperature: 0.2,
       max_tokens: 4096,
       system_prompt:
-        "Anda adalah Manajer Eksekutif AKSA yang memimpin tim sub-agen spesialis. Pahami instruksi pengguna dalam Bahasa Indonesia, bagi tugas secara hemat token, dan pastikan file akhir rapi.",
+        "Anda adalah Manajer Eksekutif AKSA yang memimpin tim agen pendukung spesialis. Pahami instruksi pengguna dalam Bahasa Indonesia, bagi tugas secara hemat kuota, dan pastikan hasil akhir rapi.",
       tool_categories: ["delegation", "filesystem"],
       position_x: 340,
       position_y: 30,
@@ -61,13 +73,14 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       team_id: "team_nusantara_default",
       parent_id: "agt_supervisor_utama",
       name: "Spesialis Administrasi & Office",
-      role_title: "Sub-Agen Pembuat Word, Excel, PPT & PDF",
+      role_title: "Agen Pembuat Word, Excel, PPT & PDF",
       description:
-        "Ahli membuat dan mengedit file Microsoft Excel (.xlsx dengan rumus & grafik), Word (.docx surat resmi & laporan), PowerPoint (.pptx), dan PDF di dalam Folder Kerja.",
+        "Ahli membuat dan merapikan file Microsoft Excel (.xlsx dengan rumus & grafik), Word (.docx surat resmi & laporan), PowerPoint (.pptx), dan PDF di dalam Folder Kerja.",
       avatar_icon: "file-spreadsheet",
       tier_level: 1,
       provider: "deepseek",
       model_id: "deepseek-chat",
+      model_selection_mode: "auto",
       temperature: 0.1,
       max_tokens: 4096,
       system_prompt:
@@ -80,18 +93,19 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       id: "agt_peneliti_rag",
       team_id: "team_nusantara_default",
       parent_id: "agt_supervisor_utama",
-      name: "Peneliti Dokumen & Arsip RAG",
-      role_title: "Sub-Agen Pencarian & Analisis Dokumen Lokal",
+      name: "Peneliti Dokumen & Arsip",
+      role_title: "Agen Pencarian & Ringkasan Dokumen Lokal",
       description:
-        "Mencari informasi akurat dari ratusan dokumen di Basis Pengetahuan (RAG) menggunakan pencarian hibrida (makna + kata kunci) secara hemat token.",
+        "Mencari informasi akurat dan kutipan penting dari koleksi dokumen di Pengetahuan AKSA secara cepat dan hemat kuota.",
       avatar_icon: "book-open-check",
       tier_level: 1,
       provider: "ollama",
       model_id: "qwen3.8:8b",
+      model_selection_mode: "auto",
       temperature: 0.1,
       max_tokens: 2048,
       system_prompt:
-        "Anda adalah Peneliti Dokumen & Arsip RAG lokal. Ekstrak fakta, angka, dan kutipan halaman dari dokumen di Folder Kerja secara ringkas agar hemat token.",
+        "Anda adalah Peneliti Dokumen & Arsip lokal. Ekstrak fakta, angka, dan kutipan halaman dari dokumen di Folder Kerja secara ringkas.",
       tool_categories: ["rag_search", "filesystem", "pdf_tools"],
       position_x: 340,
       position_y: 250,
@@ -101,17 +115,18 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       team_id: "team_nusantara_default",
       parent_id: "agt_supervisor_utama",
       name: "Operator PC & Automasi Sistem",
-      role_title: "Sub-Agen Kontrol Aplikasi, Skrip Python & Layar",
+      role_title: "Agen Kontrol Aplikasi, Skrip Data & Layar",
       description:
-        "Mengoperasikan aplikasi PC secara langsung (Windows COM / AppleScript), menjalankan skrip Python otomatis (uv), dan kontrol layar visual (Computer Use).",
+        "Membantu mengoperasikan aplikasi komputer yang diizinkan, menjalankan pemrosesan data otomatis, dan kontrol layar visual atas persetujuan Anda.",
       avatar_icon: "monitor-cog",
       tier_level: 1,
       provider: "anthropic",
       model_id: "claude-sonnet-5-5",
+      model_selection_mode: "auto",
       temperature: 0.1,
       max_tokens: 4096,
       system_prompt:
-        "Anda adalah Operator PC & Automasi Sistem. Jalankan automasi aplikasi desktop, skrip Python terisolasi (uv), dan kontrol visual di bawah izin keamanan pengguna.",
+        "Anda adalah Operator PC & Automasi Sistem. Jalankan automasi aplikasi desktop, skrip pemrosesan data terisolasi, dan kontrol visual di bawah izin keamanan pengguna.",
       tool_categories: ["os_automation", "uv_python", "computer_use", "filesystem"],
       position_x: 660,
       position_y: 250,
@@ -129,16 +144,53 @@ const getSavedStorage = (key: string, fallback: string): string => {
   return fallback;
 };
 
+const getSystemPrefersDark = (): boolean => {
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    try {
+      return window.matchMedia("(prefers-color-scheme: dark)").matches;
+    } catch {}
+  }
+  return true;
+};
+
+const getSystemPrefersReducedMotion = (): boolean => {
+  if (typeof window !== "undefined" && typeof window.matchMedia === "function") {
+    try {
+      return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {}
+  }
+  return false;
+};
+
+const resolveEffectiveTheme = (mode: ThemeMode, osPrefersDark: boolean): ResolvedTheme => {
+  if (mode === "light") return "light";
+  if (mode === "dark") return "dark";
+  return osPrefersDark ? "dark" : "light";
+};
+
+const INITIAL_THEME_MODE = (getSavedStorage("aksa_theme_mode", "dark") as ThemeMode) || "dark";
+const INITIAL_RESOLVED_THEME = resolveEffectiveTheme(INITIAL_THEME_MODE, getSystemPrefersDark());
+const INITIAL_UI_DENSITY =
+  (getSavedStorage("aksa_ui_density", "comfortable") as UIDensityMode) || "comfortable";
+const INITIAL_REDUCED_MOTION =
+  getSavedStorage("aksa_reduced_motion", "") === "true"
+    ? true
+    : getSavedStorage("aksa_reduced_motion", "") === "false"
+    ? false
+    : getSystemPrefersReducedMotion();
+
 const INITIAL_WORKSPACES: WorkspaceFolder[] = [];
-
 const INITIAL_ARTIFACTS: FileArtifact[] = [];
-
 const INITIAL_MESSAGES: ChatMessage[] = [];
 
 interface AksaState {
   activeNav: NavSection;
   isSidebarCollapsed: boolean;
   isArtifactDrawerOpen: boolean;
+  themeMode: ThemeMode;
+  resolvedTheme: ResolvedTheme;
+  uiDensity: UIDensityMode;
+  reducedMotion: boolean;
   engineHealth: EngineHealth;
   teams: AgentTeam[];
   activeTeamId: string;
@@ -162,10 +214,22 @@ interface AksaState {
   setActiveNav: (nav: NavSection) => void;
   toggleSidebar: () => void;
   setArtifactDrawerOpen: (open: boolean) => void;
+  setThemeMode: (mode: ThemeMode) => void;
+  syncSystemTheme: (osPrefersDark: boolean) => void;
+  setUiDensity: (density: UIDensityMode) => void;
+  setReducedMotion: (reduced: boolean) => void;
   selectAgent: (agentId: string | null) => void;
   setActiveWorkspace: (workspaceId: string) => void;
-  addWorkspaceFolder: (folderPath: string, name?: string) => void;
-  removeWorkspaceFolder: (workspaceId: string) => void;
+  addWorkspaceFolder: (
+    folderPath: string,
+    name?: string,
+    permissions?: {
+      allow_read?: boolean;
+      allow_write?: boolean;
+      allow_execute?: boolean;
+    }
+  ) => Promise<WorkspaceFolder>;
+  removeWorkspaceFolder: (workspaceId: string) => Promise<void>;
   updateWorkspacePermissions: (
     workspaceId: string,
     updates: Partial<
@@ -176,7 +240,15 @@ interface AksaState {
     >
   ) => void;
   updateAgentConfig: (agentId: string, updates: Partial<AgentNodeConfig>) => Promise<void>;
-  addSubAgent: (parentAgent: AgentNodeConfig) => void;
+  addSubAgent: (
+    parentAgent: AgentNodeConfig,
+    customOptions?: Partial<AgentNodeConfig>
+  ) => Promise<AgentNodeConfig>;
+  reparentAgent: (
+    agentId: string,
+    newParentId: string
+  ) => Promise<{ ok: boolean; error?: string }>;
+  autoLayoutAgents: () => Promise<void>;
   deleteAgentNode: (agentId: string) => Promise<void>;
   sendUserPrompt: (promptText: string) => Promise<void>;
   requestSampleApproval: () => Promise<void>;
@@ -187,9 +259,13 @@ interface AksaState {
 }
 
 export const useAksaStore = create<AksaState>((set, get) => ({
-  activeNav: (getSavedStorage("aksa_active_nav", "ruang_kerja") as NavSection),
+  activeNav: getSavedStorage("aksa_active_nav", "ruang_kerja") as NavSection,
   isSidebarCollapsed: false,
   isArtifactDrawerOpen: false,
+  themeMode: INITIAL_THEME_MODE,
+  resolvedTheme: INITIAL_RESOLVED_THEME,
+  uiDensity: INITIAL_UI_DENSITY,
+  reducedMotion: INITIAL_REDUCED_MOTION,
   engineHealth: {
     online: true,
     version: "1.0.0",
@@ -220,7 +296,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       command: "npx",
       args: ["-y", "@modelcontextprotocol/server-filesystem"],
       enabled: true,
-      description_id: "Akses standar MCP untuk operasi struktur direktori lokal.",
+      description_id: "Akses standar untuk membaca struktur folder dan file di ruang kerja.",
       discovered_tools: ["read_file", "write_file", "list_directory"],
     },
     {
@@ -240,7 +316,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       command: "uvx",
       args: ["mcp-server-sqlite"],
       enabled: true,
-      description_id: "Kueri dan analisis tabel database lokal melalui protokol MCP.",
+      description_id: "Pencarian dan analisis tabel basis data lokal di komputer Anda.",
       discovered_tools: ["read_query", "list_tables", "describe_table"],
     },
   ],
@@ -256,7 +332,60 @@ export const useAksaStore = create<AksaState>((set, get) => ({
   },
   toggleSidebar: () => set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
   setArtifactDrawerOpen: (open) => set({ isArtifactDrawerOpen: open }),
+
+  setThemeMode: (mode) => {
+    const resolved = resolveEffectiveTheme(mode, getSystemPrefersDark());
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("aksa_theme_mode", mode);
+      } catch {}
+    }
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-theme", resolved);
+    }
+    set({ themeMode: mode, resolvedTheme: resolved });
+    void saveSystemSettingRemote("theme_mode", mode);
+  },
+
+  syncSystemTheme: (osPrefersDark) => {
+    const currentMode = get().themeMode;
+    if (currentMode === "system") {
+      const resolved: ResolvedTheme = osPrefersDark ? "dark" : "light";
+      if (typeof document !== "undefined") {
+        document.documentElement.setAttribute("data-theme", resolved);
+      }
+      set({ resolvedTheme: resolved });
+    }
+  },
+
+  setUiDensity: (density) => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("aksa_ui_density", density);
+      } catch {}
+    }
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-density", density);
+    }
+    set({ uiDensity: density });
+    void saveSystemSettingRemote("ui_density", density);
+  },
+
+  setReducedMotion: (reduced) => {
+    if (typeof window !== "undefined") {
+      try {
+        localStorage.setItem("aksa_reduced_motion", String(reduced));
+      } catch {}
+    }
+    if (typeof document !== "undefined") {
+      document.documentElement.setAttribute("data-reduce-motion", String(reduced));
+    }
+    set({ reducedMotion: reduced });
+    void saveSystemSettingRemote("reduced_motion", reduced);
+  },
+
   selectAgent: (agentId) => set({ selectedAgentId: agentId }),
+
   setActiveWorkspace: (workspaceId) => {
     if (typeof window !== "undefined") {
       try {
@@ -266,24 +395,40 @@ export const useAksaStore = create<AksaState>((set, get) => ({
     set({ activeWorkspaceId: workspaceId });
   },
 
-  addWorkspaceFolder: async (folderPath, name) => {
-    const cleanName = name || folderPath.split(/[\\/]/).filter(Boolean).pop() || folderPath;
+  addWorkspaceFolder: async (folderPath, name, permissions) => {
+    const cleanName = extractFolderDisplayName(folderPath, name);
+    const allowRead = permissions?.allow_read ?? true;
+    const allowWrite = permissions?.allow_write ?? true;
+    // Mandatory security rule (Section 6): Selecting a folder never enables execute automatically
+    const allowExecute = permissions?.allow_execute ?? false;
+
     const remote = await createWorkspaceRemote({
       name: cleanName,
       folder_path: folderPath,
-      allow_read: true,
-      allow_write: true,
-      allow_execute: false,
+      allow_read: allowRead,
+      allow_write: allowWrite,
+      allow_execute: allowExecute,
     });
     const newWs: WorkspaceFolder = remote || {
       id: `ws_${Date.now()}`,
       name: cleanName,
       folder_path: folderPath,
-      allow_read: true,
-      allow_write: true,
-      allow_execute: false,
+      allow_read: allowRead,
+      allow_write: allowWrite,
+      allow_execute: allowExecute,
       auto_rag_sync: true,
-      last_indexed_at: "Baru ditambahkan • Siap indeks RAG",
+      folder_status: "accessible",
+      folder_status_label: "Dapat diakses",
+      last_indexed_at: "Baru ditambahkan • Siap digunakan",
+      granular_permissions: {
+        list_files: allowRead,
+        read_content: allowRead,
+        create_files: allowWrite,
+        modify_files: allowWrite,
+        move_files: allowWrite,
+        delete_files: false,
+        execute_programs: allowExecute,
+      },
     };
     if (typeof window !== "undefined") {
       try {
@@ -294,6 +439,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       workspaces: [newWs, ...state.workspaces.filter((w) => w.folder_path !== folderPath)],
       activeWorkspaceId: newWs.id,
     }));
+    return newWs;
   },
 
   removeWorkspaceFolder: async (workspaceId) => {
@@ -317,6 +463,10 @@ export const useAksaStore = create<AksaState>((set, get) => ({
   },
 
   updateWorkspacePermissions: (workspaceId, updates) => {
+    let computedRead = true;
+    let computedWrite = true;
+    let computedExec = false;
+
     set((state) => ({
       workspaces: state.workspaces.map((ws) => {
         if (ws.id !== workspaceId) return ws;
@@ -362,6 +512,11 @@ export const useAksaStore = create<AksaState>((set, get) => ({
           updates.allow_execute !== undefined
             ? updates.allow_execute
             : mergedGranular.execute_programs;
+
+        computedRead = nextRead;
+        computedWrite = nextWrite;
+        computedExec = nextExec;
+
         return {
           ...ws,
           ...updates,
@@ -372,6 +527,12 @@ export const useAksaStore = create<AksaState>((set, get) => ({
         };
       }),
     }));
+
+    void updateWorkspaceRemote(workspaceId, {
+      allow_read: computedRead,
+      allow_write: computedWrite,
+      allow_execute: computedExec,
+    });
   },
 
   updateAgentConfig: async (agentId, updates) => {
@@ -384,25 +545,35 @@ export const useAksaStore = create<AksaState>((set, get) => ({
     await saveAgentUpdate(agentId, updates);
   },
 
-  addSubAgent: (parentAgent) => {
+  addSubAgent: async (parentAgent, customOptions) => {
+    const activeTeam =
+      get().teams.find((t) => t.id === parentAgent.team_id) ?? get().teams[0];
+    const siblings =
+      activeTeam?.agents.filter((a) => a.parent_id === parentAgent.id) ?? [];
+    const offsetIndex = siblings.length;
     const newId = `agt_${Date.now().toString(36)}`;
     const newAgent: AgentNodeConfig = {
       id: newId,
       team_id: parentAgent.team_id,
       parent_id: parentAgent.id,
-      name: "Agen Pendukung Baru",
-      role_title: "Agen Pendukung Khusus",
-      description: "Membantu menyelesaikan tugas tertentu secara terfokus sesuai kemampuan yang Anda pilih.",
-      avatar_icon: "bot",
+      name: customOptions?.name || "Agen Pendukung Baru",
+      role_title: customOptions?.role_title || "Agen Pendukung Khusus",
+      description:
+        customOptions?.description ||
+        "Membantu menyelesaikan tugas tertentu secara terfokus sesuai kemampuan yang Anda pilih.",
+      avatar_icon: customOptions?.avatar_icon || "bot",
       tier_level: parentAgent.tier_level + 1,
-      provider: "ollama",
-      model_id: "qwen3.8:8b",
-      temperature: 0.2,
-      max_tokens: 2048,
+      provider: customOptions?.provider || "ollama",
+      model_id: customOptions?.model_id || "qwen3.8:8b",
+      model_selection_mode: customOptions?.model_selection_mode || "auto",
+      temperature: customOptions?.temperature ?? 0.2,
+      max_tokens: customOptions?.max_tokens ?? 2048,
       system_prompt:
+        customOptions?.system_prompt ||
         "Anda adalah Agen Pendukung di dalam tim AKSA. Kerjakan instruksi secara akurat dan berikan ringkasan hasil yang jelas.",
-      tool_categories: ["filesystem"],
-      position_x: parentAgent.position_x + 40,
+      // Mandatory security rule: new agents start with basic safe filesystem capability, never inheriting full parent privileges
+      tool_categories: customOptions?.tool_categories || ["filesystem"],
+      position_x: Math.max(20, parentAgent.position_x + (offsetIndex - 1) * 320),
       position_y: parentAgent.position_y + 220,
     };
 
@@ -414,15 +585,158 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       ),
       selectedAgentId: newId,
     }));
+
+    const remoteCreated = await createAgentRemote(newAgent);
+    if (remoteCreated && remoteCreated.id !== newId) {
+      set((state) => ({
+        teams: state.teams.map((team) =>
+          team.id === parentAgent.team_id
+            ? {
+                ...team,
+                agents: team.agents.map((a) => (a.id === newId ? remoteCreated : a)),
+              }
+            : team
+        ),
+        selectedAgentId: remoteCreated.id,
+      }));
+      return remoteCreated;
+    }
+    return newAgent;
+  },
+
+  reparentAgent: async (agentId, newParentId) => {
+    const activeTeam =
+      get().teams.find((t) => t.id === get().activeTeamId) ?? get().teams[0];
+    if (!activeTeam) {
+      return { ok: false, error: "Tim aktif tidak ditemukan." };
+    }
+
+    const targetAgent = activeTeam.agents.find((a) => a.id === agentId);
+    const parentAgent = activeTeam.agents.find((a) => a.id === newParentId);
+
+    if (!targetAgent || !parentAgent) {
+      return { ok: false, error: "Agen atau agen induk tidak ditemukan." };
+    }
+    if (targetAgent.parent_id === null) {
+      return {
+        ok: false,
+        error: "Koordinator Utama (root) memimpin tim dan tidak dapat dijadikan sub-agen.",
+      };
+    }
+    if (wouldCreateAgentCycle(activeTeam.agents, agentId, newParentId)) {
+      return {
+        ok: false,
+        error:
+          "Relasi melingkar (circular dependency) ditolak: Agen induk tidak boleh berada di bawah sub-agen ini.",
+      };
+    }
+
+    const updatedTemp = activeTeam.agents.map((a) =>
+      a.id === agentId ? { ...a, parent_id: newParentId } : a
+    );
+    const layoutMap = computeAutoHierarchyLayout(updatedTemp);
+
+    set((state) => ({
+      teams: state.teams.map((team) =>
+        team.id !== activeTeam.id
+          ? team
+          : {
+              ...team,
+              agents: team.agents.map((a) => {
+                const l = layoutMap[a.id];
+                if (a.id === agentId) {
+                  return {
+                    ...a,
+                    parent_id: newParentId,
+                    tier_level: l ? l.tier_level : parentAgent.tier_level + 1,
+                    position_x: l ? l.position_x : a.position_x,
+                    position_y: l ? l.position_y : a.position_y,
+                  };
+                }
+                return l ? { ...a, tier_level: l.tier_level } : a;
+              }),
+            }
+      ),
+    }));
+
+    const newTier = layoutMap[agentId]?.tier_level ?? parentAgent.tier_level + 1;
+    await saveAgentUpdate(agentId, {
+      parent_id: newParentId,
+      tier_level: newTier,
+      position_x: layoutMap[agentId]?.position_x,
+      position_y: layoutMap[agentId]?.position_y,
+    });
+    return { ok: true };
+  },
+
+  autoLayoutAgents: async () => {
+    const activeTeam =
+      get().teams.find((t) => t.id === get().activeTeamId) ?? get().teams[0];
+    if (!activeTeam) return;
+
+    const layoutMap = computeAutoHierarchyLayout(activeTeam.agents);
+    set((state) => ({
+      teams: state.teams.map((team) =>
+        team.id !== activeTeam.id
+          ? team
+          : {
+              ...team,
+              agents: team.agents.map((a) => {
+                const l = layoutMap[a.id];
+                return l
+                  ? {
+                      ...a,
+                      position_x: l.position_x,
+                      position_y: l.position_y,
+                      tier_level: l.tier_level,
+                    }
+                  : a;
+              }),
+            }
+      ),
+    }));
+
+    for (const agt of activeTeam.agents) {
+      const l = layoutMap[agt.id];
+      if (l) {
+        void saveAgentUpdate(agt.id, {
+          position_x: l.position_x,
+          position_y: l.position_y,
+          tier_level: l.tier_level,
+        });
+      }
+    }
   },
 
   deleteAgentNode: async (agentId) => {
+    const activeTeam =
+      get().teams.find((t) => t.id === get().activeTeamId) ?? get().teams[0];
+    const target = activeTeam?.agents.find((a) => a.id === agentId);
+    if (!target || target.parent_id === null) {
+      // Never delete the root supervisor agent
+      return;
+    }
+    const fallbackParentId = target.parent_id;
+
     set((state) => ({
-      teams: state.teams.map((team) => ({
-        ...team,
-        agents: team.agents.filter((a) => a.id !== agentId && a.parent_id !== agentId),
-      })),
-      selectedAgentId: "agt_supervisor_utama",
+      teams: state.teams.map((team) => {
+        const remaining = team.agents
+          .filter((a) => a.id !== agentId)
+          .map((a) =>
+            a.parent_id === agentId
+              ? {
+                  ...a,
+                  parent_id: fallbackParentId,
+                  tier_level: Math.max(1, a.tier_level - 1),
+                }
+              : a
+          );
+        return {
+          ...team,
+          agents: remaining,
+        };
+      }),
+      selectedAgentId: fallbackParentId ?? "agt_supervisor_utama",
     }));
     await deleteAgentRemote(agentId);
   },
@@ -447,27 +761,40 @@ export const useAksaStore = create<AksaState>((set, get) => ({
     const subAgents = activeTeam?.agents.filter((a) => a.id !== supervisor?.id) ?? [];
 
     const lower = trimmed.toLowerCase();
-    const wantsDoc = /buat|bikin|generate|tulis|rekap|excel|xlsx|word|docx|surat|laporan|ppt|slide|presentasi|pdf/.test(lower);
+    const wantsDoc =
+      /buat|bikin|generate|tulis|rekap|excel|xlsx|word|docx|surat|laporan|ppt|slide|presentasi|pdf/.test(
+        lower
+      );
     const wantsSearch = /cari|arsip|penelitian|riset|rag|fakta|dokumen/.test(lower);
     const wantsPy = /python|skrip|script|otomasi|csv|aplikasi/.test(lower);
 
     const targetSubAgent = subAgents.find((a) => {
-      if (wantsDoc && (a.tool_categories.includes("office_excel") || a.tool_categories.includes("office_word") || a.tool_categories.includes("office_ppt"))) return true;
+      if (
+        wantsDoc &&
+        (a.tool_categories.includes("office_excel") ||
+          a.tool_categories.includes("office_word") ||
+          a.tool_categories.includes("office_ppt"))
+      )
+        return true;
       if (wantsSearch && a.tool_categories.includes("rag_search")) return true;
-      if (wantsPy && (a.tool_categories.includes("uv_python") || a.tool_categories.includes("os_automation"))) return true;
+      if (
+        wantsPy &&
+        (a.tool_categories.includes("uv_python") || a.tool_categories.includes("os_automation"))
+      )
+        return true;
       return false;
     });
 
     const initStep: ExecutionStep = {
       id: `step_${Date.now()}_init`,
       agent_name: supervisor ? supervisor.name : "Manajer Eksekutif",
-      agent_role: supervisor ? supervisor.role_title : "Manajer Utama (Supervisor)",
+      agent_role: supervisor ? supervisor.role_title : "Koordinator Utama",
       provider: supervisor ? supervisor.provider : "gemini",
       model_id: supervisor ? supervisor.model_id : "gemini-3.8-flash",
-      action_label: `Menganalisis instruksi & memeriksa Folder Kerja ${activeWs?.name ?? "Lokal"}`,
+      action_label: `Memahami tugas & menyiapkan langkah di folder ${activeWs?.name ?? "Ruang Kerja"}`,
       detail: targetSubAgent
-        ? `Menyiapkan delegasi terisolasi ke ${targetSubAgent.name}...`
-        : "Menyiapkan jawaban langsung dengan akses desktop lokal aktif...",
+        ? `Menyiapkan pembagian tugas ke ${targetSubAgent.name}...`
+        : "Menyiapkan penyelesaian tugas langsung di ruang kerja Anda...",
       status: "running",
       tokens_used: 120,
       tokens_saved: 0,
@@ -477,11 +804,11 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       messages: [...state.messages, userMsg],
       isExecuting: true,
       activeAgentId: supervisor?.id ?? "agt_supervisor_utama",
-      activeAgentStep: `Menganalisis instruksi & konteks Folder Kerja...`,
+      activeAgentStep: "Memahami tugas & menyiapkan langkah...",
       liveExecutionSteps: [initStep],
     }));
 
-    let delegationTimer: any = null;
+    let delegationTimer: ReturnType<typeof setTimeout> | null = null;
     if (targetSubAgent) {
       delegationTimer = setTimeout(() => {
         if (!get().isExecuting) return;
@@ -491,15 +818,15 @@ export const useAksaStore = create<AksaState>((set, get) => ({
           agent_role: targetSubAgent.role_title,
           provider: targetSubAgent.provider,
           model_id: targetSubAgent.model_id,
-          action_label: `Mengeksekusi tugas di folder kerja ${activeWs?.name ?? "Lokal"}`,
-          detail: "Mengisolasi konteks dokumen & memuat lazy tools untuk efisiensi token.",
+          action_label: `Mengerjakan tugas di folder ${activeWs?.name ?? "Ruang Kerja"}`,
+          detail: "Memproses dokumen dengan konteks terfokus agar hemat kuota.",
           status: "running",
           tokens_used: 420,
           tokens_saved: 4200,
         };
         set((state) => ({
           activeAgentId: targetSubAgent.id,
-          activeAgentStep: `Mengeksekusi ${targetSubAgent.role_title}...`,
+          activeAgentStep: `Mengerjakan dengan ${targetSubAgent.name}...`,
           liveExecutionSteps: [
             { ...state.liveExecutionSteps[0], status: "completed" },
             subStep,
@@ -517,6 +844,10 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       });
 
       if (remoteRes) {
+        const taggedArtifacts = (remoteRes.artifacts || []).map((art) => ({
+          ...art,
+          artifact_category: art.artifact_category || ("final" as const),
+        }));
         const replyMsg: ChatMessage = {
           id: `msg_${Date.now() + 1}`,
           sender_role: "supervisor",
@@ -524,14 +855,14 @@ export const useAksaStore = create<AksaState>((set, get) => ({
           content: remoteRes.reply,
           timestamp_label: "Baru saja",
           execution_steps: remoteRes.execution_steps,
-          artifacts: remoteRes.artifacts,
+          artifacts: taggedArtifacts,
         };
         set((state) => ({
           messages: [...state.messages, replyMsg],
-          artifacts: [...remoteRes.artifacts, ...state.artifacts],
+          artifacts: [...taggedArtifacts, ...state.artifacts],
           totalTokensUsed: state.totalTokensUsed + remoteRes.tokens_used,
           totalTokensSaved: state.totalTokensSaved + remoteRes.tokens_saved,
-          isArtifactDrawerOpen: remoteRes.artifacts && remoteRes.artifacts.length > 0,
+          isArtifactDrawerOpen: taggedArtifacts.length > 0,
         }));
         return;
       }
@@ -539,23 +870,26 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       // Offline fallback
       const newArtifact: FileArtifact = {
         id: `art_${Date.now()}`,
-        name: "Hasil_Eksekusi_AKSA.xlsx",
-        file_path: `${folderPath}/Hasil_Eksekusi_AKSA.xlsx`,
+        name: "Hasil_Pekerjaan_AKSA.xlsx",
+        file_path: folderPath
+          ? `${folderPath}/Hasil_Pekerjaan_AKSA.xlsx`
+          : "Hasil_Pekerjaan_AKSA.xlsx",
         file_type: "xlsx",
         size_label: "36 KB",
         created_by_agent: targetSubAgent ? targetSubAgent.name : "Manajer Eksekutif",
         created_at_label: "Baru saja",
-        summary: `Dibuat otomatis sesuai instruksi: "${trimmed.slice(0, 60)}..."`,
+        summary: `Hasil akhir dibuat sesuai permintaan: "${trimmed.slice(0, 60)}"`,
+        artifact_category: "final",
       };
 
       const replyMsg: ChatMessage = {
         id: `msg_${Date.now() + 1}`,
         sender_role: "supervisor",
         sender_name: "Manajer Eksekutif",
-        content: `Instruksi Anda telah dijalankan di dalam folder kerja **\`${folderPath}\`**. Manajer Eksekutif telah mengoordinasikan sub-agen terkait dengan mengisolasi konteks dokumen agar tetap hemat token.`,
+        content: `Permintaan Anda telah diselesaikan di dalam folder kerja **${activeWs?.name || "Ruang Kerja"}**. Hasil pekerjaan siap dibuka melalui kartu di bawah ini atau panel Hasil Pekerjaan di sebelah kanan.`,
         timestamp_label: "Baru saja",
         execution_steps: [
-          initStep,
+          { ...initStep, status: "completed" },
           ...(targetSubAgent
             ? [
                 {
@@ -564,8 +898,8 @@ export const useAksaStore = create<AksaState>((set, get) => ({
                   agent_role: targetSubAgent.role_title,
                   provider: targetSubAgent.provider,
                   model_id: targetSubAgent.model_id,
-                  action_label: "Menghasilkan dokumen hasil kerja di dalam Folder Kerja",
-                  detail: `File disimpan langsung ke ${newArtifact.file_path}`,
+                  action_label: "Menyimpan file hasil pekerjaan di Folder Kerja",
+                  detail: `File disimpan ke ${newArtifact.file_path}`,
                   status: "completed" as const,
                   tokens_used: 640,
                   tokens_saved: 2900,
@@ -609,11 +943,11 @@ export const useAksaStore = create<AksaState>((set, get) => ({
         remoteWorkspaces && remoteWorkspaces.length > 0 ? remoteWorkspaces : state.workspaces;
       const savedWsId = getSavedStorage("aksa_active_workspace_id", "");
       const resolvedWsId =
-        (savedWsId && mergedWorkspaces.some((w) => w.id === savedWsId))
+        savedWsId && mergedWorkspaces.some((w) => w.id === savedWsId)
           ? savedWsId
-          : (mergedWorkspaces.some((w) => w.id === state.activeWorkspaceId)
-              ? state.activeWorkspaceId
-              : (mergedWorkspaces[0]?.id ?? state.activeWorkspaceId));
+          : mergedWorkspaces.some((w) => w.id === state.activeWorkspaceId)
+          ? state.activeWorkspaceId
+          : (mergedWorkspaces[0]?.id ?? state.activeWorkspaceId);
 
       return {
         engineHealth: health,
@@ -640,8 +974,8 @@ export const useAksaStore = create<AksaState>((set, get) => ({
     const activeWs = get().workspaces.find((w) => w.id === get().activeWorkspaceId);
     const created = await createHITLApprovalRemote({
       tool_name: "run_custom_python_task",
-      title_id: "Konfirmasi Izin Akses Eksekusi Skrip & Kontrol PC",
-      description_id: `Operator PC & Automasi Sistem meminta izin menjalankan skrip analisis Python terisolasi (uv) di dalam folder "${activeWs?.name ?? "Kerja"}".`,
+      title_id: "Menjalankan Pemrosesan Data di Ruang Kerja",
+      description_id: `Operator PC & Automasi Sistem meminta izin menjalankan pemrosesan data terisolasi di dalam folder "${activeWs?.name ?? "Ruang Kerja"}".`,
       risk_level: "high",
       target_path: activeWs?.folder_path ?? "",
     });
@@ -649,8 +983,8 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       id: `hitl_${Date.now()}`,
       tool_name: "run_custom_python_task",
       risk_level: "high",
-      title_id: "Konfirmasi Izin Akses Eksekusi Skrip & Kontrol PC",
-      description_id: `Operator PC & Automasi Sistem meminta izin menjalankan skrip analisis Python terisolasi (uv) di dalam folder "${activeWs?.name ?? "Kerja"}".`,
+      title_id: "Menjalankan Pemrosesan Data di Ruang Kerja",
+      description_id: `Operator PC & Automasi Sistem meminta izin menjalankan pemrosesan data terisolasi di dalam folder "${activeWs?.name ?? "Ruang Kerja"}".`,
       target_path: activeWs?.folder_path ?? "",
       agent_name: "Operator PC & Automasi Sistem",
       status: "pending",

@@ -19,12 +19,17 @@ import { toast } from "sonner";
 import { useAksaStore } from "@/stores/useAksaStore";
 import {
   fetchRAGDocuments,
+  deleteRAGDocumentRemote,
   indexWorkspaceFolderRemote,
   searchRAGRemote,
   fetchMemoriesRemote,
   saveMemoryRemote,
+  openNativeFolderPicker,
+  inspectWorkspacePathRemote,
 } from "@/services/engineClient";
+import { extractFolderDisplayName } from "@/lib/utils";
 import {
+  ConfirmDialog,
   PageHeader,
   SectionHeader,
   StatusBadge,
@@ -52,8 +57,9 @@ interface RAGSearchHit {
 }
 
 export const KnowledgeBaseView: React.FC = () => {
-  const { workspaces, activeWorkspaceId, teams, activeTeamId } = useAksaStore();
+  const { workspaces, activeWorkspaceId, addWorkspaceFolder, teams, activeTeamId } = useAksaStore();
   const [documents, setDocuments] = useState<RAGDocumentRow[]>([]);
+  const [docPendingDelete, setDocPendingDelete] = useState<RAGDocumentRow | null>(null);
   const [isReindexing, setIsReindexing] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -127,9 +133,35 @@ export const KnowledgeBaseView: React.FC = () => {
     }
   };
 
-  const handleRemoveDocument = (docId: string, fileName: string) => {
-    setDocuments((prev) => prev.filter((d) => d.id !== docId));
-    toast.success(`Dokumen "${fileName}" dihapus dari daftar referensi Pengetahuan AKSA.`);
+  const handleConfirmRemoveDocument = async () => {
+    if (!docPendingDelete) return;
+    const target = docPendingDelete;
+    setDocPendingDelete(null);
+    await deleteRAGDocumentRemote(target.id);
+    setDocuments((prev) => prev.filter((d) => d.id !== target.id));
+    toast.success(
+      `Data indeks untuk "${target.file_name}" dihapus dari Pengetahuan AKSA. File asli di folder Anda tetap utuh.`
+    );
+  };
+
+  const handleConnectKnowledgeFolder = async () => {
+    const picked = await openNativeFolderPicker({
+      title: "Hubungkan Folder Pengetahuan AKSA",
+      defaultPath: activeWorkspace?.folder_path,
+    });
+    if (!picked) return;
+    const inspection = await inspectWorkspacePathRemote(picked);
+    if (inspection && !inspection.is_valid_directory) {
+      toast.error(inspection.recovery_hint || "Folder tidak dapat diakses.");
+      return;
+    }
+    const folderName = inspection?.name || extractFolderDisplayName(picked);
+    const createdWs = await addWorkspaceFolder(picked, folderName, {
+      allow_read: true,
+      allow_write: inspection ? inspection.writable : true,
+      allow_execute: false,
+    });
+    toast.success(`Folder "${createdWs.name}" berhasil dihubungkan.`);
   };
 
   const handleSearch = async () => {
@@ -175,14 +207,35 @@ export const KnowledgeBaseView: React.FC = () => {
 
   return (
     <div className="flex-1 p-6 md:p-8 overflow-y-auto space-y-6 bg-[#191918]">
+      {/* Accurate explanation of removing index data vs source file (Section 8.F) */}
+      <ConfirmDialog
+        open={docPendingDelete !== null}
+        title={`Hapus "${docPendingDelete?.file_name ?? ""}" dari indeks pengetahuan?`}
+        description="Tindakan ini akan menghapus data indeks pencarian untuk dokumen ini dari Pengetahuan AKSA."
+        impactNote="Perbedaan penghapusan: Menghapus dari Pengetahuan AKSA hanya menghapus data indeks pencarian internal agar AKSA tidak lagi mengutip dokumen ini. File dokumen asli di dalam folder komputer Anda TIDAK akan dihapus."
+        confirmLabel="Hapus Data Indeks"
+        cancelLabel="Batal"
+        destructive
+        onCancel={() => setDocPendingDelete(null)}
+        onConfirm={() => void handleConfirmRemoveDocument()}
+      />
+
       <div className="max-w-6xl mx-auto space-y-6">
-        {/* Page Header (Section 5.7 Pengetahuan AKSA) */}
+        {/* Page Header (Section 8.F Pengetahuan: Tambahkan dokumen & Hubungkan folder) */}
         <PageHeader
           icon={<BookOpenCheck size={22} className="text-[#D97757]" />}
           title="Pengetahuan AKSA"
-          description="Kelola dokumen dan informasi yang dapat digunakan AKSA sebagai referensi saat menjawab pertanyaan atau menyusun laporan Anda."
+          description="Kelola sumber dokumen yang terhubung dan lihat bagaimana AKSA mengindeksnya sebagai referensi saat menjawab pertanyaan atau menyusun laporan Anda."
           actions={
             <>
+              <button
+                type="button"
+                onClick={() => void handleConnectKnowledgeFolder()}
+                className="rounded-xl bg-[#262624] hover:bg-zinc-700 border border-white/[0.1] px-3.5 py-2 text-[13px] font-medium text-zinc-100 flex items-center gap-2 transition-colors"
+              >
+                <FolderSync size={14} className="text-[#D97757]" />
+                <span>Hubungkan folder</span>
+              </button>
               <button
                 type="button"
                 onClick={() => void handleManualReindex()}
@@ -190,11 +243,8 @@ export const KnowledgeBaseView: React.FC = () => {
                 className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-4 py-2 text-[13px] font-semibold text-white flex items-center gap-2 transition-colors disabled:opacity-50"
               >
                 <Plus size={15} />
-                <span>{isReindexing ? "Memproses Dokumen..." : "Tambah & Perbarui Dokumen"}</span>
+                <span>{isReindexing ? "Memproses Indeks..." : "Tambahkan dokumen"}</span>
               </button>
-              <span className="rounded-xl bg-emerald-500/15 border border-emerald-500/30 px-3 py-2 text-xs font-medium text-emerald-300 flex items-center gap-1.5">
-                <FolderSync size={14} /> Pemantauan Folder Aktif
-              </span>
             </>
           }
         />
@@ -285,12 +335,12 @@ export const KnowledgeBaseView: React.FC = () => {
                   <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
-                      onClick={() => handleRemoveDocument(doc.id, doc.file_name)}
+                      onClick={() => setDocPendingDelete(doc)}
                       className="rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 px-3 py-1.5 text-xs font-medium text-rose-300 flex items-center gap-1.5 transition-colors"
-                      title="Hapus dokumen ini dari referensi Pengetahuan AKSA"
+                      title="Hapus data indeks dokumen ini dari Pengetahuan AKSA (file asli tetap aman)"
                     >
                       <Trash2 size={13} />
-                      <span>Hapus</span>
+                      <span>Hapus dari Indeks</span>
                     </button>
                   </div>
                 </div>

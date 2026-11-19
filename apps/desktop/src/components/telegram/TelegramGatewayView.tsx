@@ -181,8 +181,20 @@ export const TelegramGatewayView: React.FC = () => {
                   </div>
 
                   <StatusBadge
-                    tone={isConnected ? "success" : "neutral"}
-                    label={isConnected ? "Terhubung" : "Belum terhubung"}
+                    tone={
+                      connectionError
+                        ? "warning"
+                        : isConnected
+                        ? "success"
+                        : "neutral"
+                    }
+                    label={
+                      connectionError
+                        ? "Perlu tindakan"
+                        : isConnected
+                        ? "Terhubung"
+                        : "Belum terhubung"
+                    }
                   />
                 </div>
 
@@ -193,9 +205,9 @@ export const TelegramGatewayView: React.FC = () => {
 
                 <div className="rounded-xl bg-[#262624] border border-white/[0.06] p-3 space-y-1.5 text-xs">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-zinc-400">Hak akses yang digunakan:</span>
-                    <span className="text-zinc-200 font-medium">
-                      Menerima instruksi &amp; mengirim file hasil kerja
+                    <span className="text-zinc-400">Data yang dapat diakses:</span>
+                    <span className="text-zinc-200 font-medium text-right">
+                      Pesan instruksi dari akun terverifikasi &amp; file hasil kerja yang Anda minta
                     </span>
                   </div>
                   <div className="flex items-center justify-between gap-2">
@@ -216,7 +228,7 @@ export const TelegramGatewayView: React.FC = () => {
                     className="rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-4 py-2 text-xs font-semibold text-white flex items-center gap-1.5 transition-colors"
                   >
                     <Link2 size={14} />
-                    <span>{isConnected ? "Atur Koneksi Telegram" : "Hubungkan"}</span>
+                    <span>{isConnected ? "Atur Koneksi" : "Hubungkan"}</span>
                   </button>
 
                   {isConnected && (
@@ -226,7 +238,7 @@ export const TelegramGatewayView: React.FC = () => {
                       className="rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 px-3.5 py-2 text-xs font-semibold text-rose-300 flex items-center gap-1.5 transition-colors"
                     >
                       <Unlink2 size={14} />
-                      <span>Putuskan Koneksi</span>
+                      <span>Putuskan</span>
                     </button>
                   )}
                 </div>
@@ -336,7 +348,7 @@ export const TelegramGatewayView: React.FC = () => {
 
                     <div className="rounded-xl bg-[#262624] border border-white/[0.06] p-3 space-y-1.5 text-xs">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-zinc-400">Hak akses yang digunakan:</span>
+                        <span className="text-zinc-400">Data yang dapat diakses:</span>
                         <span className="text-zinc-200 font-medium text-right">{humanRight}</span>
                       </div>
                       <div className="flex items-center justify-between gap-2">
@@ -372,7 +384,7 @@ export const TelegramGatewayView: React.FC = () => {
                           className="rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 px-4 py-2 text-xs font-semibold text-rose-300 flex items-center gap-1.5 transition-colors"
                         >
                           <Unlink2 size={14} />
-                          <span>Putuskan Koneksi</span>
+                          <span>Putuskan</span>
                         </button>
                       )}
 

@@ -6,7 +6,10 @@ import type {
   FileArtifact,
   HITLApprovalItem,
   MCPServerItem,
+  ProviderStatusDetail,
+  ProviderTokenStatus,
   WorkspaceFolder,
+  WorkspaceFolderInspection,
 } from "@/types/aksa";
 import { apiFetch } from "./engineConnection";
 
@@ -72,24 +75,52 @@ export async function fetchConfiguredProviders(): Promise<Record<string, boolean
 
 export async function fetchProviderDetails(): Promise<{
   configured: Record<string, boolean>;
-  apiKeys: Record<string, string>;
-  providers: any[];
+  maskedHints: Record<string, string>;
+  providers: ProviderStatusDetail[];
 } | null> {
   try {
     const res = await apiFetch("/api/v1/models/providers");
     if (!res.ok) return null;
     const data = await res.json();
     const configured: Record<string, boolean> = {};
-    const apiKeys: Record<string, string> = {};
+    const maskedHints: Record<string, string> = {};
+    const providers: ProviderStatusDetail[] = [];
     if (Array.isArray(data.providers)) {
       for (const p of data.providers) {
+        const hasToken = Boolean(p.has_saved_token ?? p.configured);
         configured[p.id] = Boolean(p.configured);
-        if (p.api_key_masked || p.api_key) {
-          apiKeys[p.id] = p.api_key_masked || p.api_key;
+        if (p.api_key_masked) {
+          maskedHints[p.id] = String(p.api_key_masked);
         }
+        providers.push({
+          id: p.id,
+          name: p.name,
+          is_local: Boolean(p.is_local),
+          configured: Boolean(p.configured),
+          has_saved_token: hasToken,
+          online: Boolean(p.online),
+          token_status:
+            (p.token_status as ProviderTokenStatus) ||
+            (p.is_local
+              ? p.online
+                ? "connected"
+                : "not_connected"
+              : hasToken
+              ? "token_saved"
+              : "not_connected"),
+          api_key_masked: p.api_key_masked ? String(p.api_key_masked) : undefined,
+          last_test_ok: p.last_test_ok ?? null,
+          last_tested_at: p.last_tested_at ?? null,
+          last_test_message: p.last_test_message ?? null,
+          installed_models: Array.isArray(p.installed_models)
+            ? p.installed_models
+            : Array.isArray(p.recommended_models)
+            ? p.recommended_models
+            : [],
+        });
       }
     }
-    return { configured, apiKeys, providers: data.providers };
+    return { configured, maskedHints, providers };
   } catch {
     return null;
   }
@@ -112,6 +143,23 @@ export async function fetchWorkspaces(): Promise<WorkspaceFolder[] | null> {
     if (!res.ok) return null;
     const data = await res.json();
     return data.workspaces ?? null;
+  } catch {
+    return null;
+  }
+}
+
+export async function createAgentRemote(
+  agent: Partial<AgentNodeConfig> & { team_id: string; name: string; role_title: string; description: string; provider: string; model_id: string; system_prompt: string }
+): Promise<AgentNodeConfig | null> {
+  try {
+    const res = await apiFetch("/api/v1/agents", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(agent),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.agent ?? null;
   } catch {
     return null;
   }
@@ -147,11 +195,26 @@ export async function deleteAgentRemote(agentId: string): Promise<boolean> {
 }
 
 export async function saveProviderApiKey(provider: string, apiKey: string): Promise<boolean> {
+  const trimmed = (apiKey || "").trim();
+  if (!trimmed || trimmed.includes("••••") || trimmed.startsWith("****")) {
+    return false;
+  }
   try {
     const res = await apiFetch("/api/v1/models/keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ provider, api_key: apiKey }),
+      body: JSON.stringify({ provider, api_key: trimmed }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteProviderApiKeyRemote(provider: string): Promise<boolean> {
+  try {
+    const res = await apiFetch(`/api/v1/models/keys/${encodeURIComponent(provider)}`, {
+      method: "DELETE",
     });
     return res.ok;
   } catch {
@@ -162,7 +225,13 @@ export async function saveProviderApiKey(provider: string, apiKey: string): Prom
 export async function testModelConnectionRemote(params: {
   provider: string;
   model_id: string;
-}): Promise<{ ok: boolean; reply?: string; simulated?: boolean; error?: string }> {
+}): Promise<{
+  ok: boolean;
+  token_status?: ProviderTokenStatus;
+  reply?: string;
+  simulated?: boolean;
+  error?: string;
+}> {
   try {
     const res = await apiFetch("/api/v1/models/test", {
       method: "POST",
@@ -171,12 +240,126 @@ export async function testModelConnectionRemote(params: {
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
-      return { ok: false, error: err.detail || "Gagal menghubungi model" };
+      return {
+        ok: false,
+        token_status: "connection_failed",
+        error: err.detail || "Gagal menghubungi layanan penyedia model.",
+      };
     }
     const data = await res.json();
-    return { ok: true, reply: data.reply, simulated: data.simulated };
+    const isOk = Boolean(data.ok) && !Boolean(data.simulated);
+    return {
+      ok: isOk,
+      token_status:
+        (data.token_status as ProviderTokenStatus) ||
+        (isOk ? "connected" : "connection_failed"),
+      reply: data.reply,
+      simulated: Boolean(data.simulated),
+      error: data.error || (!isOk ? data.reply : undefined),
+    };
   } catch (err: any) {
-    return { ok: false, error: err?.message || "Tidak dapat terhubung ke engine" };
+    return {
+      ok: false,
+      token_status: "connection_failed",
+      error: err?.message || "Tidak dapat terhubung ke layanan AKSA.",
+    };
+  }
+}
+
+export async function openNativeFolderPicker(options?: {
+  title?: string;
+  defaultPath?: string;
+}): Promise<string | null> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const selected = await open({
+      directory: true,
+      multiple: false,
+      title: options?.title || "Pilih Folder Ruang Kerja AKSA",
+      defaultPath: options?.defaultPath,
+    });
+    if (typeof selected === "string" && selected.trim()) {
+      return selected.trim();
+    }
+    if (Array.isArray(selected) && typeof selected[0] === "string" && selected[0].trim()) {
+      return selected[0].trim();
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export async function inspectWorkspacePathRemote(
+  folderPath: string
+): Promise<WorkspaceFolderInspection | null> {
+  const trimmed = (folderPath || "").trim();
+  if (!trimmed) return null;
+
+  try {
+    const res = await apiFetch("/api/v1/workspaces/inspect-path", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ folder_path: trimmed }),
+    });
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {
+    // Fallback to Tauri native Rust validation if sidecar is offline
+  }
+
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const nativeRes = await invoke<{
+      folder_path: string;
+      name: string;
+      folder_status: any;
+      folder_status_label: string;
+      is_valid_directory: boolean;
+      readonly: boolean;
+      recovery_hint: string | null;
+    }>("validate_workspace_folder_native", { path: trimmed });
+    if (nativeRes) {
+      return {
+        folder_path: nativeRes.folder_path,
+        name: nativeRes.name,
+        folder_status: nativeRes.folder_status,
+        folder_status_label: nativeRes.folder_status_label,
+        is_valid_directory: nativeRes.is_valid_directory,
+        readable: nativeRes.is_valid_directory,
+        writable: nativeRes.is_valid_directory && !nativeRes.readonly,
+        recovery_hint: nativeRes.recovery_hint,
+      };
+    }
+  } catch {
+    // Running outside Tauri shell
+  }
+
+  return null;
+}
+
+export async function updateWorkspaceRemote(
+  workspaceId: string,
+  updates: {
+    name?: string;
+    allow_read?: boolean;
+    allow_write?: boolean;
+    allow_execute?: boolean;
+    auto_rag_sync?: boolean;
+  }
+): Promise<WorkspaceFolder | null> {
+  try {
+    const res = await apiFetch(`/api/v1/workspaces/${encodeURIComponent(workspaceId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(updates),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.workspace ?? null;
+  } catch {
+    return null;
   }
 }
 
@@ -361,6 +544,47 @@ export async function fetchRAGDocuments(workspaceId?: string): Promise<any[] | n
     return data.documents ?? null;
   } catch {
     return null;
+  }
+}
+
+export async function deleteRAGDocumentRemote(documentId: string): Promise<boolean> {
+  try {
+    const res = await apiFetch(`/api/v1/rag/documents/${encodeURIComponent(documentId)}`, {
+      method: "DELETE",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function saveSystemSettingRemote(key: string, value: unknown): Promise<boolean> {
+  try {
+    const res = await apiFetch("/api/v1/system/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key, value }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function updatePrivacySettingsRemote(payload: {
+  provider_mode?: string;
+  default_classification?: string;
+  telemetry_opt_in?: boolean;
+}): Promise<boolean> {
+  try {
+    const res = await apiFetch("/api/v1/privacy/settings", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
 

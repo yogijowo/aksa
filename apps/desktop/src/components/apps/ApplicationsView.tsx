@@ -59,7 +59,9 @@ export const ApplicationsView: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [launchingId, setLaunchingId] = useState<string | null>(null);
   const [connectingId, setConnectingId] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<"all" | "connected" | "disconnected">("all");
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "connected" | "accessible" | "disconnected"
+  >("all");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [expandedTechIds, setExpandedTechIds] = useState<Record<string, boolean>>({});
 
@@ -155,6 +157,8 @@ export const ApplicationsView: React.FC = () => {
         ? true
         : statusFilter === "connected"
         ? Boolean(a.is_connected)
+        : statusFilter === "accessible"
+        ? Boolean(a.is_connected && a.is_installed && a.available_adapters.length > 0)
         : !a.is_connected;
 
     const matchesCategory =
@@ -182,6 +186,9 @@ export const ApplicationsView: React.FC = () => {
   };
 
   const connectedCount = apps.filter((a) => a.is_connected).length;
+  const accessibleCount = apps.filter(
+    (a) => a.is_connected && a.is_installed && a.available_adapters.length > 0
+  ).length;
   const runningCount = apps.filter((a) => a.is_running).length;
 
   return (
@@ -261,7 +268,7 @@ export const ApplicationsView: React.FC = () => {
               />
             </div>
 
-            <div className="flex items-center gap-1.5 p-1 rounded-xl bg-[#21211F] border border-white/10 shrink-0">
+            <div className="flex flex-wrap items-center gap-1.5 p-1 rounded-xl bg-[#21211F] border border-white/10 shrink-0">
               <button
                 type="button"
                 onClick={() => setStatusFilter("all")}
@@ -271,7 +278,7 @@ export const ApplicationsView: React.FC = () => {
                     : "text-zinc-300 hover:text-white"
                 }`}
               >
-                Semua ({apps.length})
+                Terpasang ({apps.length})
               </button>
               <button
                 type="button"
@@ -283,7 +290,18 @@ export const ApplicationsView: React.FC = () => {
                 }`}
               >
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span>Izin diberikan ({connectedCount})</span>
+                <span>Sudah dihubungkan ({connectedCount})</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setStatusFilter("accessible")}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                  statusFilter === "accessible"
+                    ? "bg-[#D97757] text-white"
+                    : "text-zinc-300 hover:text-white"
+                }`}
+              >
+                Dapat diakses AKSA ({accessibleCount})
               </button>
               <button
                 type="button"
@@ -410,6 +428,13 @@ export const ApplicationsView: React.FC = () => {
                         tone={app.is_connected ? "success" : "neutral"}
                         label={app.is_connected ? "Izin diberikan" : "Belum diizinkan"}
                       />
+                    </div>
+
+                    <div className="flex items-center justify-between gap-2 text-xs text-zinc-400">
+                      <span>Izin yang dibutuhkan sebelum menghubungkan:</span>
+                      <span className="text-zinc-200 font-medium">
+                        Kendali Aplikasi &amp; Persetujuan Pengguna
+                      </span>
                     </div>
 
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">

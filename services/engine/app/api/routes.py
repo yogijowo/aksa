@@ -83,6 +83,7 @@ class CreateAgentRequest(BaseModel):
     tier_level: int = 1
     provider: str
     model_id: str
+    model_selection_mode: str = "auto"
     temperature: float = 0.2
     max_tokens: int = 4096
     system_prompt: str
@@ -100,12 +101,25 @@ class UpdateAgentRequest(BaseModel):
     tier_level: int | None = None
     provider: str | None = None
     model_id: str | None = None
+    model_selection_mode: str | None = None
     temperature: float | None = None
     max_tokens: int | None = None
     system_prompt: str | None = None
     tool_categories: list[str] | None = None
     position_x: float | None = None
     position_y: float | None = None
+
+
+class UpdateWorkspaceRequest(BaseModel):
+    name: str | None = None
+    allow_read: bool | None = None
+    allow_write: bool | None = None
+    allow_execute: bool | None = None
+    auto_rag_sync: bool | None = None
+
+
+class InspectFolderRequest(BaseModel):
+    folder_path: str
 
 
 class UpsertWorkspaceRequest(BaseModel):
@@ -188,24 +202,68 @@ async def list_model_providers() -> dict[str, Any]:
 @api_router.post("/models/keys")
 async def save_provider_api_key(req: SaveApiKeyRequest) -> dict[str, Any]:
     """Save an API key for a Cloud LLM provider."""
-    status_map = await llm_router.save_api_key(req.provider, req.api_key)
+    try:
+        status_map = await llm_router.save_api_key(req.provider, req.api_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"saved": True, "provider": req.provider, "configured_providers": status_map}
 
 
 @api_router.post("/models/test")
 async def test_model_connection(req: TestModelRequest) -> dict[str, Any]:
-    """Test completion connectivity for a specific provider and model."""
+    """Test completion connectivity for a specific provider and model, recording verified status."""
+    prov = req.provider.lower().strip()
+    is_local = prov in ("ollama", "lmstudio")
+    if not is_local:
+        saved_keys = await llm_router.get_saved_api_keys()
+        has_key = bool(saved_keys.get(prov) or os.environ.get(f"{prov.upper()}_API_KEY", "").strip())
+        if not has_key:
+            msg = f"Belum ada token API yang tersimpan untuk penyedia {req.provider.upper()}. Simpan token terlebih dahulu."
+            llm_router.record_connection_test(prov, False, msg, req.model_id)
+            return {
+                "ok": False,
+                "provider": req.provider,
+                "model_id": req.model_id,
+                "simulated": True,
+                "token_status": "not_connected",
+                "error": msg,
+                "reply": msg,
+            }
+
     res = await llm_router.complete(
         provider=req.provider,
         model_id=req.model_id,
         messages=[{"role": "user", "content": "Balas singkat: OK"}],
         max_tokens=32,
     )
+    is_verified = not bool(res.get("simulated")) and not bool(res.get("blocked_by_privacy_gate"))
+    if is_verified:
+        msg = f"Koneksi ke {req.model_id} berhasil diverifikasi."
+        llm_router.record_connection_test(prov, True, msg, req.model_id)
+        return {
+            "ok": True,
+            "provider": req.provider,
+            "model_id": req.model_id,
+            "simulated": False,
+            "token_status": "connected",
+            "reply": res["content"],
+        }
+
+    if res.get("blocked_by_privacy_gate"):
+        err_msg = "Koneksi ke layanan Cloud diblokir oleh pengaturan Mode Privasi Lokal. Ubah mode privasi jika ingin menguji penyedia Cloud."
+    elif is_local:
+        err_msg = f"Layanan AI lokal ({req.provider}) belum aktif atau model '{req.model_id}' belum tersedia di komputer Anda."
+    else:
+        err_msg = f"Koneksi ke {req.provider.upper()} ({req.model_id}) belum berhasil. Pastikan token API valid, kuota tersedia, dan perangkat terhubung ke jaringan."
+
+    llm_router.record_connection_test(prov, False, err_msg, req.model_id)
     return {
-        "ok": True,
+        "ok": False,
         "provider": req.provider,
         "model_id": req.model_id,
-        "simulated": res["simulated"],
+        "simulated": True,
+        "token_status": "connection_failed",
+        "error": err_msg,
         "reply": res["content"],
     }
 
@@ -332,16 +390,22 @@ async def list_teams() -> dict[str, Any]:
 
 @api_router.post("/agents")
 async def create_agent(req: CreateAgentRequest) -> dict[str, Any]:
-    """Create a new agent node in a hierarchical team."""
-    agent = await db_manager.create_agent(req.model_dump())
+    """Create a new agent node in a hierarchical team with parent/cycle validation."""
+    try:
+        agent = await db_manager.create_agent(req.model_dump())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"agent": agent}
 
 
 @api_router.patch("/agents/{agent_id}")
 async def update_agent(agent_id: str, req: UpdateAgentRequest) -> dict[str, Any]:
-    """Update an existing agent's configuration or canvas position."""
-    updates = {k: v for k, v in req.model_dump().items() if v is not None}
-    updated = await db_manager.update_agent(agent_id, updates)
+    """Update an existing agent's configuration, parent relationship, or canvas position."""
+    updates = req.model_dump(exclude_unset=True)
+    try:
+        updated = await db_manager.update_agent(agent_id, updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not updated:
         raise HTTPException(status_code=404, detail="Agen tidak ditemukan.")
     return {"agent": updated}
@@ -350,7 +414,10 @@ async def update_agent(agent_id: str, req: UpdateAgentRequest) -> dict[str, Any]
 @api_router.delete("/agents/{agent_id}")
 async def delete_agent(agent_id: str) -> dict[str, Any]:
     """Remove an agent node from the hierarchy."""
-    deleted = await db_manager.delete_agent(agent_id)
+    try:
+        deleted = await db_manager.delete_agent(agent_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Agen tidak ditemukan.")
     return {"deleted": True, "id": agent_id}
@@ -442,23 +509,154 @@ async def authorize_workspace(
     return ws
 
 
+def inspect_folder_path_status(folder_path: str) -> dict[str, Any]:
+    """Inspect a filesystem directory path and return user-friendly accessibility status and recovery steps."""
+    raw = (folder_path or "").strip()
+    if not raw:
+        return {
+            "folder_path": "",
+            "name": "",
+            "folder_status": "unavailable",
+            "folder_status_label": "Tidak tersedia",
+            "is_valid_directory": False,
+            "readable": False,
+            "writable": False,
+            "recovery_hint": "Pilih lokasi folder yang valid melalui tombol Pilih folder.",
+        }
+
+    if raw.startswith("\\\\") or raw.startswith("//"):
+        return {
+            "folder_path": raw,
+            "name": Path(raw).name or raw,
+            "folder_status": "unavailable",
+            "folder_status_label": "Tidak tersedia (Jaringan UNC ditolak)",
+            "is_valid_directory": False,
+            "readable": False,
+            "writable": False,
+            "recovery_hint": "Demi keamanan, pilih folder lokal di komputer Anda (bukan alamat jaringan UNC).",
+        }
+
+    try:
+        target = Path(raw).expanduser()
+        exists = target.exists()
+    except (PermissionError, OSError):
+        return {
+            "folder_path": raw,
+            "name": Path(raw).name or raw,
+            "folder_status": "permission_denied",
+            "folder_status_label": "Izin ditolak",
+            "is_valid_directory": False,
+            "readable": False,
+            "writable": False,
+            "recovery_hint": "Sistem operasi menolak akses ke lokasi ini. Pilih folder di area Dokumen Anda.",
+        }
+
+    if not exists:
+        return {
+            "folder_path": str(target),
+            "name": target.name or str(target),
+            "folder_status": "not_found",
+            "folder_status_label": "Tidak ditemukan",
+            "is_valid_directory": False,
+            "readable": False,
+            "writable": False,
+            "recovery_hint": "Folder ini tidak ditemukan (mungkin telah dipindahkan atau dihapus). Klik Pilih folder… untuk memilih lokasi baru.",
+        }
+
+    if not target.is_dir():
+        return {
+            "folder_path": str(target),
+            "name": target.name or str(target),
+            "folder_status": "unavailable",
+            "folder_status_label": "Tidak tersedia (Bukan folder)",
+            "is_valid_directory": False,
+            "readable": False,
+            "writable": False,
+            "recovery_hint": "Lokasi yang dipilih adalah file, bukan folder. Silakan pilih sebuah folder.",
+        }
+
+    readable = os.access(target, os.R_OK)
+    writable = os.access(target, os.W_OK)
+    try:
+        resolved_str = str(target.resolve())
+    except Exception:
+        resolved_str = str(target)
+
+    if not readable:
+        return {
+            "folder_path": resolved_str,
+            "name": target.name or resolved_str,
+            "folder_status": "permission_denied",
+            "folder_status_label": "Izin ditolak",
+            "is_valid_directory": True,
+            "readable": False,
+            "writable": False,
+            "recovery_hint": "Sistem operasi menolak izin baca pada folder ini. Sesuaikan izin folder di pengaturan perangkat atau pilih folder lain.",
+        }
+
+    if not writable:
+        return {
+            "folder_path": resolved_str,
+            "name": target.name or resolved_str,
+            "folder_status": "read_only",
+            "folder_status_label": "Hanya baca (Read-only)",
+            "is_valid_directory": True,
+            "readable": True,
+            "writable": False,
+            "recovery_hint": "Folder ini berstatus hanya-baca di sistem operasi. AKSA dapat membaca dokumen referensi, tetapi tidak dapat menyimpan file baru di lokasi ini.",
+        }
+
+    return {
+        "folder_path": resolved_str,
+        "name": target.name or resolved_str,
+        "folder_status": "accessible",
+        "folder_status_label": "Dapat diakses",
+        "is_valid_directory": True,
+        "readable": True,
+        "writable": True,
+        "recovery_hint": None,
+    }
+
+
+def _enrich_workspace_status(ws: dict[str, Any]) -> dict[str, Any]:
+    info = inspect_folder_path_status(ws.get("folder_path", ""))
+    return {
+        **ws,
+        "folder_status": info["folder_status"],
+        "folder_status_label": info["folder_status_label"],
+        "recovery_hint": info["recovery_hint"],
+    }
+
+
+@api_router.post("/workspaces/inspect-path")
+async def inspect_workspace_path(req: InspectFolderRequest) -> dict[str, Any]:
+    """Validate and inspect a folder path before adding or changing an active workspace."""
+    return inspect_folder_path_status(req.folder_path)
+
+
 @api_router.get("/workspaces")
 async def list_workspaces(request: Request) -> dict[str, Any]:
-    """List all authorized PC workspace folders for the verified caller."""
+    """List all authorized PC workspace folders for the verified caller with folder accessibility status."""
     principal_id = resolve_authenticated_principal(request)
     workspaces = await db_manager.list_workspaces(principal_id=principal_id)
-    return {"workspaces": workspaces}
+    return {"workspaces": [_enrich_workspace_status(ws) for ws in workspaces]}
 
 
 @api_router.post("/workspaces")
 async def register_workspace(req: UpsertWorkspaceRequest, request: Request) -> dict[str, Any]:
     """Authorize a PC folder for agent access."""
-    target = Path(req.folder_path).expanduser()
-    if not target.exists() or not target.is_dir():
+    info = inspect_folder_path_status(req.folder_path)
+    if not info["is_valid_directory"]:
         raise HTTPException(
             status_code=400,
-            detail=f"Folder '{req.folder_path}' tidak ditemukan di komputer ini.",
+            detail=info["recovery_hint"] or f"Folder '{req.folder_path}' tidak ditemukan di komputer ini.",
         )
+    if info["folder_status"] == "permission_denied":
+        raise HTTPException(
+            status_code=403,
+            detail=info["recovery_hint"] or f"Akses ke folder '{req.folder_path}' ditolak oleh sistem operasi.",
+        )
+    target = Path(req.folder_path).expanduser()
     principal_id = resolve_authenticated_principal(request)
     payload = req.model_dump()
     payload["owner_id"] = principal_id
@@ -471,7 +669,39 @@ async def register_workspace(req: UpsertWorkspaceRequest, request: Request) -> d
             allow_execute=req.allow_execute,
         )
     )
-    return {"workspace": workspace}
+    return {"workspace": _enrich_workspace_status(workspace)}
+
+
+@api_router.patch("/workspaces/{workspace_id}")
+async def update_workspace_permissions_endpoint(
+    workspace_id: str,
+    req: UpdateWorkspaceRequest,
+    request: Request,
+) -> dict[str, Any]:
+    """Update workspace permissions or display name and synchronize sandbox enforcement."""
+    principal_id = resolve_authenticated_principal(request)
+    ws_rec = await authorize_workspace(workspace_id, principal_id, required_permission="delete")
+    updates = req.model_dump(exclude_unset=True)
+    updated = await db_manager.update_workspace(workspace_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
+    sandbox_manager.register_workspace(
+        WorkspacePolicy(
+            folder_path=updated["folder_path"],
+            allow_read=bool(updated.get("allow_read", True)),
+            allow_write=bool(updated.get("allow_write", True)),
+            allow_execute=bool(updated.get("allow_execute", False)),
+        )
+    )
+    await db_manager.record_permission_audit({
+        "principal_type": "user",
+        "principal_id": principal_id,
+        "capability_id": "filesystem.workspace.update_permissions",
+        "resource_scope": workspace_id,
+        "decision": "allow",
+        "reason_code": "USER_UPDATED_WORKSPACE_PERMISSIONS",
+    })
+    return {"workspace": _enrich_workspace_status(updated), "previous_path": ws_rec.get("folder_path")}
 
 
 @api_router.delete("/workspaces/{workspace_id}")
@@ -865,6 +1095,29 @@ async def list_rag_documents(
         await authorize_workspace(workspace_id, principal_id, required_permission="read")
     docs = await rag_store.list_indexed_documents(workspace_id=workspace_id)
     return {"documents": docs}
+
+
+@api_router.delete("/rag/documents/{document_id}")
+async def delete_rag_document_endpoint(document_id: str, request: Request) -> dict[str, Any]:
+    """Remove a document and its indexed chunks from the AKSA knowledge index without deleting the source file on disk."""
+    principal_id = resolve_authenticated_principal(request)
+    removed = await db_manager.delete_rag_document(document_id)
+    if not removed:
+        raise HTTPException(status_code=404, detail="Dokumen referensi tidak ditemukan di indeks Pengetahuan AKSA.")
+    await db_manager.record_permission_audit({
+        "principal_type": "user",
+        "principal_id": principal_id,
+        "capability_id": "rag.delete_document_index",
+        "resource_scope": removed.get("workspace_id") or "workspace",
+        "decision": "allow",
+        "reason_code": "USER_REMOVED_RAG_DOCUMENT_INDEX",
+    })
+    return {
+        "deleted": True,
+        "id": document_id,
+        "file_name": removed.get("file_name"),
+        "source_file_preserved": True,
+    }
 
 
 @api_router.post("/rag/index-folder")

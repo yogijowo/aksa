@@ -1,15 +1,22 @@
 import React, { useState } from "react";
 import {
   FolderOpen,
-  Plus,
+  FolderPlus,
   Check,
   PanelRightOpen,
   PanelRightClose,
   ChevronDown,
   ShieldCheck,
+  ExternalLink,
 } from "lucide-react";
+import { toast } from "sonner";
 import { useAksaStore } from "@/stores/useAksaStore";
-import { cn } from "@/lib/utils";
+import { cn, extractFolderDisplayName } from "@/lib/utils";
+import {
+  inspectWorkspacePathRemote,
+  openFileInDefaultApp,
+  openNativeFolderPicker,
+} from "@/services/engineClient";
 
 export const TopHeader: React.FC = () => {
   const {
@@ -22,21 +29,36 @@ export const TopHeader: React.FC = () => {
     isArtifactDrawerOpen,
     setArtifactDrawerOpen,
     artifacts,
+    engineHealth,
     setActiveNav,
   } = useAksaStore();
 
   const [isFolderMenuOpen, setIsFolderMenuOpen] = useState(false);
-  const [customPathInput, setCustomPathInput] = useState("");
 
   const activeWorkspace = workspaces.find((w) => w.id === activeWorkspaceId) ?? workspaces[0];
   const activeTeam = teams.find((t) => t.id === activeTeamId) ?? teams[0];
 
-  const handleAddCustomFolder = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!customPathInput.trim()) return;
-    addWorkspaceFolder(customPathInput.trim());
-    setCustomPathInput("");
+  const handlePickNativeWorkspaceFolder = async () => {
+    const picked = await openNativeFolderPicker({
+      title: "Pilih Folder Ruang Kerja AKSA",
+      defaultPath: activeWorkspace?.folder_path,
+    });
+    if (!picked) {
+      return;
+    }
+    const inspection = await inspectWorkspacePathRemote(picked);
+    if (inspection && !inspection.is_valid_directory) {
+      toast.error(inspection.recovery_hint || "Folder tidak dapat diakses.");
+      return;
+    }
+    const folderName = inspection?.name || extractFolderDisplayName(picked);
+    await addWorkspaceFolder(picked, folderName, {
+      allow_read: true,
+      allow_write: inspection ? inspection.writable : true,
+      allow_execute: false,
+    });
     setIsFolderMenuOpen(false);
+    toast.success(`Folder "${folderName}" dipilih sebagai Ruang Kerja aktif.`);
   };
 
   return (
@@ -48,17 +70,12 @@ export const TopHeader: React.FC = () => {
             type="button"
             onClick={() => setIsFolderMenuOpen((v) => !v)}
             aria-expanded={isFolderMenuOpen}
-            className="flex items-center gap-2 rounded-xl hover:bg-white/[0.06] px-3 py-1.5 text-[13px] text-zinc-200 transition-colors focus:outline-none focus:ring-2 focus:ring-[#D97757]/40"
+            className="flex items-center gap-2 rounded-xl hover:bg-white/[0.06] px-3 py-1.5 text-[13px] text-zinc-200 transition-colors"
           >
             <FolderOpen size={15} className="text-[#D97757] shrink-0" />
-            <span className="font-medium text-zinc-100">
+            <span className="font-semibold text-zinc-100">
               {activeWorkspace ? activeWorkspace.name : "Pilih Folder Ruang Kerja"}
             </span>
-            {activeWorkspace?.folder_path && (
-              <span className="hidden md:inline text-xs text-zinc-400 font-mono truncate max-w-[240px]">
-                ({activeWorkspace.folder_path})
-              </span>
-            )}
             <ChevronDown size={14} className="text-zinc-400" />
           </button>
 
@@ -66,7 +83,7 @@ export const TopHeader: React.FC = () => {
             <div className="absolute left-0 mt-1.5 w-96 rounded-2xl bg-[#21211F] border border-white/[0.1] shadow-2xl p-3.5 space-y-3 z-50">
               <div className="flex items-center justify-between px-1">
                 <span className="text-xs font-semibold text-zinc-200">
-                  Folder Ruang Kerja yang Diizinkan
+                  Folder Ruang Kerja Anda
                 </span>
                 <span className="inline-flex items-center gap-1 text-xs text-emerald-300 font-medium">
                   <ShieldCheck size={13} className="text-emerald-400" />
@@ -92,7 +109,7 @@ export const TopHeader: React.FC = () => {
                       )}
                     >
                       <div className="truncate pr-2">
-                        <div className="font-medium truncate">{ws.name}</div>
+                        <div className="font-semibold truncate">{ws.name}</div>
                         <div className="text-xs text-zinc-400 font-mono truncate">
                           {ws.folder_path}
                         </div>
@@ -104,48 +121,47 @@ export const TopHeader: React.FC = () => {
                   ))
                 ) : (
                   <p className="px-2 py-3 text-xs text-zinc-400 text-center">
-                    Belum ada folder kerja yang dipilih. Tambahkan lokasi folder di bawah ini.
+                    Belum ada folder kerja yang dipilih. Klik tombol Pilih folder… di bawah ini.
                   </p>
                 )}
               </div>
 
-              <form
-                onSubmit={handleAddCustomFolder}
-                className="pt-2.5 border-t border-white/[0.07] space-y-2"
-              >
-                <label className="block text-xs text-zinc-300 px-0.5">
-                  Tambahkan folder kerja baru di komputer Anda:
-                </label>
-                <div className="flex gap-1.5">
-                  <input
-                    type="text"
-                    value={customPathInput}
-                    onChange={(e) => setCustomPathInput(e.target.value)}
-                    placeholder="Contoh: /Users/nama/Documents/Laporan"
-                    aria-label="Lokasi folder kerja baru"
-                    className="flex-1 rounded-xl bg-[#141413] border border-white/[0.1] px-3 py-1.5 text-xs text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-[#D97757]"
-                  />
+              <div className="pt-2.5 border-t border-white/[0.07] flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handlePickNativeWorkspaceFolder()}
+                  className="flex-1 flex items-center justify-center gap-1.5 rounded-xl bg-[#D97757] hover:bg-[#c96a4b] px-3 py-2 text-xs font-semibold text-white transition-colors"
+                >
+                  <FolderPlus size={14} />
+                  <span>Pilih folder…</span>
+                </button>
+
+                {activeWorkspace && (
                   <button
-                    type="submit"
-                    disabled={!customPathInput.trim()}
-                    className="flex items-center gap-1 rounded-xl bg-[#D97757] hover:bg-[#c96a4b] disabled:opacity-40 px-3 py-1.5 text-xs font-semibold text-white transition-colors"
+                    type="button"
+                    onClick={() => {
+                      void openFileInDefaultApp(activeWorkspace.folder_path);
+                      setIsFolderMenuOpen(false);
+                    }}
+                    className="flex items-center justify-center gap-1.5 rounded-xl bg-[#262624] hover:bg-zinc-700 border border-white/[0.1] px-3 py-2 text-xs font-medium text-zinc-200 transition-colors"
                   >
-                    <Plus size={14} /> Tambah
+                    <ExternalLink size={13} />
+                    <span>Buka folder</span>
                   </button>
-                </div>
-              </form>
+                )}
+              </div>
             </div>
           )}
         </div>
 
-        <span className="text-zinc-700" aria-hidden="true">
+        <span className="text-zinc-500" aria-hidden="true">
           •
         </span>
 
         <button
           type="button"
           onClick={() => setActiveNav("tim_agen")}
-          className="hidden sm:flex items-center gap-1.5 rounded-xl hover:bg-white/[0.06] px-3 py-1.5 text-[13px] text-zinc-300 hover:text-zinc-100 transition-colors focus:outline-none focus:ring-2 focus:ring-[#D97757]/40"
+          className="hidden sm:flex items-center gap-1.5 rounded-xl hover:bg-white/[0.06] px-3 py-1.5 text-[13px] text-zinc-300 hover:text-zinc-100 transition-colors"
         >
           <span>{activeTeam?.name}</span>
           <span className="text-xs text-zinc-400">({activeTeam?.agents.length} agen)</span>
@@ -157,9 +173,14 @@ export const TopHeader: React.FC = () => {
         <button
           type="button"
           onClick={() => setActiveNav("telegram")}
-          className="flex items-center gap-1.5 rounded-xl hover:bg-white/[0.06] px-3 py-1.5 text-[13px] text-zinc-300 hover:text-zinc-100 transition-colors focus:outline-none focus:ring-2 focus:ring-[#D97757]/40"
+          className="flex items-center gap-1.5 rounded-xl hover:bg-white/[0.06] px-3 py-1.5 text-[13px] text-zinc-300 hover:text-zinc-100 transition-colors"
         >
-          <span className="h-2 w-2 rounded-full bg-emerald-400" />
+          <span
+            className={cn(
+              "h-2 w-2 rounded-full",
+              engineHealth.telegram_connected ? "bg-emerald-400" : "bg-zinc-500"
+            )}
+          />
           <span className="hidden sm:inline">Integrasi</span>
         </button>
 
@@ -169,7 +190,7 @@ export const TopHeader: React.FC = () => {
           title="Buka atau tutup daftar file hasil pekerjaan"
           aria-expanded={isArtifactDrawerOpen}
           className={cn(
-            "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[13px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-[#D97757]/40",
+            "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[13px] font-medium transition-colors",
             isArtifactDrawerOpen
               ? "bg-white/[0.09] text-zinc-100 border-white/[0.14]"
               : "bg-transparent text-zinc-300 border-white/[0.08] hover:bg-white/[0.05] hover:text-zinc-100"
