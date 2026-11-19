@@ -34,6 +34,7 @@ pub struct SidecarState {
     pub launch_id: String,
     pub expected_version: String,
     pub handshake_verified: Mutex<bool>,
+    pub manifest_path: Mutex<Option<std::path::PathBuf>>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -73,6 +74,13 @@ impl SidecarState {
             launch_id,
             expected_version: EXPECTED_ENGINE_VERSION.to_string(),
             handshake_verified: Mutex::new(false),
+            manifest_path: Mutex::new(None),
+        }
+    }
+
+    pub fn set_manifest_path(&self, path: std::path::PathBuf) {
+        if let Ok(mut guard) = self.manifest_path.lock() {
+            *guard = Some(path);
         }
     }
 
@@ -249,7 +257,66 @@ impl SidecarState {
                 let _ = child.kill();
             }
         }
+        if let Ok(mut mguard) = self.manifest_path.lock() {
+            if let Some(path) = mguard.take() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
     }
+}
+
+/// Construct a unique per-launch manifest filename to prevent stale/concurrent collisions (P2-02).
+pub fn launch_manifest_filename(launch_id: &str) -> String {
+    let sanitized: String = launch_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if sanitized.is_empty() {
+        "engine_port.json".to_string()
+    } else {
+        format!("engine_port_{}.json", sanitized)
+    }
+}
+
+/// Prepare the runtime directory (strict 0700 on Unix, symlink-free) and clean up any stale
+/// manifest BEFORE spawning the sidecar. Fails closed (`Err`) if cleanup or permission lock fails.
+pub fn prepare_runtime_manifest_slot(
+    runtime_dir: &std::path::Path,
+    launch_id: &str,
+) -> Result<std::path::PathBuf, String> {
+    if let Ok(meta) = std::fs::symlink_metadata(runtime_dir) {
+        if meta.file_type().is_symlink() {
+            return Err("Direktori runtime sidecar adalah symlink ilegal (ditolak fail-closed).".to_string());
+        }
+        if !meta.is_dir() {
+            return Err("Path runtime sidecar bukan direktori yang valid.".to_string());
+        }
+    }
+
+    std::fs::create_dir_all(runtime_dir)
+        .map_err(|e| format!("Gagal membuat direktori runtime sidecar: {}", e))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(runtime_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("Gagal mengunci izin 0700 pada direktori runtime sidecar: {}", e))?;
+    }
+
+    let manifest_path = runtime_dir.join(launch_manifest_filename(launch_id));
+    for candidate in [manifest_path.clone(), runtime_dir.join("engine_port.json")] {
+        if std::fs::symlink_metadata(&candidate).is_ok() {
+            std::fs::remove_file(&candidate).map_err(|e| {
+                format!(
+                    "Gagal menghapus stale manifest '{}': {} (spawn sidecar ditolak fail-closed)",
+                    candidate.display(),
+                    e
+                )
+            })?;
+        }
+    }
+
+    Ok(manifest_path)
 }
 
 impl Drop for SidecarState {
@@ -601,5 +668,67 @@ mod tests {
         let res = state.set_state_from_ipc(LifecycleState::Ready);
         assert!(res.is_err());
         assert_eq!(state.get_state(), LifecycleState::Starting);
+    }
+
+    #[test]
+    fn test_prepare_runtime_manifest_slot_enforces_unique_launch_files_and_cleans_stale() {
+        let temp_dir = std::env::temp_dir().join(format!("aksa_p202_ok_{}", Uuid::new_v4().as_simple()));
+        let runtime_dir = temp_dir.join("runtime");
+        std::fs::create_dir_all(&runtime_dir).unwrap();
+
+        let launch_a = "launch-aaa111";
+        let launch_b = "launch-bbb222";
+        let stale_a = runtime_dir.join(launch_manifest_filename(launch_a));
+        let stale_legacy = runtime_dir.join("engine_port.json");
+        std::fs::write(&stale_a, "{\"stale\":true}").unwrap();
+        std::fs::write(&stale_legacy, "{\"stale\":true}").unwrap();
+
+        let slot_a = prepare_runtime_manifest_slot(&runtime_dir, launch_a).expect("should clean stale");
+        let slot_b = prepare_runtime_manifest_slot(&runtime_dir, launch_b).expect("separate slot");
+
+        assert_ne!(slot_a, slot_b);
+        assert!(!stale_a.exists());
+        assert!(!stale_legacy.exists());
+        assert_eq!(slot_a.file_name().unwrap().to_str().unwrap(), "engine_port_launch-aaa111.json");
+        assert_eq!(slot_b.file_name().unwrap().to_str().unwrap(), "engine_port_launch-bbb222.json");
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&runtime_dir).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o700);
+        }
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_prepare_runtime_manifest_slot_fails_closed_when_stale_manifest_unremovable() {
+        let temp_dir = std::env::temp_dir().join(format!("aksa_p202_fail_{}", Uuid::new_v4().as_simple()));
+        let runtime_dir = temp_dir.join("runtime");
+        let launch_id = "launch-locked99";
+        let obstructing_dir = runtime_dir.join(launch_manifest_filename(launch_id));
+        std::fs::create_dir_all(&obstructing_dir).unwrap();
+        std::fs::write(obstructing_dir.join("locked.txt"), "obstruction").unwrap();
+
+        let err = prepare_runtime_manifest_slot(&runtime_dir, launch_id).unwrap_err();
+        assert!(err.contains("fail-closed"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_prepare_runtime_manifest_slot_rejects_symlink_runtime_dir() {
+        let temp_dir = std::env::temp_dir().join(format!("aksa_p202_sym_{}", Uuid::new_v4().as_simple()));
+        let real_target = temp_dir.join("real_target");
+        let sym_runtime = temp_dir.join("runtime");
+        std::fs::create_dir_all(&real_target).unwrap();
+        std::os::unix::fs::symlink(&real_target, &sym_runtime).unwrap();
+
+        let err = prepare_runtime_manifest_slot(&sym_runtime, "launch-sym").unwrap_err();
+        assert!(err.contains("symlink"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

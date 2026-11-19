@@ -130,7 +130,7 @@ def test_engine_owns_port_and_answers_nonce_hmac(tmp_path: Path):
         deadline = time.time() + 40
         while time.time() < deadline:
             line = proc.stderr.readline()
-            m = re.search(r"\[AKSA_ENGINE_READY:port=(\d+):pid=(\d+)\]", line or "")
+            m = re.search(r"\[AKSA_ENGINE_READY:port=(\d+):pid=(\d+)(?::launch_id=[^\]]*)?\]", line or "")
             if m:
                 port, pid = int(m.group(1)), int(m.group(2))
                 break

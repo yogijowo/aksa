@@ -11,11 +11,11 @@
 <p align="center">
   <a href="./README.en.md"><img src="https://img.shields.io/badge/Read_in-English-D97757?style=for-the-badge" alt="English Documentation"></a>
   <img src="https://img.shields.io/badge/License-MIT-10B981?style=for-the-badge" alt="MIT License">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%20%7C%20Linux-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Audit-Grade%20A%2B%20(99%2F100)-10B981?style=for-the-badge" alt="Audit Grade A+ 99/100">
-  <img src="https://img.shields.io/badge/Tests-245%2F245%20Verified-10B981?style=for-the-badge" alt="245/245 Verified Tests">
+  <img src="https://img.shields.io/badge/Security%20Audit-Cycle%207%20Remediated-F59E0B?style=for-the-badge" alt="Security Audit Cycle 7 Remediated">
+  <img src="https://img.shields.io/badge/Tests%20(macOS)-270%20Passed%20%7C%204%20CI--Only%20Skipped-3B82F6?style=for-the-badge" alt="macOS Local Verification">
 </p>
 
 <p align="center">
@@ -186,19 +186,25 @@ npm run dev:tauri
 
 ### 4. Menjalankan Suite Pengujian & Verifikasi Build
 ```bash
-# Jalankan seluruh 204 skenario pengujian unit, integrasi, dan regresi keamanan (188 Pytest + 9 Vitest + 7 Cargo)
-npm test
+# Jalankan rangkaian uji Python + Frontend + Rust (274 total skenario: 247 Pytest [243 passed & 4 skipped Windows/Linux-only di macOS] + 9 Vitest + 18 Cargo)
+npm test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 # Verifikasi kompilasi ketat TypeScript (tsc --noEmit) & bundle produksi Vite
 npm run test:frontend
 ```
+
+> **Status Kejujuran Audit & Batasan Verifikasi Lintas-OS:**
+> * Seluruh temuan **P1 (`P1-01` s.d. `P1-03`)** dan **P2 (`P2-01` s.d. `P2-04`)** dari [`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) telah diremediasi di kode sumber.
+> * **Verifikasi Lokal (macOS `darwin`):** `pytest` **243 passed, 4 skipped** (test runtime khusus Windows AppContainer & Linux `bwrap`), `cargo test` **18 passed**, `vitest` **9 passed**, `cargo check` bersih, `tsc --noEmit && vite build` bersih, sidecar `--smoke-test` lulus, dan `npm audit --omit=dev --audit-level=high` **0 vulnerabilities**.
+> * **Syarat Menuju Public Beta:** Empat (4) pengujian sandbox OS nyata (`@win32_only` & `@linux_bwrap_only`) wajib hijau pada runner GitHub Actions **`windows-latest`** dan **`ubuntu-latest`**, serta menunggu verifikasi **Re-Audit Independen Siklus 8** sebelum klaim sertifikasi *Public Beta*.
 
 ---
 
 ## Dokumentasi Teknis & Tata Kelola
 
 ### Dokumen Tata Kelola & Keamanan Utama
-* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md) — Laporan Re-Audit Teknis Independen Siklus 3 & Sertifikasi Pasca-Remediasi (**Grade A+ — 99/100, Public Beta Certified**).
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) — **Laporan Re-Audit Independen Siklus 7 (Terkini)** beserta log perbaikan P1/P2 dan batas verifikasi.
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md) — Arsip historis Re-Audit Siklus 3 (telah digantikan oleh audit lebih ketat Siklus 4–7).
 * [**`docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md) — Laporan Audit Teknis Independen Awal.
 * [**`SECURITY.md`**](./SECURITY.md) — Model ancaman (*threat model*), batas kepercayaan, klasifikasi risiko `R0`–`R4`, dan prosedur pelaporan celah keamanan.
 * [**`PRIVACY.md`**](./PRIVACY.md) — Kebijakan privasi *local-first*, `ProviderMode`, `DataClassification`, dan inventaris penyimpanan data lokal.

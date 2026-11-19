@@ -14,6 +14,91 @@ from pydantic import BaseModel, Field
 from app.core.agent_directory import AgentIsolationError, agent_directory_service
 
 
+_REPLAY_PATH_KEY_TOKENS = (
+    "path",
+    "file",
+    "dir",
+    "folder",
+    "root",
+    "output",
+    "source",
+    "target",
+    "dest",
+    "destination",
+    "template",
+    "artifact",
+)
+_REPLAY_NON_PATH_SUFFIXES = (
+    "_format",
+    "_mode",
+    "_type",
+    "_title",
+    "_count",
+    "_summary",
+    "_status",
+    "_id",
+)
+
+
+def _is_replay_path_key(key: str) -> bool:
+    kl = str(key or "").strip().lower()
+    if not kl:
+        return False
+    if kl in {"file", "path", "files", "paths", "directory", "dir", "folder", "root", "source", "target", "dest", "destination", "template", "csv_source"}:
+        return True
+    if kl.endswith(_REPLAY_NON_PATH_SUFFIXES):
+        return False
+    return any(tok in kl for tok in _REPLAY_PATH_KEY_TOKENS)
+
+
+def resolve_replay_path(raw_str: str, workspace: Path) -> Path:
+    """Resolve a replay step path canonically inside ``workspace`` (P2-01).
+
+    Rejects empty values, null bytes, UNC paths, alternate data streams, ``..`` components,
+    any symlink component under ``workspace``, and any resolved target outside ``workspace``.
+    """
+    cleaned = str(raw_str or "").strip()
+    if not cleaned or "\0" in cleaned:
+        raise AgentIsolationError("Path replay kosong atau mengandung null byte ilegal.")
+    if cleaned.startswith("\\\\") or cleaned.startswith("//"):
+        raise AgentIsolationError(f"Path jaringan UNC ditolak pada replay: '{cleaned}'.")
+    if ":" in Path(cleaned).name:
+        raise AgentIsolationError(f"Alternate Data Stream ditolak pada replay: '{cleaned}'.")
+
+    raw_path = Path(cleaned)
+    if any(part == ".." for part in raw_path.parts):
+        raise AgentIsolationError(f"Path traversal '..' ditolak pada replay: '{cleaned}'.")
+
+    ws_real = workspace.resolve(strict=False)
+    candidate = raw_path if raw_path.is_absolute() else (ws_real / raw_path)
+
+    try:
+        resolved = candidate.resolve(strict=False)
+    except Exception as exc:
+        raise AgentIsolationError(f"Gagal me-resolve path replay '{cleaned}': {exc}") from exc
+
+    if not resolved.is_relative_to(ws_real):
+        raise AgentIsolationError(
+            f"Path replay '{cleaned}' keluar dari batas workspace sandbox terisolasi."
+        )
+
+    # Walk segments from ws_real to catch pre-existing symlinks pointing outside or around ws_real
+    rel = resolved.relative_to(ws_real)
+    cur = ws_real
+    segments = raw_path.parts if not raw_path.is_absolute() else rel.parts
+    for part in segments:
+        if part in ("", "."):
+            continue
+        cur = cur / part
+        if cur.is_symlink():
+            raise AgentIsolationError(f"Symlink di dalam path replay ditolak: '{cleaned}'.")
+
+    if candidate.is_symlink():
+        raise AgentIsolationError(f"Symlink target ditolak pada replay: '{cleaned}'.")
+
+    return resolved
+
+
 class LearningPrivacyFilter:
     """Sanitizes text, tasks, and memory entries to strip secrets, API keys, credentials, and PII."""
 
@@ -548,7 +633,7 @@ class SkillEvaluator:
         import tempfile
         from app.core.orchestrator import verify_artifact_postcondition
         from app.core.sandbox import WorkspacePolicy, sandbox_manager
-        from app.tools.registry import ToolResult, tool_registry
+        from app.tools.registry import REPLAY_ALLOWED_TOOLS, ToolResult, tool_registry
 
         # Ensure standard built-in tools are registered before lookup
         import app.tools  # noqa: F401
@@ -592,16 +677,13 @@ class SkillEvaluator:
                             folder_path=str(ws),
                             allow_read=True,
                             allow_write=True,
-                            allow_execute=True,
+                            allow_execute=False,
                         )
                     )
 
                     # Materialize fixture input files strictly inside isolated replay workspace
                     for rel_name, file_content in fixture.get("input_files", {}).items():
-                        rel = Path(rel_name)
-                        if rel.is_absolute() or ".." in rel.parts:
-                            raise PermissionError(f"Path fixture tidak aman: '{rel_name}'")
-                        dest = ws / rel
+                        dest = resolve_replay_path(str(rel_name), ws)
                         dest.parent.mkdir(parents=True, exist_ok=True)
                         dest.write_text(str(file_content), encoding="utf-8")
 
@@ -618,17 +700,15 @@ class SkillEvaluator:
                         per_step_override = fixture.get("step_args", {}).get(tool_name, {})
                         call_args = {**base_args, **per_step_override}
 
-                        # Recursively substitute {var} placeholders from fixture inputs & ensure path args stay inside ws
+                        # Recursively substitute {var} placeholders & enforce canonical path/symlink containment (P2-01)
                         def _resolve_val(key: str, val: Any) -> Any:
                             if isinstance(val, str):
                                 try:
                                     v_sub = val.format(**step_vars)
                                 except Exception:
                                     v_sub = val
-                                if any(tok in key.lower() for tok in ("path", "file", "output", "source", "target")):
-                                    vp = Path(v_sub)
-                                    safe_name = vp.name or f"output_{s_idx}"
-                                    return str((ws / vp) if not vp.is_absolute() else (ws / safe_name))
+                                if _is_replay_path_key(key):
+                                    return str(resolve_replay_path(v_sub, ws))
                                 return v_sub
                             if isinstance(val, list):
                                 return [_resolve_val(key, item) for item in val]
@@ -636,20 +716,27 @@ class SkillEvaluator:
                                 return {dk: _resolve_val(dk, dv) for dk, dv in val.items()}
                             return val
 
-                        resolved_args: dict[str, Any] = {k: _resolve_val(k, v) for k, v in call_args.items()}
+                        if tool_name not in REPLAY_ALLOWED_TOOLS:
+                            run_ok = False
+                            fail_reason = (
+                                f"Replay ditolak (fail-closed): Tool '{tool_name}' tidak diizinkan untuk runtime replay."
+                            )
+                            break
+
+                        try:
+                            resolved_args: dict[str, Any] = {k: _resolve_val(k, v) for k, v in call_args.items()}
+                        except AgentIsolationError as iso_err:
+                            run_ok = False
+                            fail_reason = str(iso_err)
+                            break
 
                         if tool_executor is not None:
                             res = await tool_executor(tool_name, resolved_args, ws)
                             if not isinstance(res, ToolResult):
                                 res = ToolResult(success=bool(res.get("success")), summary=str(res.get("summary", "")), artifacts=res.get("artifacts", []), data=res.get("data"))
                         else:
-                            # Call registered handler directly inside isolated replay sandbox (bypassing HITL side-effects in dry-run)
-                            handler = tool_registry._handlers.get(tool_name)
-                            if not handler:
-                                run_ok = False
-                                fail_reason = f"Tool '{tool_name}' tidak ditemukan untuk runtime replay."
-                                break
-                            res = await handler(**resolved_args)
+                            # Execute through dedicated deterministic ToolRegistry.execute_replay boundary (P1-02)
+                            res = await tool_registry.execute_replay(tool_name, replay_workspace=ws, **resolved_args)
 
                         run_summaries.append(res.summary)
                         if not res.success:

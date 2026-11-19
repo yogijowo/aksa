@@ -11,11 +11,11 @@
 <p align="center">
   <a href="./README.md"><img src="https://img.shields.io/badge/Baca_dalam-Bahasa_Indonesia-D97757?style=for-the-badge" alt="Indonesian Documentation"></a>
   <img src="https://img.shields.io/badge/License-MIT-10B981?style=for-the-badge" alt="MIT License">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS-21211F?style=for-the-badge" alt="Cross Platform">
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%20%7C%20Linux-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Audit-Grade%20A%2B%20(99%2F100)-10B981?style=for-the-badge" alt="Audit Grade A+ 99/100">
-  <img src="https://img.shields.io/badge/Tests-245%2F245%20Verified-10B981?style=for-the-badge" alt="245/245 Verified Tests">
+  <img src="https://img.shields.io/badge/Security%20Audit-Cycle%207%20Remediated-F59E0B?style=for-the-badge" alt="Security Audit Cycle 7 Remediated">
+  <img src="https://img.shields.io/badge/Tests%20(macOS)-270%20Passed%20%7C%204%20CI--Only%20Skipped-3B82F6?style=for-the-badge" alt="macOS Local Verification">
 </p>
 
 <p align="center">
@@ -66,7 +66,7 @@
 * **Bound One-Time Approvals (`R0`–`R4`):** High-risk operations require one-time cryptographic `ApprovalGrant`s bound to `action_id`, canonical SHA-256 argument hashes, session ID, workspace ID, tool version, and expiration. Public override fields (`execution_policy_override`, `skip_approval`, `is_admin`) are actively rejected.
 * **Honest OS Permission Broker:** Native OS capabilities (TCC Screen Recording, AVFoundation Camera/Mic, macOS Accessibility, Windows UI Automation & Capture) are reported honestly (`NEEDS_USER_ACTION`, `UNKNOWN`, `GRANTED`). Capabilities are never spoofed from binary existence.
 * **Strict MCP Subprocess Lifecycle:** Validates all parameters against JSON schemas prior to execution, enforces verified `initialize` handshake, and reaps child processes safely.
-* **Skills Marketplace Trust Store & Sandbox:** Publisher Trust Store verifies Ed25519 digital signatures. Scripts execute in a path-jailed, environment-scrubbed sandbox under least privilege.
+* **Skills Marketplace Trust Store & OS-Enforced Sandbox:** Publisher Trust Store verifies Ed25519 digital signatures. Third-party scripts run inside fail-closed OS containment (**macOS Seatbelt**, **Linux `bwrap`**, **Windows Zero-Capability AppContainer with `PROC_THREAD_ATTRIBUTE_HANDLE_LIST` & Job Objects**), while candidate skill runtime replay executes strictly through deterministic `ToolRegistry.execute_replay(...)` with canonical path/symlink checks.
 * **Privacy Gate & Confidential Data Consent:** Data classified as `CONFIDENTIAL` always requires explicit per-request user consent before transmission to any cloud provider, with automated regex PII sanitization.
 * **Zero Local-to-Cloud Fallback:** Requests assigned to local models (`Ollama` / `LM Studio`) or running under `local_only` mode never fall back to cloud providers under any condition.
 * **Full Multi-Ecosystem CycloneDX SBOM:** Automated generation of CycloneDX Software Bill of Materials covering Python, npm, and Rust Cargo dependencies.
@@ -92,18 +92,24 @@ npm run dev
 # Or run Native Tauri v2 Desktop Window (Requires Rust / Cargo)
 npm run dev:tauri
 
-# Run all 245 unit, integration & security regression tests (221 Pytest + 9 Vitest + 15 Cargo)
-npm test
+# Run full Python + Frontend + Rust verification suite (274 total tests: 247 Pytest [243 passed on macOS, 4 Windows/Linux-only skipped] + 9 Vitest + 18 Cargo)
+npm test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 # Run TypeScript typecheck & Vite production bundle
 npm run test:frontend
 ```
 
+> **Honest Audit & Cross-Platform Verification Status:**
+> * All **P1 (`P1-01`–`P1-03`)** and **P2 (`P2-01`–`P2-04`)** findings from [`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) have been remediated in source code.
+> * **Local Verification (macOS `darwin`):** `pytest` **243 passed, 4 skipped** (native Windows AppContainer & Linux `bwrap` runtime tests), `cargo test` **18 passed**, `vitest` **9 passed**, `cargo check` clean, `tsc --noEmit && vite build` clean, sidecar `--smoke-test` passed, and `npm audit --omit=dev --audit-level=high` **0 vulnerabilities**.
+> * **Public Beta Gate:** Real OS runtime tests on GitHub Actions **`windows-latest`** and **`ubuntu-latest`** CI runners plus **External Independent Re-Audit Cycle 8** remain required before claiming Public Beta certification.
+
 ---
 
 ## Technical & Governance Documentation
 
-* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md) — Independent Technical Re-Audit Cycle 3 Report & Certification (**Grade A+ — 99/100, Public Beta Certified**).
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) — **Latest Independent Re-Audit Cycle 7 Report** & remediation verification ledger.
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md) — Historical Cycle 3 report (superseded by Cycles 4–7).
 * [**`docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md) — Initial Independent Technical Audit Report.
 * [**`SECURITY.md`**](./SECURITY.md) • [**`PRIVACY.md`**](./PRIVACY.md) • [**`SUPPORT.md`**](./SUPPORT.md) • [**`CHANGELOG.md`**](./CHANGELOG.md) • [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) • [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) • [**`PROGRESS.md`**](./PROGRESS.md)
 

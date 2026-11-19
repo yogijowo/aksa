@@ -6,6 +6,7 @@ import base64
 import csv
 import json
 import logging
+import re
 import uuid
 from enum import Enum
 from pathlib import Path
@@ -51,18 +52,23 @@ def get_artifact_postcondition_breakdown(
     art_path: Path,
     expected_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Inspect and validate an artifact across three distinct gates + task-specific semantics:
-    1. file_created
-    2. format_valid
-    3. semantic_postcondition_passed (AKSA-AGENT-003-R5).
+    """Inspect and validate an artifact across four orthogonal gates (P2-03):
+    1. ``file_created`` — non-zero byte file exists on disk.
+    2. ``format_valid`` — parser opens the format cleanly.
+    3. ``content_detected`` — non-trivial real structural content exists (rejects scalars,
+       1-cell placeholders, empty docs, and ornamental textless vector PDFs).
+    4. ``task_requirement_satisfied`` — artifact matches pre-execution prompt/plan
+       expectations (columns, formulas, sections, keywords, minimum row/item counts).
 
-    NEVER auto-passes unknown/unsupported file extensions; rejects JSON scalars,
-    trivial 1-cell Excel placeholders, and textless ornamental PDF drawings.
+    ``semantic_postcondition_passed`` is True ONLY when all four gates pass for a
+    supported format (NEVER auto-passes unknown extensions).
     """
     schema = expected_schema or {}
     res: dict[str, Any] = {
         "file_created": False,
         "format_valid": False,
+        "content_detected": False,
+        "task_requirement_satisfied": False,
         "semantic_postcondition_passed": False,
         "semantic_status": "failed",  # passed | failed | unsupported
         "unsupported_format": False,
@@ -81,6 +87,13 @@ def get_artifact_postcondition_breakdown(
 
     res["file_created"] = True
     suffix = art_path.suffix.lower()
+
+    expected_ext = str(schema.get("expected_extension", "") or "").strip().lower()
+    if expected_ext and not expected_ext.startswith("."):
+        expected_ext = f".{expected_ext}"
+    if expected_ext and suffix != expected_ext:
+        res["detail"] = f"Format artefak '{suffix}' tidak sesuai target tugas '{expected_ext}'."
+        return res
 
     if suffix in (".xlsx", ".xlsm"):
         try:
@@ -129,6 +142,8 @@ def get_artifact_postcondition_breakdown(
                 )
                 return res
 
+            res["content_detected"] = True
+
             min_rows = int(schema.get("min_rows", 1))
             if max_rows_seen < min_rows:
                 res["detail"] = f"Jumlah baris Excel ({max_rows_seen}) kurang dari syarat tugas ({min_rows})."
@@ -138,7 +153,7 @@ def get_artifact_postcondition_breakdown(
                 res["detail"] = "Buku kerja Excel tidak memuat formula/rumus dinamis yang disyaratkan tugas."
                 return res
 
-            req_cols = [str(c).strip().lower() for c in schema.get("required_columns", [])]
+            req_cols = [str(c).strip().lower() for c in schema.get("required_columns", []) if str(c).strip()]
             if req_cols:
                 combined_headers = " ".join(header_tokens)
                 missing_cols = [c for c in req_cols if c not in combined_headers]
@@ -146,7 +161,7 @@ def get_artifact_postcondition_breakdown(
                     res["detail"] = f"Kolom wajib Excel tidak ditemukan: {missing_cols}"
                     return res
 
-            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", []) if str(k).strip()]
             if req_kw:
                 corpus = " ".join(all_text_lower)
                 missing_kw = [k for k in req_kw if k not in corpus]
@@ -154,6 +169,7 @@ def get_artifact_postcondition_breakdown(
                     res["detail"] = f"Konten wajib Excel tidak ditemukan: {missing_kw}"
                     return res
 
+            res["task_requirement_satisfied"] = True
             res["semantic_postcondition_passed"] = True
             res["semantic_status"] = "passed"
             res["detail"] = "Valid"
@@ -182,23 +198,26 @@ def get_artifact_postcondition_breakdown(
                 )
                 return res
 
+            res["content_detected"] = True
+
             if schema.get("min_paragraphs") and len(chunks) < int(schema["min_paragraphs"]):
                 res["detail"] = f"Jumlah paragraf Word kurang dari syarat ({schema['min_paragraphs']})."
                 return res
 
             lower_text = full_text.lower()
-            req_sections = [str(s).strip().lower() for s in schema.get("required_sections", [])]
+            req_sections = [str(s).strip().lower() for s in schema.get("required_sections", []) if str(s).strip()]
             missing_sec = [s for s in req_sections if s not in lower_text]
             if missing_sec:
                 res["detail"] = f"Bagian/section wajib dokumen Word tidak ditemukan: {missing_sec}"
                 return res
 
-            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", []) if str(k).strip()]
             missing_kw = [k for k in req_kw if k not in lower_text]
             if missing_kw:
                 res["detail"] = f"Konten wajib dokumen Word tidak ditemukan: {missing_kw}"
                 return res
 
+            res["task_requirement_satisfied"] = True
             res["semantic_postcondition_passed"] = True
             res["semantic_status"] = "passed"
             res["detail"] = "Valid"
@@ -224,12 +243,27 @@ def get_artifact_postcondition_breakdown(
             if len(full_text) < int(schema.get("min_chars", 10)):
                 res["detail"] = f"Slide PowerPoint tidak memuat teks isi yang memadai: {art_path}"
                 return res
+
+            res["content_detected"] = True
+
+            if schema.get("min_slides") and len(prs.slides) < int(schema["min_slides"]):
+                res["detail"] = f"Jumlah slide PowerPoint kurang dari syarat ({schema['min_slides']})."
+                return res
+
             lower_text = full_text.lower()
-            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            req_sections = [str(s).strip().lower() for s in schema.get("required_sections", []) if str(s).strip()]
+            missing_sec = [s for s in req_sections if s not in lower_text]
+            if missing_sec:
+                res["detail"] = f"Bagian/topik wajib PowerPoint tidak ditemukan: {missing_sec}"
+                return res
+
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", []) if str(k).strip()]
             missing_kw = [k for k in req_kw if k not in lower_text]
             if missing_kw:
                 res["detail"] = f"Konten wajib PowerPoint tidak ditemukan: {missing_kw}"
                 return res
+
+            res["task_requirement_satisfied"] = True
             res["semantic_postcondition_passed"] = True
             res["semantic_status"] = "passed"
             res["detail"] = "Valid"
@@ -252,10 +286,6 @@ def get_artifact_postcondition_breakdown(
             has_images = any(len(page.get_images()) > 0 for page in doc)
             doc.close()
 
-            if schema.get("min_pages") and page_count < int(schema["min_pages"]):
-                res["detail"] = f"Jumlah halaman PDF ({page_count}) kurang dari syarat ({schema['min_pages']})."
-                return res
-
             # Reject ornamental-only vector drawings without extractable text or images
             min_chars = int(schema.get("min_chars", 10))
             if len(extracted_text) < min_chars and not (schema.get("allow_image_only") and has_images):
@@ -265,13 +295,26 @@ def get_artifact_postcondition_breakdown(
                 )
                 return res
 
+            res["content_detected"] = True
+
+            if schema.get("min_pages") and page_count < int(schema["min_pages"]):
+                res["detail"] = f"Jumlah halaman PDF ({page_count}) kurang dari syarat ({schema['min_pages']})."
+                return res
+
             lower_text = extracted_text.lower()
-            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            req_sections = [str(s).strip().lower() for s in schema.get("required_sections", []) if str(s).strip()]
+            missing_sec = [s for s in req_sections if s not in lower_text]
+            if missing_sec:
+                res["detail"] = f"Bagian wajib PDF tidak ditemukan: {missing_sec}"
+                return res
+
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", []) if str(k).strip()]
             missing_kw = [k for k in req_kw if k not in lower_text]
             if missing_kw:
                 res["detail"] = f"Konten wajib PDF tidak ditemukan: {missing_kw}"
                 return res
 
+            res["task_requirement_satisfied"] = True
             res["semantic_postcondition_passed"] = True
             res["semantic_status"] = "passed"
             res["detail"] = "Valid"
@@ -288,16 +331,28 @@ def get_artifact_postcondition_breakdown(
             if not isinstance(data, (dict, list)) or len(data) == 0:
                 res["detail"] = f"File JSON harus berupa objek atau array terstruktur non-kosong (skalar ditolak): {art_path}"
                 return res
+
+            res["content_detected"] = True
+
             if schema.get("min_items") and len(data) < int(schema["min_items"]):
                 res["detail"] = f"Jumlah item JSON kurang dari syarat ({schema['min_items']})."
                 return res
-            req_keys = [str(k) for k in schema.get("required_keys", [])]
+            req_keys = [str(k) for k in schema.get("required_keys", []) if str(k).strip()]
             if req_keys:
                 sample = data if isinstance(data, dict) else (data[0] if isinstance(data[0], dict) else {})
                 missing_keys = [k for k in req_keys if k not in sample]
                 if missing_keys:
                     res["detail"] = f"Kunci wajib JSON tidak ditemukan: {missing_keys}"
                     return res
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", []) if str(k).strip()]
+            if req_kw:
+                dumped = json.dumps(data, ensure_ascii=False).lower()
+                missing_kw = [k for k in req_kw if k not in dumped]
+                if missing_kw:
+                    res["detail"] = f"Konten wajib JSON tidak ditemukan: {missing_kw}"
+                    return res
+
+            res["task_requirement_satisfied"] = True
             res["semantic_postcondition_passed"] = True
             res["semantic_status"] = "passed"
             res["detail"] = "Valid"
@@ -312,17 +367,32 @@ def get_artifact_postcondition_breakdown(
             raw = art_path.read_text(encoding="utf-8", errors="replace")
             rows = [r for r in csv.reader(raw.splitlines(), delimiter=delimiter) if any(c.strip() for c in r)]
             res["format_valid"] = True
+            if len(rows) < 2:
+                res["detail"] = f"File {suffix} hanya memiliki {len(rows)} baris terisi (minimum 2 baris konten)."
+                return res
+
+            res["content_detected"] = True
+
             min_rows = int(schema.get("min_rows", 2))
             if len(rows) < min_rows:
                 res["detail"] = f"File {suffix} hanya memiliki {len(rows)} baris terisi (minimum {min_rows})."
                 return res
-            req_cols = [str(c).strip().lower() for c in schema.get("required_columns", [])]
+            req_cols = [str(c).strip().lower() for c in schema.get("required_columns", []) if str(c).strip()]
             if req_cols:
                 header_lower = {c.strip().lower() for c in rows[0]}
                 missing_cols = [c for c in req_cols if c not in header_lower]
                 if missing_cols:
                     res["detail"] = f"Kolom wajib {suffix} tidak ditemukan: {missing_cols}"
                     return res
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", []) if str(k).strip()]
+            if req_kw:
+                lower_raw = raw.lower()
+                missing_kw = [k for k in req_kw if k not in lower_raw]
+                if missing_kw:
+                    res["detail"] = f"Konten wajib {suffix} tidak ditemukan: {missing_kw}"
+                    return res
+
+            res["task_requirement_satisfied"] = True
             res["semantic_postcondition_passed"] = True
             res["semantic_status"] = "passed"
             res["detail"] = "Valid"
@@ -340,12 +410,23 @@ def get_artifact_postcondition_breakdown(
             if len(stripped) < min_chars:
                 res["detail"] = f"File teks terlalu pendek ({len(stripped)} < {min_chars} karakter): {art_path}"
                 return res
+
+            res["content_detected"] = True
+
             lower_text = stripped.lower()
-            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", [])]
+            req_sections = [str(s).strip().lower() for s in schema.get("required_sections", []) if str(s).strip()]
+            missing_sec = [s for s in req_sections if s not in lower_text]
+            if missing_sec:
+                res["detail"] = f"Bagian wajib {suffix} tidak ditemukan: {missing_sec}"
+                return res
+
+            req_kw = [str(k).strip().lower() for k in schema.get("required_keywords", []) if str(k).strip()]
             missing_kw = [k for k in req_kw if k not in lower_text]
             if missing_kw:
                 res["detail"] = f"Konten wajib {suffix} tidak ditemukan: {missing_kw}"
                 return res
+
+            res["task_requirement_satisfied"] = True
             res["semantic_postcondition_passed"] = True
             res["semantic_status"] = "passed"
             res["detail"] = "Valid"
@@ -356,6 +437,8 @@ def get_artifact_postcondition_breakdown(
 
     # AKSA-AGENT-003-R5: Unknown extensions MUST return 'unsupported', NEVER auto-pass semantic gate
     res["format_valid"] = False
+    res["content_detected"] = False
+    res["task_requirement_satisfied"] = False
     res["semantic_postcondition_passed"] = False
     res["semantic_status"] = "unsupported"
     res["unsupported_format"] = True
@@ -363,13 +446,120 @@ def get_artifact_postcondition_breakdown(
     return res
 
 
-def derive_expected_artifact_schema(prompt: str, art_path: Path) -> dict[str, Any]:
-    """Derive task-specific expected schema hints from user prompt for artifact verification."""
-    p_lower = (prompt or "").lower()
-    suffix = art_path.suffix.lower()
-    schema: dict[str, Any] = {}
-    if suffix in (".xlsx", ".xlsm") and any(k in p_lower for k in ("rumus", "formula", "=sum", "=average")):
+def _split_expectation_list(raw_fragment: str) -> list[str]:
+    """Parse comma/'dan'/'&'-separated column, section, or key specifications cleanly."""
+    cleaned = re.split(r"(?:,|\sdan\s|\sand\s|\s&\s|;)", raw_fragment.strip())
+    items: list[str] = []
+    for tok in cleaned:
+        t = tok.strip(" \t\r\n'\"`:.")
+        if t and len(t) <= 60 and t.lower() not in {"dengan", "untuk", "yang", "serta"}:
+            items.append(t)
+    return items
+
+
+def derive_expected_artifact_schema(
+    prompt: str,
+    art_path: Path | None = None,
+    plan_spec: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Derive structured pre-execution postcondition expectations from user prompt & optional plan spec (P2-03)."""
+    text = prompt or ""
+    p_lower = text.lower()
+    suffix = art_path.suffix.lower() if art_path is not None else ""
+    schema: dict[str, Any] = {
+        "expectation_source": "prompt+plan" if plan_spec else "prompt",
+    }
+
+    # Merge explicit plan_spec first as structured baseline
+    if isinstance(plan_spec, dict):
+        for k, v in plan_spec.items():
+            if v is not None:
+                schema[k] = list(v) if isinstance(v, list) else v
+
+    # 1. Formulas requirement for Excel / spreadsheets
+    if (not suffix or suffix in (".xlsx", ".xlsm")) and any(
+        k in p_lower for k in ("rumus", "formula", "=sum", "=average", "kalkulasi otomatis")
+    ):
         schema["require_formulas"] = True
+
+    # 2. Explicit column expectations: e.g., "kolom: Tanggal, Kategori, Nominal" or "columns Nama and Nilai"
+    col_match = re.search(
+        r"(?:\bkolom\b|\bcolumns?\b|\bheader\b)\s*(?::|terdiri\s+dari|berisi|yaitu|=)?\s*([^\n.;]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if col_match:
+        # Stop before trailing instruction clauses such as "dengan rumus ..." or "minimal 5 baris"
+        frag = re.split(r"\b(?:dengan\s+rumus|minimal\s+\d+|serta\s+grafik|beserta)\b", col_match.group(1), flags=re.IGNORECASE)[0]
+        cols = _split_expectation_list(frag)
+        if cols:
+            existing = list(schema.get("required_columns", []))
+            for c in cols:
+                if c not in existing:
+                    existing.append(c)
+            schema["required_columns"] = existing
+
+    # 3. Explicit section/heading expectations: e.g., "bagian: Ringkasan Eksekutif, Anggaran, Kesimpulan"
+    sec_match = re.search(
+        r"(?:\bbagian\b|\bsections?\b|\bbab\b)\s*(?::|terdiri\s+dari|meliputi|berisi|yaitu|=)?\s*([^\n.;]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if sec_match:
+        frag = re.split(r"\b(?:minimal\s+\d+|dalam\s+format)\b", sec_match.group(1), flags=re.IGNORECASE)[0]
+        secs = _split_expectation_list(frag)
+        if secs:
+            existing_secs = list(schema.get("required_sections", []))
+            for s in secs:
+                if s not in existing_secs:
+                    existing_secs.append(s)
+            schema["required_sections"] = existing_secs
+
+    # 4. Explicit JSON key expectations: e.g., "keys: status, total, items"
+    key_match = re.search(
+        r"(?:\bkunci\b|\bkeys?\b|\bfields?\b)\s*(?::|wajib|=)?\s*([^\n.;]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if key_match and (not suffix or suffix == ".json"):
+        keys = _split_expectation_list(key_match.group(1))
+        if keys:
+            existing_keys = list(schema.get("required_keys", []))
+            for k in keys:
+                if k not in existing_keys:
+                    existing_keys.append(k)
+            schema["required_keys"] = existing_keys
+
+    # 5. Minimum row / item / paragraph / page / slide requirements
+    row_match = re.search(r"(?:minimal|paling\s+sedikit|at\s+least)\s+(\d+)\s+(?:baris|rows?|data)\b", p_lower)
+    if row_match:
+        schema["min_rows"] = max(int(schema.get("min_rows", 1)), int(row_match.group(1)))
+
+    para_match = re.search(r"(?:minimal|paling\s+sedikit|at\s+least)\s+(\d+)\s+(?:paragraf|paragraphs?)\b", p_lower)
+    if para_match:
+        schema["min_paragraphs"] = max(int(schema.get("min_paragraphs", 1)), int(para_match.group(1)))
+
+    page_match = re.search(r"(?:minimal|paling\s+sedikit|at\s+least)\s+(\d+)\s+(?:halaman|pages?)\b", p_lower)
+    if page_match:
+        schema["min_pages"] = max(int(schema.get("min_pages", 1)), int(page_match.group(1)))
+
+    slide_match = re.search(r"(?:minimal|paling\s+sedikit|at\s+least)\s+(\d+)\s+(?:slide|slides)\b", p_lower)
+    if slide_match:
+        schema["min_slides"] = max(int(schema.get("min_slides", 1)), int(slide_match.group(1)))
+
+    # 6. Explicit required keywords if preceded by explicit content cue: e.g. 'wajib memuat kata "Q4 Revenue"'
+    kw_matches = re.findall(
+        r"(?:wajib\s+memuat|harus\s+berisi|memuat\s+kata|contain|include)\s+[\"']([^\"']{2,60})[\"']",
+        text,
+        re.IGNORECASE,
+    )
+    if kw_matches:
+        existing_kw = list(schema.get("required_keywords", []))
+        for kw in kw_matches:
+            if kw.strip() and kw.strip() not in existing_kw:
+                existing_kw.append(kw.strip())
+        schema["required_keywords"] = existing_kw
+
     return schema
 
 
@@ -377,11 +567,13 @@ def verify_artifact_postcondition(
     art_path: Path,
     expected_schema: dict[str, Any] | None = None,
 ) -> tuple[bool, str]:
-    """Verify that an artifact file exists, is supported, valid format, and satisfies semantic postconditions."""
+    """Verify that an artifact exists, is valid format, contains real content, and meets task requirements."""
     breakdown = get_artifact_postcondition_breakdown(art_path, expected_schema=expected_schema)
     is_ok = bool(
         breakdown["file_created"]
         and breakdown["format_valid"]
+        and breakdown["content_detected"]
+        and breakdown["task_requirement_satisfied"]
         and breakdown["semantic_postcondition_passed"]
         and not breakdown["unsupported_format"]
     )
@@ -577,6 +769,8 @@ class HierarchicalOrchestrator:
         sub_agents = [a for a in agents if a["id"] != supervisor["id"]]
 
         delegated_agents = self._select_relevant_sub_agents(prompt, sub_agents)
+        # Pre-execution structured task expectation specification (P2-03)
+        pre_execution_expectation = derive_expected_artifact_schema(prompt)
 
         # Resolve workspace directory explicitly (NO fallback to workspaces[0] or Path.cwd())
         target_ws_path: Path | None = None
@@ -1212,7 +1406,9 @@ class HierarchicalOrchestrator:
                     if not raw_path:
                         continue
                     art_path = Path(str(raw_path))
-                    expected_schema = derive_expected_artifact_schema(prompt, art_path)
+                    expected_schema = derive_expected_artifact_schema(
+                        prompt, art_path, plan_spec=pre_execution_expectation
+                    )
                     ok, reason = verify_artifact_postcondition(art_path, expected_schema=expected_schema)
                     if not ok:
                         postcondition_failed = True

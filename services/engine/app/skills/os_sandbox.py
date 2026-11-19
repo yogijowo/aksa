@@ -96,9 +96,12 @@ def _collect_macos_python_runtime_roots(read_roots: list[Path]) -> tuple[list[Pa
 
 def build_seatbelt_profile(workspace: Path, read_roots: list[Path]) -> str:
     """Build a strict macOS Seatbelt least-privilege ``(deny default)`` profile."""
-    ws_resolved = workspace.resolve()
+    from app.skills.windows_sandbox import validate_sandbox_read_root
+
+    ws_resolved = validate_sandbox_read_root(workspace)
+    validated_roots = [validate_sandbox_read_root(r) for r in read_roots]
     ws = _seatbelt_quote(str(ws_resolved))
-    exec_literals, runtime_subpaths = _collect_macos_python_runtime_roots([ws_resolved, *read_roots])
+    exec_literals, runtime_subpaths = _collect_macos_python_runtime_roots([ws_resolved, *validated_roots])
 
     exec_rules = "\n".join(f"    (literal {_seatbelt_quote(str(e))})" for e in exec_literals)
     read_rules = "\n".join(f"    (subpath {_seatbelt_quote(str(p))})" for p in runtime_subpaths)
@@ -157,31 +160,50 @@ def build_seatbelt_profile(workspace: Path, read_roots: list[Path]) -> str:
 
 
 def build_linux_bwrap_args(workspace: Path, read_roots: list[Path], cmd: list[str]) -> list[str]:
-    """Build hardened bubblewrap namespace arguments avoiding full host root exposure."""
+    """Build hardened bubblewrap namespace arguments avoiding full host root or /usr/local exposure."""
+    from app.skills.windows_sandbox import validate_sandbox_read_root
+
     bwrap = shutil.which("bwrap")
     if not bwrap:
         raise SandboxUnavailableError(
             "bubblewrap (bwrap) tidak ditemukan; eksekusi skrip ditolak (fail-closed)."
         )
-    ws = str(workspace.resolve())
+    ws = str(validate_sandbox_read_root(workspace, allow_system_usr=False))
     args: list[str] = [
         bwrap,
         "--unshare-all",
         "--die-with-parent",
         "--new-session",
         "--cap-drop", "ALL",
+        "--hostname", "aksa-sandbox",
         "--dev", "/dev",
         "--proc", "/proc",
         "--tmpfs", "/tmp",
     ]
-    # Expose only minimal system runtime paths read-only (never expose /home, /root, /run, /var, /etc/ssh)
-    for sys_ro in ("/usr", "/lib", "/lib64", "/bin", "/sbin", "/etc/alternatives", "/etc/ld.so.cache", "/etc/ssl/certs"):
+    # Expose only minimal scoped system runtime subpaths read-only
+    # (never expose /, /usr/local, /home, /root, /run, /var, /sys, or /etc secrets)
+    for sys_ro in (
+        "/usr/bin",
+        "/usr/lib",
+        "/usr/lib64",
+        "/usr/libexec",
+        "/usr/share",
+        "/lib",
+        "/lib64",
+        "/bin",
+        "/etc/alternatives",
+        "/etc/ld.so.cache",
+        "/etc/ssl/certs",
+    ):
         if Path(sys_ro).exists():
             args.extend(["--ro-bind-try", sys_ro, sys_ro])
     for r in read_roots:
-        resolved = str(r.resolve())
-        if resolved != ws:
-            args.extend(["--ro-bind-try", resolved, resolved])
+        resolved_path = validate_sandbox_read_root(r, allow_system_usr=True)
+        resolved = str(resolved_path)
+        if resolved in {ws, "/usr"}:
+            # Skip /usr itself so /usr/local is never implicitly exposed when sys.base_prefix == '/usr'
+            continue
+        args.extend(["--ro-bind-try", resolved, resolved])
     args.extend(["--bind", ws, ws, "--chdir", ws, *cmd])
     return args
 
@@ -215,9 +237,12 @@ async def execute_in_os_sandbox(
     cwd: Path,
     env: dict[str, str],
     workspace: Path,
-    read_roots: list[Path],
+    read_roots: list[Path] | None = None,
     timeout: float = 15.0,
     max_output_bytes: int = 1024 * 1024,
+    *,
+    required_read_roots: list[Path] | None = None,
+    optional_read_roots: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Unified OS-enforced sandboxed subprocess execution across macOS, Linux, and Windows."""
     if sys.platform == "win32":
@@ -231,6 +256,8 @@ async def execute_in_os_sandbox(
             read_roots,
             timeout,
             max_output_bytes,
+            required_read_roots=required_read_roots,
+            optional_read_roots=optional_read_roots,
         )
         return {
             "exit_code": raw["exit_code"],
@@ -238,7 +265,12 @@ async def execute_in_os_sandbox(
             "stderr": raw["stderr"].decode("utf-8", errors="replace"),
         }
 
-    wrapped_cmd = wrap_command(cmd, workspace, read_roots)
+    combined_roots = [
+        *(read_roots or []),
+        *(required_read_roots or []),
+        *(optional_read_roots or []),
+    ]
+    wrapped_cmd = wrap_command(cmd, workspace, combined_roots)
     proc = await asyncio.create_subprocess_exec(
         *wrapped_cmd,
         cwd=str(cwd),

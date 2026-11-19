@@ -32,9 +32,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await seed_default_indonesian_team(db_manager)
     await privacy_policy_gate.ensure_loaded_from_db(db_manager)
 
-    # Write atomic runtime port manifest (AKSA-SEC-004-R2 / AKSA-SEC-004-R5)
+    # Write atomic runtime port manifest honoring per-launch AKSA_MANIFEST_PATH (P2-02)
+    from pathlib import Path
+    if os.name != "nt":
+        try:
+            os.chmod(settings.runtime_dir, 0o700)
+        except OSError:
+            pass
+
     launch_id = os.environ.get("AKSA_LAUNCH_ID", "").strip()
-    port_file = settings.runtime_dir / "engine_port.json"
+    env_manifest = os.environ.get("AKSA_MANIFEST_PATH", "").strip()
+    runtime_dir_resolved = settings.runtime_dir.resolve()
+    if env_manifest:
+        cand_manifest = Path(env_manifest).resolve()
+        if cand_manifest.parent != runtime_dir_resolved:
+            raise RuntimeError("AKSA_MANIFEST_PATH harus berada di dalam direktori runtime aplikasi.")
+        port_file = cand_manifest
+    else:
+        port_file = settings.runtime_dir / "engine_port.json"
+
     loopback_host = "127.0.0.1" if settings.host in ("127.0.0.1", "localhost") else settings.host
     runtime_info = {
         "host": loopback_host,
@@ -46,7 +62,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     }
     try:
         import json
-        temp_port_file = settings.runtime_dir / f"engine_port.json.tmp.{os.getpid()}"
+        if port_file.is_symlink():
+            raise RuntimeError(f"Target manifest tidak boleh berupa symlink: '{port_file}'")
+        temp_port_file = port_file.parent / f"{port_file.name}.tmp.{os.getpid()}"
+        if temp_port_file.is_symlink():
+            temp_port_file.unlink(missing_ok=True)
         fd = os.open(str(temp_port_file), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(runtime_info, indent=2))

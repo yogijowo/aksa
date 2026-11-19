@@ -151,8 +151,9 @@ class PublisherTrustStore:
             return
         if getattr(self, "_load_error", None):
             raise PermissionError(f"Trust store dalam mode fail-closed: {self._load_error}")
+        parent_existed = self._persist_path.parent.exists()
         self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-        if sys.platform != "win32":
+        if not parent_existed and sys.platform != "win32":
             try:
                 os.chmod(str(self._persist_path.parent), 0o700)
             except OSError:
@@ -1263,13 +1264,23 @@ class AgentSkillsManager:
         # Any sandbox setup failure aborts fail-closed without executing untrusted code.
         from app.skills.os_sandbox import execute_in_os_sandbox
         engine_root = Path(__file__).resolve().parent.parent.parent
-        read_roots = [
-            engine_root,
-            Path(sys.prefix),
-            Path(sys.base_prefix),
-            Path(sys.executable).resolve().parent,
-            script_file.parent,
-        ]
+        prefix_path = Path(sys.prefix)
+        base_prefix_path = Path(sys.base_prefix)
+        exe_dir_path = Path(sys.executable).resolve().parent
+
+        def _is_system_protected_dir(p: Path) -> bool:
+            norm = str(p).replace("\\", "/").lower()
+            return any(tok in norm for tok in ("/program files", "/windows/", ":\\program files", ":\\windows"))
+
+        required_read_roots: list[Path] = [engine_root, script_file.parent]
+        optional_read_roots: list[Path] = []
+        if prefix_path != base_prefix_path and not _is_system_protected_dir(prefix_path):
+            required_read_roots.append(prefix_path)
+        else:
+            optional_read_roots.append(prefix_path)
+        for candidate in (base_prefix_path, exe_dir_path):
+            if candidate not in required_read_roots and candidate not in optional_read_roots:
+                optional_read_roots.append(candidate)
 
         try:
             exec_res = await execute_in_os_sandbox(
@@ -1277,7 +1288,8 @@ class AgentSkillsManager:
                 cwd=ws,
                 env=safe_env,
                 workspace=ws,
-                read_roots=read_roots,
+                required_read_roots=required_read_roots,
+                optional_read_roots=optional_read_roots,
                 timeout=timeout,
             )
             stdout_str = exec_res["stdout"]

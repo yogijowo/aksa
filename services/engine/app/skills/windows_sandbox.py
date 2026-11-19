@@ -18,7 +18,9 @@ prior to isolation attachment:
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -26,9 +28,97 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger("aksa.sandbox.windows")
+
+_DRIVE_ROOT_RE = re.compile(r"^[a-z]:/?$")
+_BROAD_POSIX_PREFIXES = {
+    "",
+    "/",
+    "/users",
+    "/home",
+    "/root",
+    "/etc",
+    "/var",
+    "/tmp",
+    "/private",
+    "/private/etc",
+    "/private/var",
+    "/library",
+    "/system",
+    "/applications",
+    "/program files",
+    "/program files (x86)",
+    "/programdata",
+    "/windows",
+}
+
 
 class WindowsSandboxError(PermissionError):
     """Raised when Windows AppContainer or Job Object confinement fails (fail-closed)."""
+
+
+def redact_path_for_log(path: Path) -> str:
+    """Return a path summary safe for audit logs without exposing full user directories."""
+    name = path.name or path.drive or "root"
+    return f"<path:{name}:depth={len(path.parts)}>"
+
+
+def _normalize_posix_lower(raw: str | Path) -> str:
+    s = str(raw).replace("\\", "/").rstrip("/").lower()
+    return s or "/"
+
+
+def validate_sandbox_read_root(root: Path, *, allow_system_usr: bool = False) -> Path:
+    """Reject overly broad filesystem, drive, or user-profile roots before ACL or bind mount."""
+    raw_norm = _normalize_posix_lower(root)
+    if _DRIVE_ROOT_RE.match(raw_norm):
+        raise WindowsSandboxError(
+            f"Root baca sandbox terlalu luas dan ditolak: {redact_path_for_log(root)}"
+        )
+
+    resolved = root.resolve(strict=False)
+    if resolved == resolved.parent or len(resolved.parts) <= 1:
+        raise WindowsSandboxError(
+            f"Root baca sandbox tidak boleh berupa drive/filesystem root: {redact_path_for_log(resolved)}"
+        )
+
+    res_norm = _normalize_posix_lower(resolved)
+    if _DRIVE_ROOT_RE.match(res_norm):
+        raise WindowsSandboxError(
+            f"Root baca sandbox terlalu luas dan ditolak: {redact_path_for_log(resolved)}"
+        )
+
+    broad_set = set(_BROAD_POSIX_PREFIXES)
+    if not allow_system_usr:
+        broad_set.add("/usr")
+
+    # Add dynamic user home & OS profile dirs if available
+    try:
+        home = Path.home().resolve(strict=False)
+        broad_set.add(_normalize_posix_lower(home))
+        if home.parent != home:
+            broad_set.add(_normalize_posix_lower(home.parent))
+    except Exception:
+        pass
+
+    for env_key in ("USERPROFILE", "HOME", "PUBLIC", "ALLUSERSPROFILE", "WINDIR", "SYSTEMROOT"):
+        val = os.environ.get(env_key)
+        if val:
+            broad_set.add(_normalize_posix_lower(val))
+
+    if raw_norm in broad_set or res_norm in broad_set:
+        raise WindowsSandboxError(
+            f"Root baca sandbox terlalu luas untuk ACL AppContainer: {redact_path_for_log(resolved)}"
+        )
+
+    # Reject <drive>:/users, <drive>:/windows, <drive>:/program files, etc. on Windows (even if inspected on POSIX)
+    broad_win_re = r"^[a-z]:/(users|windows|programdata|program files|program files \(x86\))$"
+    if re.match(broad_win_re, raw_norm) or re.match(broad_win_re, res_norm):
+        raise WindowsSandboxError(
+            f"Root sistem/profil pengguna terlalu luas dan ditolak: {redact_path_for_log(resolved)}"
+        )
+
+    return resolved
 
 
 def _escape_env_block(env: dict[str, str]) -> ctypes.Array[ctypes.c_wchar]:
@@ -48,17 +138,46 @@ def run_windows_appcontainer_sandboxed(
     cwd: Path,
     env: dict[str, str],
     workspace: Path,
-    read_roots: list[Path],
+    read_roots: list[Path] | None = None,
     timeout: float = 15.0,
     max_output_bytes: int = 1024 * 1024,
+    *,
+    required_read_roots: list[Path] | None = None,
+    optional_read_roots: list[Path] | None = None,
 ) -> dict[str, Any]:
     """Execute ``cmd`` inside a zero-capability Windows AppContainer + Job Object.
 
-    Raises ``WindowsSandboxError`` if not running on Windows or if any isolation
-    primitive fails to attach before ``ResumeThread``.
+    Security invariants:
+    - Overly broad roots (drive roots, ``C:\\Users``, ``/``, user home) are rejected fail-closed.
+    - All ``required_read_roots`` MUST exist and receive explicit R/X ACL grants (fail-closed).
+    - ``PROC_THREAD_ATTRIBUTE_HANDLE_LIST`` restricts child handle inheritance strictly to
+      the stdout and stderr write pipe handles.
     """
     if sys.platform != "win32":
         raise WindowsSandboxError("Windows AppContainer sandbox hanya dapat dijalankan di Windows.")
+
+    ws_resolved = validate_sandbox_read_root(workspace)
+    req_candidates = (
+        list(read_roots or [])
+        if required_read_roots is None
+        else [*list(read_roots or []), *required_read_roots]
+    )
+    opt_candidates = list(optional_read_roots or [])
+
+    validated_required: list[Path] = []
+    seen_roots: set[Path] = {ws_resolved}
+    for root in req_candidates:
+        rp = validate_sandbox_read_root(root)
+        if rp not in seen_roots:
+            seen_roots.add(rp)
+            validated_required.append(rp)
+
+    validated_optional: list[Path] = []
+    for root in opt_candidates:
+        rp = validate_sandbox_read_root(root)
+        if rp not in seen_roots:
+            seen_roots.add(rp)
+            validated_optional.append(rp)
 
     from ctypes import wintypes
 
@@ -72,6 +191,7 @@ def run_windows_appcontainer_sandboxed(
     CREATE_UNICODE_ENVIRONMENT = 0x00000400
     EXTENDED_STARTUPINFO_PRESENT = 0x00080000
     STARTF_USESTDHANDLES = 0x00000100
+    PROC_THREAD_ATTRIBUTE_HANDLE_LIST = 0x00020002
     PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES = 0x0002000B
     HANDLE_FLAG_INHERIT = 0x00000001
     WAIT_TIMEOUT = 0x00000102
@@ -240,6 +360,13 @@ def run_windows_appcontainer_sandboxed(
     kernel32.UpdateProcThreadAttribute.restype = wintypes.BOOL
     kernel32.DeleteProcThreadAttributeList.argtypes = [ctypes.c_void_p]
     kernel32.DeleteProcThreadAttributeList.restype = None
+    kernel32.CreatePipe.argtypes = [
+        ctypes.POINTER(wintypes.HANDLE), ctypes.POINTER(wintypes.HANDLE),
+        ctypes.POINTER(SECURITY_ATTRIBUTES), wintypes.DWORD,
+    ]
+    kernel32.CreatePipe.restype = wintypes.BOOL
+    kernel32.SetHandleInformation.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD]
+    kernel32.SetHandleInformation.restype = wintypes.BOOL
     kernel32.CreateProcessW.argtypes = [
         wintypes.LPCWSTR, wintypes.LPWSTR, ctypes.c_void_p, ctypes.c_void_p,
         wintypes.BOOL, wintypes.DWORD, ctypes.c_void_p, wintypes.LPCWSTR,
@@ -321,13 +448,59 @@ def run_windows_appcontainer_sandboxed(
         else:
             raise WindowsSandboxError(f"CreateAppContainerProfile gagal: HRESULT {hr:#x}")
 
-        # 2. Grant workspace R/W ACL (mandatory) and read_roots R/X ACL (best-effort if system-owned)
-        if not _modify_acl(workspace, FILE_ALL_ACCESS, GRANT_ACCESS):
-            raise WindowsSandboxError(f"Gagal memasang ACL AppContainer pada workspace '{workspace}'.")
-        modified_acls.append(workspace)
-        for root in read_roots:
+        # 2. Grant workspace R/W ACL (mandatory), required_read_roots R/X ACL (fail-closed),
+        #    and optional_read_roots R/X ACL (audited non-fatally).
+        if not _modify_acl(ws_resolved, FILE_ALL_ACCESS, GRANT_ACCESS):
+            logger.warning(
+                "windows_sandbox.acl_workspace_denied target=%s",
+                redact_path_for_log(ws_resolved),
+            )
+            raise WindowsSandboxError(
+                f"Gagal memasang ACL AppContainer pada workspace {redact_path_for_log(ws_resolved)}."
+            )
+        modified_acls.append(ws_resolved)
+
+        req_granted = 0
+        for root in validated_required:
+            if not root.exists():
+                logger.warning(
+                    "windows_sandbox.acl_required_missing target=%s",
+                    redact_path_for_log(root),
+                )
+                raise WindowsSandboxError(
+                    f"Root runtime wajib tidak ditemukan untuk sandbox AppContainer: {redact_path_for_log(root)}."
+                )
+            if not _modify_acl(root, FILE_READ_EXEC, GRANT_ACCESS):
+                logger.warning(
+                    "windows_sandbox.acl_required_failed target=%s",
+                    redact_path_for_log(root),
+                )
+                raise WindowsSandboxError(
+                    f"Gagal memasang ACL read/exec wajib pada {redact_path_for_log(root)}."
+                )
+            modified_acls.append(root)
+            req_granted += 1
+
+        opt_granted = 0
+        opt_skipped = 0
+        for root in validated_optional:
             if root.exists() and _modify_acl(root, FILE_READ_EXEC, GRANT_ACCESS):
                 modified_acls.append(root)
+                opt_granted += 1
+            else:
+                opt_skipped += 1
+                logger.debug(
+                    "windows_sandbox.acl_optional_skipped target=%s exists=%s",
+                    redact_path_for_log(root),
+                    root.exists(),
+                )
+
+        logger.info(
+            "windows_sandbox.acl_applied required_granted=%d optional_granted=%d optional_skipped=%d",
+            req_granted,
+            opt_granted,
+            opt_skipped,
+        )
 
         # 3. Prepare Job Object BEFORE process resumes
         h_job = kernel32.CreateJobObjectW(None, None)
@@ -347,11 +520,29 @@ def run_windows_appcontainer_sandboxed(
         ):
             raise WindowsSandboxError(f"SetInformationJobObject gagal: err={_win_last_error()}")
 
-        # 4. Build StartupInfoEx with AppContainer SECURITY_CAPABILITIES (0 capabilities)
+        # 4. Inheritable pipes for stdout/stderr ONLY (restrict child handle inheritance explicitly)
+        sa = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), None, True)
+        h_out_r, h_out_w = wintypes.HANDLE(), wintypes.HANDLE()
+        h_err_r, h_err_w = wintypes.HANDLE(), wintypes.HANDLE()
+        if not kernel32.CreatePipe(ctypes.byref(h_out_r), ctypes.byref(h_out_w), ctypes.byref(sa), 0):
+            raise WindowsSandboxError("Gagal membuat stdout pipe.")
+        handles_to_close.extend([h_out_r, h_out_w])
+        if not kernel32.CreatePipe(ctypes.byref(h_err_r), ctypes.byref(h_err_w), ctypes.byref(sa), 0):
+            raise WindowsSandboxError("Gagal membuat stderr pipe.")
+        handles_to_close.extend([h_err_r, h_err_w])
+
+        for read_h in (h_out_r, h_err_r):
+            if not kernel32.SetHandleInformation(read_h, HANDLE_FLAG_INHERIT, 0):
+                raise WindowsSandboxError(f"SetHandleInformation read pipe gagal: err={_win_last_error()}")
+        for write_h in (h_out_w, h_err_w):
+            if not kernel32.SetHandleInformation(write_h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT):
+                raise WindowsSandboxError(f"SetHandleInformation write pipe gagal: err={_win_last_error()}")
+
+        # 5. Build StartupInfoEx with BOTH AppContainer SECURITY_CAPABILITIES and explicit HANDLE_LIST
         attr_size = ctypes.c_size_t(0)
-        kernel32.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(attr_size))
+        kernel32.InitializeProcThreadAttributeList(None, 2, 0, ctypes.byref(attr_size))
         attr_buf = (ctypes.c_byte * attr_size.value)()
-        if not kernel32.InitializeProcThreadAttributeList(attr_buf, 1, 0, ctypes.byref(attr_size)):
+        if not kernel32.InitializeProcThreadAttributeList(attr_buf, 2, 0, ctypes.byref(attr_size)):
             raise WindowsSandboxError(f"InitializeProcThreadAttributeList gagal: err={_win_last_error()}")
         attr_initialized = True
 
@@ -362,24 +553,25 @@ def run_windows_appcontainer_sandboxed(
             attr_buf, 0, PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES,
             ctypes.byref(sec_caps), ctypes.sizeof(sec_caps), None, None,
         ):
-            raise WindowsSandboxError(f"UpdateProcThreadAttribute gagal: err={_win_last_error()}")
+            raise WindowsSandboxError(f"UpdateProcThreadAttribute SECURITY_CAPABILITIES gagal: err={_win_last_error()}")
 
-        # 5. Inheritable pipes for stdout/stderr
-        sa = SECURITY_ATTRIBUTES(ctypes.sizeof(SECURITY_ATTRIBUTES), None, True)
-        h_out_r, h_out_w = wintypes.HANDLE(), wintypes.HANDLE()
-        h_err_r, h_err_w = wintypes.HANDLE(), wintypes.HANDLE()
-        if not kernel32.CreatePipe(ctypes.byref(h_out_r), ctypes.byref(h_out_w), ctypes.byref(sa), 0):
-            raise WindowsSandboxError("Gagal membuat stdout pipe.")
-        handles_to_close.extend([h_out_r, h_out_w])
-        if not kernel32.CreatePipe(ctypes.byref(h_err_r), ctypes.byref(h_err_w), ctypes.byref(sa), 0):
-            raise WindowsSandboxError("Gagal membuat stderr pipe.")
-        handles_to_close.extend([h_err_r, h_err_w])
-        kernel32.SetHandleInformation(h_out_r, HANDLE_FLAG_INHERIT, 0)
-        kernel32.SetHandleInformation(h_err_r, HANDLE_FLAG_INHERIT, 0)
+        # Keep inherit_handle_list referenced until CreateProcessW + DeleteProcThreadAttributeList complete
+        inherit_handle_list = (wintypes.HANDLE * 2)(h_out_w.value, h_err_w.value)
+        if not kernel32.UpdateProcThreadAttribute(
+            attr_buf,
+            0,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            inherit_handle_list,
+            ctypes.sizeof(inherit_handle_list),
+            None,
+            None,
+        ):
+            raise WindowsSandboxError(f"UpdateProcThreadAttribute HANDLE_LIST gagal: err={_win_last_error()}")
 
         si_ex = STARTUPINFOEXW()
         si_ex.StartupInfo.cb = ctypes.sizeof(STARTUPINFOEXW)
         si_ex.StartupInfo.dwFlags = STARTF_USESTDHANDLES
+        si_ex.StartupInfo.hStdInput = wintypes.HANDLE(0)
         si_ex.StartupInfo.hStdOutput = h_out_w
         si_ex.StartupInfo.hStdError = h_err_w
         si_ex.lpAttributeList = ctypes.cast(attr_buf, ctypes.c_void_p)

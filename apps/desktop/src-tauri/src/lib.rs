@@ -1,8 +1,8 @@
 pub mod sidecar;
 
 use sidecar::{
-    get_engine_connection_info, get_engine_lifecycle_state, sync_engine_port,
-    update_engine_lifecycle_state, LifecycleState, SidecarState,
+    get_engine_connection_info, get_engine_lifecycle_state, prepare_runtime_manifest_slot,
+    sync_engine_port, update_engine_lifecycle_state, LifecycleState, SidecarState,
 };
 use tauri::Manager;
 use tauri_plugin_shell::ShellExt;
@@ -27,25 +27,35 @@ pub fn run() {
             let info = state.info.lock().map_err(|e| e.to_string())?.clone();
             let launch_id = state.launch_id.clone();
 
-            // Resolve AppData dir & clean up any stale runtime manifest BEFORE spawn (AKSA-SEC-004-R5)
-            let app_data_opt = app.path().app_data_dir().ok();
-            if let Some(ref app_data) = app_data_opt {
-                let stale_manifest = app_data.join("runtime").join("engine_port.json");
-                if stale_manifest.exists() {
-                    let _ = std::fs::remove_file(&stale_manifest);
+            // Resolve AppData dir & prepare unique per-launch runtime manifest slot BEFORE spawn (fail-closed)
+            let app_data = match app.path().app_data_dir() {
+                Ok(dir) => dir,
+                Err(e) => {
+                    state.set_state(LifecycleState::Failed);
+                    eprintln!("[AKSA Tauri Security Alert] Gagal menyelesaikan app_data_dir (spawn dibatalkan): {}", e);
+                    return Ok(());
                 }
-            }
+            };
+            let runtime_dir = app_data.join("runtime");
+            let manifest_path = match prepare_runtime_manifest_slot(&runtime_dir, &launch_id) {
+                Ok(p) => p,
+                Err(e) => {
+                    state.set_state(LifecycleState::Failed);
+                    eprintln!("[AKSA Tauri Security Alert] Gagal menyiapkan slot manifest runtime (spawn dibatalkan): {}", e);
+                    return Ok(());
+                }
+            };
+            state.set_manifest_path(manifest_path.clone());
 
             match app.shell().sidecar("aksa-engine") {
                 Ok(cmd) => {
-                    let mut cmd = cmd
+                    let cmd = cmd
                         .args(["--host", &info.host, "--port", "0", "--production"])
                         .env("AKSA_AUTH_TOKEN", &info.auth_token)
                         .env("AKSA_LAUNCH_ID", &launch_id)
+                        .env("AKSA_APPDATA_DIR", app_data.to_string_lossy().as_ref())
+                        .env("AKSA_MANIFEST_PATH", manifest_path.to_string_lossy().as_ref())
                         .env("PYTHONUNBUFFERED", "1");
-                    if let Some(ref app_data) = app_data_opt {
-                        cmd = cmd.env("AKSA_APPDATA_DIR", app_data.to_string_lossy().as_ref());
-                    }
 
                     match cmd.spawn() {
                         Ok((mut rx, child)) => {
@@ -61,6 +71,7 @@ pub fn run() {
                             );
 
                             let app_handle = app.handle().clone();
+                            let expected_manifest_path = manifest_path.clone();
                             tauri::async_runtime::spawn(async move {
                                 use tauri_plugin_shell::process::CommandEvent;
                                 while let Some(event) = rx.recv().await {
@@ -94,17 +105,14 @@ pub fn run() {
                                                     let s = app_handle.state::<SidecarState>();
                                                     let auth_token = s.info.lock().map(|i| i.auth_token.clone()).unwrap_or_default();
 
-                                                    // Mandatory manifest lookup (brief retry if filesystem rename lagged slightly)
+                                                    // Mandatory per-launch manifest lookup (brief retry if filesystem rename lagged slightly)
                                                     let mut manifest_content: Option<String> = None;
-                                                    if let Ok(app_data) = app_handle.path().app_data_dir() {
-                                                        let manifest_path = app_data.join("runtime").join("engine_port.json");
-                                                        for _ in 0..10 {
-                                                            if let Ok(content) = std::fs::read_to_string(&manifest_path) {
-                                                                manifest_content = Some(content);
-                                                                break;
-                                                            }
-                                                            std::thread::sleep(std::time::Duration::from_millis(25));
+                                                    for _ in 0..10 {
+                                                        if let Ok(content) = std::fs::read_to_string(&expected_manifest_path) {
+                                                            manifest_content = Some(content);
+                                                            break;
                                                         }
+                                                        std::thread::sleep(std::time::Duration::from_millis(25));
                                                     }
 
                                                     match s.validate_and_sync_handshake(
