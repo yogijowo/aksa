@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 import os
 import secrets
@@ -256,7 +257,18 @@ def main() -> None:
     settings.host = args.host
     settings.port = args.port
 
-    uvicorn.run(app, host=settings.host, port=settings.port, log_level="info")
+    # AKSA-SEC-004-R4: the engine itself owns the listening socket (no bind-then-drop TOCTOU).
+    # Port 0 lets the OS pick a free port that stays bound until uvicorn serves on it.
+    import socket as _socket
+
+    listener = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    listener.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1) if sys.platform != "win32" else None
+    listener.bind((settings.host, settings.port))
+    listener.set_inheritable(True)
+    settings.port = listener.getsockname()[1]
+    config = uvicorn.Config(app, log_level="info")
+    server = uvicorn.Server(config)
+    server.run(sockets=[listener])
 
 
 if __name__ == "__main__":

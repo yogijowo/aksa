@@ -80,6 +80,18 @@ DANGEROUS_RUNTIME_MODULES = {
     "pdb",
 }
 
+# AKSA-SEC-003-R4: introspection attributes that allow recovering original (un-hooked) functions
+# from closures, frames, generators, or builtins regardless of the receiver expression.
+FORBIDDEN_INTROSPECTION_ATTRS = {
+    "__closure__", "cell_contents", "__globals__", "__code__", "__builtins__",
+    "__wrapped__", "__self__", "__func__", "__getattribute__", "__subclasses__",
+    "__mro__", "__bases__", "__base__", "__dict__", "__loader__", "__spec__",
+    "gi_frame", "gi_code", "cr_frame", "cr_code", "ag_frame", "f_globals",
+    "f_locals", "f_builtins", "f_back", "tb_frame", "co_code", "__reduce__",
+    "__reduce_ex__", "__import__",
+}
+FORBIDDEN_INTROSPECTION_CALLS = {"getattr", "setattr", "delattr", "vars", "globals", "locals", "breakpoint", "memoryview"}
+
 
 def scan_ast_security(script_content: str, filename: str = "<script>") -> None:
     """Perform static AST inspection of script content before execution (AKSA-SEC-003-R3)."""
@@ -89,10 +101,14 @@ def scan_ast_security(script_content: str, filename: str = "<script>") -> None:
         raise ValueError(f"Sintaks skrip tidak valid: {exc}")
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in FORBIDDEN_INTROSPECTION_ATTRS:
+            raise PermissionError(f"Literal introspeksi '{node.value}' dilarang oleh Sandbox AKSA.")
         # 1. Direct function calls to eval, exec, compile
         if isinstance(node, ast.Call):
             if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_CALLS:
                 raise PermissionError(f"Penggunaan fungsi dinamis '{node.func.id}()' dilarang oleh Sandbox AKSA.")
+            if isinstance(node.func, ast.Name) and node.func.id in FORBIDDEN_INTROSPECTION_CALLS:
+                raise PermissionError(f"Penggunaan fungsi introspeksi '{node.func.id}()' dilarang oleh Sandbox AKSA.")
             # Detect __import__ calls
             if isinstance(node.func, ast.Name) and node.func.id == "__import__":
                 raise PermissionError("Penggunaan '__import__()' dinamis dilarang oleh Sandbox AKSA.")
@@ -108,6 +124,10 @@ def scan_ast_security(script_content: str, filename: str = "<script>") -> None:
             mod = (node.module or "").split(".")[0]
             if mod in FORBIDDEN_MODULES or node.module in FORBIDDEN_MODULES:
                 raise PermissionError(f"Impor modul berisiko tinggi '{node.module}' dilarang oleh Sandbox AKSA.")
+
+        # 3a. Introspection attributes (closure / frame / globals recovery) on ANY receiver
+        elif isinstance(node, ast.Attribute) and node.attr in FORBIDDEN_INTROSPECTION_ATTRS:
+            raise PermissionError(f"Akses atribut introspeksi '{node.attr}' dilarang oleh Sandbox AKSA.")
 
         # 3. Attribute access to os.environ, os.system, sys.modules
         elif isinstance(node, ast.Attribute):

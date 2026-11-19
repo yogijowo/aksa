@@ -29,7 +29,7 @@ pub fn run() {
             match app.shell().sidecar("aksa-engine") {
                 Ok(cmd) => {
                     let cmd = cmd
-                        .args(["--host", &info.host, "--port", &info.port.to_string(), "--production"])
+                        .args(["--host", &info.host, "--port", "0", "--production"])
                         .env("AKSA_AUTH_TOKEN", &info.auth_token)
                         .env("PYTHONUNBUFFERED", "1");
 

@@ -118,6 +118,15 @@ def classify_mcp_tool_risk(
     return RiskLevel.UNKNOWN
 
 
+# AKSA-SEC-001-R4: 'system_trusted' is honoured ONLY for server IDs in this internal registry.
+# A third-party config cannot self-declare trust by setting trust_level="system_trusted".
+TRUSTED_SYSTEM_MCP_SERVER_IDS: frozenset[str] = frozenset({"aksa_core"})
+
+
+def is_system_trusted_server(server: MCPServerConfig) -> bool:
+    return server.trust_level == "system_trusted" and server.id in TRUSTED_SYSTEM_MCP_SERVER_IDS
+
+
 def check_mcp_server_permissions(server: MCPServerConfig, tool_name: str) -> tuple[bool, str | None]:
     """Verify that the MCP server declares the required permissions for the given tool (AKSA-SEC-001-R2, AKSA-SEC-001-R3).
 
@@ -132,7 +141,7 @@ def check_mcp_server_permissions(server: MCPServerConfig, tool_name: str) -> tup
     # AKSA-SEC-001-R3: Restrict wildcard to system-trusted internal servers only
     has_wildcard = "*" in server_perms or "all" in server_perms
     if has_wildcard:
-        if getattr(server, "trust_level", "") == "system_trusted":
+        if is_system_trusted_server(server):
             return True, None
         # Discard wildcards for third-party or unreviewed servers
         server_perms.discard("*")

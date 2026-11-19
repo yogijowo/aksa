@@ -11,12 +11,12 @@
 
 | Field | Value |
 | :--- | :--- |
-| **Current Phase** | `Phase 19 — Full Remediation of Independent Re-Audit Cycle 4 (19 Nov 2026) [COMPLETED]` |
-| **Release Status Classification** | `Public Beta & Release Candidate Certified (Grade: A+, Score: 99.5/100, v1.0.0-RC7) — All Findings from AKSA-INDEPENDENT-REAUDIT-CYCLE-4-2026-11-19.md Fully Remediated & Validated across 216 Automated Tests (198 Pytest, 9 Vitest, 9 Cargo Test)` |
-| **Verification Evidence** | `Backend: python -m pytest tests -> 198 passed in 13.30s | Frontend: npm run test -> 9 passed in 210ms | Monorepo Suite: npm test -> 207 passed in 13.8s | Rust Tests: cargo test -> 9 passed in 0.59s | Frontend Build: tsc --noEmit && vite build -> 0 errors (402 KB chunk) | Rust Check: cargo check -> 0 compiler warnings/errors | DevSecOps: npm audit --omit=dev -> 0 vulnerabilities` |
-| **Last Completed Task** | `Remediated all findings from Re-Audit Cycle 4: Hardened OS Sandbox Runner against pathlib, io.open, os.open, mutating os operations, and dynamic importlib; MCP wildcard permission restricted to system-trusted servers; Agent-bound skill execution DB policy enforcement (target_agent_id); Publisher trust store atomic disk persistence and administrative root lock; Format-specific artifact postcondition validation (XLSX, DOCX, PDF, JSON); Empirical confidence score and structured trace candidate extraction; Rust loopback HTTP health check and PID handshake validation. Added test_reaudit_cycle4_remediation.py (10 tests).` |
+| **Current Phase** | `Phase 20 — Remediation of Independent Re-Audit Cycle 5 (19 Nov 2026) [PARTIAL: macOS verified; Windows/Linux sandbox open]` |
+| **Release Status Classification** | `Internal Alpha / Private Beta (trusted skills only). Public Beta NOT claimed. Third-party skill execution is OS-sandboxed on macOS only and fail-closed elsewhere.` |
+| **Verification Evidence** | `pytest -> 217 passed | cargo test -> 12 passed | vitest -> 9 passed | vite build OK | npm audit -> 0 vulnerabilities (macOS local run)` |
+| **Last Completed Task** | `Cycle 5: OS-enforced sandbox (Seatbelt/bwrap, fail-closed), introspection AST bans, engine-owned port 0 socket, Rust nonce-HMAC identity handshake, mandatory agent_id, fail-closed trust store persistence, MCP trusted registry; fixed engine startup NameError (missing datetime import). Added test_reaudit_cycle5_remediation.py (19 tests).` |
 | **Known Limitations** | `1. macOS TCC Permissions: Accessibility & Screen Recording require explicit one-time confirmation in macOS System Settings. The app accurately reports NEEDS_USER_ACTION with step-by-step guidance. 2. Offline Local Provider Discovery: Probing offline Ollama (11434) / LM Studio (1234) ports times out safely in <0.8s without triggering any cloud fallbacks. 3. Physical Windows 11 hardware test pending prior to GA code signing.` |
-| **Next Immediate Action** | `Ready for final production binary packaging and distribution artifact signing.` |
+| **Next Immediate Action** | `Implement Windows AppContainer/Job Object sandbox, verify bwrap on Linux, add learned-skill replay evaluation, verify CI on Windows/macOS.` |
 | **Active Blockers** | `None` |
 
 ---
@@ -475,14 +475,6 @@
   - Upgraded independent audit score from **64/100** to **99.5/100 (Grade: A+, Public Beta Certified)**.
   - Ready for final binary release packaging (v1.0.0-RC7).
 
-
-
-
-
-
-
-
-
-
-
-
+### 2026-11-19 (Session 11 — Re-Audit Cycle 5)
+- See section 16 of `docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-5-2026-11-19.md`. New: `app/skills/os_sandbox.py`, `tests/test_reaudit_cycle5_remediation.py`; Rust `compute_nonce_hmac`/`verify_health_response`; engine binds own socket on port 0.
+- Verification: pytest 217, cargo 12, vitest 9, build OK, audit clean. Previous "99/100 Public Beta Certified" claims are withdrawn; the independent auditor score (65/100) stands until re-audited.

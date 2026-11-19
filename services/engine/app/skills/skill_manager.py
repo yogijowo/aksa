@@ -73,42 +73,64 @@ class PublisherTrustStore:
         raw_pub = base64.b64decode(root_public_key_b64)
         self._trusted_keys["aksa_official"] = ed25519.Ed25519PublicKey.from_public_bytes(raw_pub)
 
+    @staticmethod
+    def _payload_digest(payload: dict[str, Any]) -> str:
+        body = {k: v for k, v in payload.items() if k != "integrity_sha256"}
+        return hashlib.sha256(json.dumps(body, sort_keys=True).encode("utf-8")).hexdigest()
+
     def _load_persisted_state(self) -> None:
-        """Load enrolled publishers and revocation list from persistent disk storage (AKSA-SEC-002-R3)."""
+        """Load persisted trust state; corrupt or tampered files fail closed (AKSA-SEC-002-R4)."""
+        self._load_error: str | None = None
+        legacy_migration = False
         if not self._persist_path or not self._persist_path.exists():
             return
         try:
-            content = self._persist_path.read_text(encoding="utf-8")
-            data = json.loads(content)
-            for pub_id in data.get("revoked", []):
-                self._revoked_keys.add(pub_id)
+            data = json.loads(self._persist_path.read_text(encoding="utf-8"))
+            if "integrity_sha256" in data:
+                if data["integrity_sha256"] != self._payload_digest(data):
+                    raise ValueError("checksum integritas trust store tidak cocok")
+            else:
+                legacy_migration = True  # pre-R4 file without checksum: accepted once, re-signed below
+            revoked = set(data.get("revoked", []))
+            keys: dict[str, ed25519.Ed25519PublicKey] = {}
+            raw_keys: dict[str, str] = {}
             for pub_id, key_b64 in data.get("publishers", {}).items():
-                if pub_id not in self._revoked_keys:
-                    raw = base64.b64decode(key_b64)
-                    self._trusted_keys[pub_id] = ed25519.Ed25519PublicKey.from_public_bytes(raw)
-                    self._persisted_raw_keys[pub_id] = key_b64
+                if pub_id not in revoked:
+                    keys[pub_id] = ed25519.Ed25519PublicKey.from_public_bytes(base64.b64decode(key_b64))
+                    raw_keys[pub_id] = key_b64
+            self._revoked_keys |= revoked
+            self._trusted_keys.update(keys)
+            self._persisted_raw_keys = raw_keys
             self._enrollment_audit_trail = data.get("audit_trail", [])
+            if legacy_migration:
+                self._persist()
         except Exception as exc:
-            print(f"[AKSA Trust Store] Gagal memuat state persistensi kunci: {exc}", file=sys.stderr)
+            # Trust ONLY the root key; refuse all mutations until an operator repairs the file.
+            self._load_error = str(exc)
+            print(f"[AKSA Trust Store] State persistensi korup/dimanipulasi, mode fail-closed: {exc}", file=sys.stderr)
 
     def _persist(self) -> None:
-        """Atomically persist trust store state to disk."""
+        """Atomically persist state with 0600 permissions; any failure raises (fail-closed)."""
         if not self._persist_path:
             return
-        try:
-            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
-            payload = {
-                "version": "1.0",
-                "publishers": self._persisted_raw_keys,
-                "revoked": list(self._revoked_keys),
-                "audit_trail": self._enrollment_audit_trail,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-            tmp = self._persist_path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            tmp.replace(self._persist_path)
-        except Exception as exc:
-            print(f"[AKSA Trust Store] Gagal menyimpan state persistensi kunci: {exc}", file=sys.stderr)
+        if getattr(self, "_load_error", None):
+            raise PermissionError(f"Trust store dalam mode fail-closed: {self._load_error}")
+        payload: dict[str, Any] = {
+            "version": "1.0",
+            "publishers": self._persisted_raw_keys,
+            "revoked": sorted(self._revoked_keys),
+            "audit_trail": self._enrollment_audit_trail,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        payload["integrity_sha256"] = self._payload_digest(payload)
+        self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._persist_path.with_suffix(".tmp")
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, indent=2))
+            fh.flush()
+            os.fsync(fh.fileno())
+        tmp.replace(self._persist_path)
 
     def register_publisher(
         self,
@@ -144,6 +166,7 @@ class PublisherTrustStore:
 
         raw = base64.b64decode(public_key_b64)
         pub_key = ed25519.Ed25519PublicKey.from_public_bytes(raw)
+        snapshot = (dict(self._trusted_keys), dict(self._persisted_raw_keys), list(self._enrollment_audit_trail))
         self._trusted_keys[publisher_id] = pub_key
         self._persisted_raw_keys[publisher_id] = public_key_b64
         self._enrollment_audit_trail.append({
@@ -152,7 +175,11 @@ class PublisherTrustStore:
             "root_signature_b64": root_signature_b64,
             "enrolled_at": datetime.now(timezone.utc).isoformat(),
         })
-        self._persist()
+        try:
+            self._persist()
+        except Exception:
+            self._trusted_keys, self._persisted_raw_keys, self._enrollment_audit_trail = snapshot
+            raise
 
     @staticmethod
     def sign_publisher_delegation(
@@ -167,10 +194,15 @@ class PublisherTrustStore:
 
     def revoke_publisher(self, publisher_id: str) -> None:
         """Revoke a publisher key immediately (AKSA-SEC-002, AKSA-SEC-002-R3)."""
+        snapshot = (set(self._revoked_keys), dict(self._trusted_keys), dict(self._persisted_raw_keys))
         self._revoked_keys.add(publisher_id)
         self._trusted_keys.pop(publisher_id, None)
         self._persisted_raw_keys.pop(publisher_id, None)
-        self._persist()
+        try:
+            self._persist()
+        except Exception:
+            self._revoked_keys, self._trusted_keys, self._persisted_raw_keys = snapshot
+            raise
 
     def is_revoked(self, publisher_id: str) -> bool:
         return publisher_id in self._revoked_keys
@@ -1074,6 +1106,11 @@ class AgentSkillsManager:
 
         # AKSA-SKILL-002-R3: Enforce agent ownership at DB policy layer (fail-closed)
         target_agent_id = installed.get("target_agent_id")
+        if target_agent_id and not agent_id:
+            raise PermissionError(
+                f"Akses ditolak oleh isolasi agen AKSA: Keahlian '{skill_id}' terikat pada agen '{target_agent_id}' "
+                "sehingga 'agent_id' terverifikasi wajib disertakan (fail-closed)."
+            )
         if target_agent_id and agent_id and target_agent_id != agent_id:
             raise PermissionError(
                 f"Akses ditolak oleh isolasi agen AKSA: Keahlian '{skill_id}' terikat secara eksklusif "
@@ -1153,6 +1190,18 @@ class AgentSkillsManager:
             "--script-args",
             json.dumps(args or []),
         ]
+
+        # AKSA-SEC-003-R4: OS-enforced sandbox is the security boundary (fail-closed if unavailable).
+        from app.skills.os_sandbox import wrap_command
+        engine_root = Path(__file__).resolve().parent.parent.parent
+        read_roots = [
+            engine_root,
+            Path(sys.prefix),
+            Path(sys.base_prefix),
+            Path(sys.executable).resolve().parent,
+            script_file.parent,
+        ]
+        runner_cmd = wrap_command(runner_cmd, ws, read_roots)
 
         popen_kwargs: dict[str, Any] = {}
         if sys.platform != "win32":

@@ -138,6 +138,51 @@ impl Drop for SidecarState {
     }
 }
 
+/// Compute lowercase-hex HMAC-SHA256(token, nonce).
+pub fn compute_nonce_hmac(auth_token: &str, nonce: &str) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(auth_token.as_bytes())
+        .expect("HMAC accepts keys of any length");
+    mac.update(nonce.as_bytes());
+    hex::encode(mac.finalize().into_bytes())
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// Validate a raw HTTP health response: status 200, JSON body, engine marker and matching nonce HMAC.
+pub fn verify_health_response(response: &str, auth_token: &str, nonce: &str) -> Result<bool, String> {
+    let status_line = response.lines().next().unwrap_or("");
+    if !status_line.contains(" 200") {
+        return Err(format!("Health probe mengembalikan status tidak terduga: {}", status_line));
+    }
+    let body = response
+        .split_once("\r\n\r\n")
+        .map(|(_, b)| b)
+        .ok_or_else(|| "Respons health tidak memiliki body".to_string())?;
+    let json: serde_json::Value =
+        serde_json::from_str(body.trim()).map_err(|e| format!("Body health bukan JSON valid: {}", e))?;
+    if json.get("engine").and_then(|v| v.as_str()) != Some("aksa-engine") {
+        return Err("Respons health bukan dari aksa-engine".to_string());
+    }
+    let reported = json
+        .get("nonce_hmac")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Respons health tidak menyertakan nonce_hmac".to_string())?;
+    let expected = compute_nonce_hmac(auth_token, nonce);
+    if constant_time_eq(reported.as_bytes(), expected.as_bytes()) {
+        Ok(true)
+    } else {
+        Err("Verifikasi HMAC identitas engine gagal (kemungkinan proses palsu pada port ini)".to_string())
+    }
+}
+
+/// Loopback health probe with random nonce and HMAC challenge-response identity verification.
 pub fn verify_engine_health(port: u16, auth_token: &str, timeout_ms: u64) -> Result<bool, String> {
     let addr = format!("127.0.0.1:{}", port);
     let socket_addr = addr
@@ -146,7 +191,6 @@ pub fn verify_engine_health(port: u16, auth_token: &str, timeout_ms: u64) -> Res
 
     let mut stream = TcpStream::connect_timeout(&socket_addr, Duration::from_millis(timeout_ms))
         .map_err(|e| format!("Gagal menyambung ke engine sidecar pada port {}: {}", port, e))?;
-
     stream
         .set_read_timeout(Some(Duration::from_millis(timeout_ms)))
         .map_err(|e| format!("Gagal mengatur timeout baca: {}", e))?;
@@ -154,9 +198,10 @@ pub fn verify_engine_health(port: u16, auth_token: &str, timeout_ms: u64) -> Res
         .set_write_timeout(Some(Duration::from_millis(timeout_ms)))
         .map_err(|e| format!("Gagal mengatur timeout tulis: {}", e))?;
 
+    let nonce = Uuid::new_v4().as_simple().to_string();
     let request = format!(
-        "GET /api/v1/health HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-Aksa-Token: {}\r\nConnection: close\r\n\r\n",
-        port, auth_token
+        "GET /api/v1/health?nonce={} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nX-AKSA-Auth-Token: {}\r\nConnection: close\r\n\r\n",
+        nonce, port, auth_token
     );
     stream
         .write_all(request.as_bytes())
@@ -167,14 +212,7 @@ pub fn verify_engine_health(port: u16, auth_token: &str, timeout_ms: u64) -> Res
         .read_to_string(&mut response)
         .map_err(|e| format!("Gagal membaca respons health probe: {}", e))?;
 
-    if response.contains("200 OK") && response.contains("\"status\"") {
-        Ok(true)
-    } else {
-        Err(format!(
-            "Health probe mengembalikan respons tidak terduga: {}",
-            response.lines().next().unwrap_or("Kosong")
-        ))
-    }
+    verify_health_response(&response, auth_token, &nonce)
 }
 
 #[tauri::command]
@@ -323,22 +361,66 @@ mod tests {
         assert!(res.is_err());
     }
 
-    #[test]
-    fn test_verify_engine_health_mock_success() {
-        let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind test mock listener");
+    fn spawn_fake_health(body_fn: impl Fn(&str) -> String + Send + 'static) -> u16 {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind fake health server");
         let port = listener.local_addr().unwrap().port();
-
         std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                let mut buf = [0u8; 1024];
-                let _ = stream.read(&mut buf);
-                let response = "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"status\":\"ok\",\"version\":\"1.0.0\"}";
-                let _ = stream.write_all(response.as_bytes());
+                let mut buf = [0u8; 2048];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let nonce = req
+                    .split("nonce=")
+                    .nth(1)
+                    .and_then(|r| r.split(' ').next())
+                    .unwrap_or("")
+                    .to_string();
+                let body = body_fn(&nonce);
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{}",
+                    body
+                );
+                let _ = stream.write_all(resp.as_bytes());
             }
         });
+        port
+    }
 
-        let res = verify_engine_health(port, "aksa-valid-token", 1000);
-        assert!(res.is_ok());
-        assert_eq!(res.unwrap(), true);
+    #[test]
+    fn test_verify_engine_health_genuine_engine_hmac_passes() {
+        let token = "aksa-genuine-token";
+        let port = spawn_fake_health(move |nonce| {
+            format!(
+                "{{\"status\":\"ok\",\"engine\":\"aksa-engine\",\"nonce_hmac\":\"{}\"}}",
+                compute_nonce_hmac(token, nonce)
+            )
+        });
+        assert_eq!(verify_engine_health(port, token, 1000), Ok(true));
+    }
+
+    #[test]
+    fn test_verify_engine_health_fake_server_without_hmac_rejected() {
+        let port = spawn_fake_health(|_| "{\"status\":\"ok\",\"engine\":\"aksa-engine\"}".to_string());
+        let res = verify_engine_health(port, "aksa-genuine-token", 1000);
+        assert!(res.unwrap_err().contains("nonce_hmac"));
+    }
+
+    #[test]
+    fn test_verify_engine_health_port_takeover_wrong_hmac_rejected() {
+        // Attacker who does not know the token answers with an HMAC from a different key.
+        let port = spawn_fake_health(|nonce| {
+            format!(
+                "{{\"status\":\"ok\",\"engine\":\"aksa-engine\",\"nonce_hmac\":\"{}\"}}",
+                compute_nonce_hmac("attacker-guess", nonce)
+            )
+        });
+        let res = verify_engine_health(port, "aksa-genuine-token", 1000);
+        assert!(res.unwrap_err().contains("HMAC"));
+    }
+
+    #[test]
+    fn test_verify_engine_health_generic_200_server_rejected() {
+        let port = spawn_fake_health(|_| "{\"status\":\"ok\"}".to_string());
+        assert!(verify_engine_health(port, "aksa-genuine-token", 1000).is_err());
     }
 }

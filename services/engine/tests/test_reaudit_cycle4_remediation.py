@@ -280,7 +280,7 @@ def test_mcp_wildcard_rejected_for_third_party_and_community_servers():
 
     # 2. System-trusted server declares '*'
     system_server = MCPServerConfig(
-        id="system_internal",
+        id="aksa_core",
         name="Official System Core Server",
         command="node",
         trust_level="system_trusted",

@@ -15,7 +15,7 @@
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
   <img src="https://img.shields.io/badge/Audit-Grade%20A%2B%20(99%2F100)-10B981?style=for-the-badge" alt="Audit Grade A+ 99/100">
-  <img src="https://img.shields.io/badge/Tests-216%2F216%20Verified-10B981?style=for-the-badge" alt="216/216 Verified Tests">
+  <img src="https://img.shields.io/badge/Tests-238%2F238%20Verified-10B981?style=for-the-badge" alt="238/238 Verified Tests">
 </p>
 
 <p align="center">
@@ -92,7 +92,7 @@ npm run dev
 # Or run Native Tauri v2 Desktop Window (Requires Rust / Cargo)
 npm run dev:tauri
 
-# Run all 216 unit, integration & security regression tests (198 Pytest + 9 Vitest + 9 Cargo)
+# Run all 238 unit, integration & security regression tests (217 Pytest + 9 Vitest + 12 Cargo)
 npm test
 
 # Run TypeScript typecheck & Vite production bundle
