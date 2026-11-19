@@ -15,6 +15,7 @@ jobs:
   build-and-release:
     name: Build & Release (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -25,6 +26,9 @@ jobs:
           - os: windows-latest
             triple: x86_64-pc-windows-msvc
             ext: ".exe"
+          - os: ubuntu-latest
+            triple: x86_64-unknown-linux-gnu
+            ext: ""
 
     steps:
       - name: Checkout repository
@@ -46,6 +50,12 @@ jobs:
           toolchain: stable
           targets: ${{ matrix.triple }}
 
+      - name: Install Linux Tauri & Bubblewrap system dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bubblewrap libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf xdg-utils
+
       - name: Install Python dependencies & PyInstaller
         working-directory: services/engine
         run: |
@@ -54,47 +64,130 @@ jobs:
 
       - name: Run Python automated tests
         working-directory: services/engine
+        shell: bash
         run: |
-          python -m pytest tests -v
+          mkdir -p ../../build
+          python -m pytest tests -v -rs --durations=15 --junitxml=../../build/junit-pytest-${{ matrix.os }}.xml
+
+      - name: Enforce native Windows AppContainer runtime tests (fail on skip)
+        if: matrix.os == 'windows-latest'
+        working-directory: services/engine
+        shell: bash
+        run: |
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("../../build/junit-pytest-${{ matrix.os }}.xml").getroot()
+          required = {
+              "test_real_windows_appcontainer_blocks_network_and_outside_writes",
+              "test_p1_01_real_windows_child_cannot_inherit_unrelated_parent_handle",
+              "test_p2_01_verifier_real_sandbox_blocks_write_network_and_outside_access",
+              "test_p1_01_skill_replay_xlsx_end_to_end_works_inside_os_sandbox",
+          }
+          statuses = {}
+          for tc in root.iter("testcase"):
+              name = tc.attrib.get("name", "")
+              if name in required:
+                  statuses[name] = "skipped" if tc.find("skipped") is not None else ("failed" if tc.find("failure") is not None or tc.find("error") is not None else "passed")
+          print("Windows native sandbox test statuses:", statuses)
+          assert set(statuses) == required and all(v == "passed" for v in statuses.values()), f"Missing or skipped Windows tests: {statuses}"
+          PY
+
+      - name: Enforce native Linux Bubblewrap runtime tests (fail on skip)
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: services/engine
+        shell: bash
+        run: |
+          bwrap --version
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse("../../build/junit-pytest-${{ matrix.os }}.xml").getroot()
+          required = {
+              "test_real_linux_bwrap_isolates_home_and_network",
+              "test_p2_04_real_linux_bwrap_blocks_network_proc_symlinks_and_traversal",
+              "test_p2_01_verifier_real_sandbox_blocks_write_network_and_outside_access",
+              "test_p1_01_skill_replay_xlsx_end_to_end_works_inside_os_sandbox",
+          }
+          statuses = {}
+          for tc in root.iter("testcase"):
+              name = tc.attrib.get("name", "")
+              if name in required:
+                  statuses[name] = "skipped" if tc.find("skipped") is not None else ("failed" if tc.find("failure") is not None or tc.find("error") is not None else "passed")
+          print("Linux bwrap native sandbox test statuses:", statuses)
+          assert set(statuses) == required and all(v == "passed" for v in statuses.values()), f"Missing or skipped Linux tests: {statuses}"
+          PY
 
       - name: Build frozen native sidecar binary
         run: |
           python scripts/build_sidecar.py --triple ${{ matrix.triple }}
+
+      - name: Verify target-triple sidecar executable format and non-stub integrity
+        run: |
           python scripts/build_sidecar.py --verify-only --triple ${{ matrix.triple }}
+          python scripts/release_tooling.py verify-binary --executable apps/desktop/src-tauri/binaries/aksa-engine-${{ matrix.triple }}${{ matrix.ext }} --triple ${{ matrix.triple }}
 
       - name: Smoke test frozen native sidecar binary
         run: |
-          python scripts/release_tooling.py smoke-test --executable apps/desktop/src-tauri/binaries/aksa-engine-${{ matrix.triple }}${{ matrix.ext }} --require-executable
+          python scripts/release_tooling.py smoke-test --executable apps/desktop/src-tauri/binaries/aksa-engine-${{ matrix.triple }}${{ matrix.ext }} --triple ${{ matrix.triple }} --require-executable
 
-      - name: Install desktop dependencies
+      - name: Install desktop dependencies & audit production graph
         working-directory: apps/desktop
         run: |
           npm ci
+          npm audit --omit=dev --audit-level=high
 
-      - name: Build frontend bundle
+      - name: Run Desktop Frontend Vitest test suite
+        working-directory: apps/desktop
+        run: |
+          npm run test -- --reporter=verbose
+
+      - name: Run TypeScript strict typecheck
+        working-directory: apps/desktop
+        run: |
+          npx tsc --noEmit
+
+      - name: Build Vite production frontend bundle
         working-directory: apps/desktop
         run: |
           npm run build
 
+      - name: Run Rust native tests
+        run: |
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+
       - name: Build Tauri native application bundle
         working-directory: apps/desktop
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          NO_STRIP: "true"
         run: |
-          npx tauri build
+          npx tauri build --ci
 
-      - name: Prepare Release Dist Directory
+      - name: Prepare & Verify Release Dist Directory (fail-closed)
         shell: bash
         run: |
-          mkdir -p dist/release
-          # Copy compiled sidecar binary
+          rm -rf dist/release && mkdir -p dist/release
           cp apps/desktop/src-tauri/binaries/aksa-engine-${{ matrix.triple }}${{ matrix.ext }} dist/release/
-          # Copy Tauri bundles if generated
-          find apps/desktop/src-tauri/target/release/bundle -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" \) -exec cp {} dist/release/ \; || true
+          python scripts/release_tooling.py verify-binary --executable dist/release/aksa-engine-${{ matrix.triple }}${{ matrix.ext }} --triple ${{ matrix.triple }}
+
+          bundle_dir="apps/desktop/src-tauri/target/release/bundle"
+          if [ ! -d "$bundle_dir" ]; then
+            echo "❌ Tauri bundle directory missing: $bundle_dir"
+            exit 1
+          fi
+          find "$bundle_dir" -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" \) -exec cp {} dist/release/ \;
+          bundle_count=$(find dist/release -maxdepth 1 -type f \( -name "*.dmg" -o -name "*.msi" -o -name "*.exe" -o -name "*.deb" -o -name "*.AppImage" \) ! -name "aksa-engine-*" | wc -l)
+          if [ "$bundle_count" -lt 1 ]; then
+            echo "❌ Zero Tauri installer packages (.dmg/.msi/.exe/.deb/.AppImage) produced for ${{ matrix.triple }}!"
+            ls -laR "$bundle_dir"
+            exit 1
+          fi
+          ls -lh dist/release/
 
       - name: Generate CycloneDX SBOM for release
         run: |
           python scripts/release_tooling.py sbom --output dist/release/aksa-sbom-${{ matrix.triple }}.cyclonedx.json
 
-      - name: Generate SHA-256 Checksums (SHA256SUMS.txt)
+      - name: Generate & Verify SHA-256 Checksums (SHA256SUMS.txt)
         shell: bash
         run: |
           cd dist/release
@@ -105,6 +198,13 @@ jobs:
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
         with:
           subject-path: "dist/release/*"
+
+      - name: Upload verified release artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: aksa-release-${{ matrix.triple }}
+          path: dist/release/
+          if-no-files-found: error
 
       - name: Publish GitHub Release Assets
         uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8

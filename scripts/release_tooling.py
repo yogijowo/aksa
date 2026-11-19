@@ -273,34 +273,62 @@ def verify_checksums(checksums_file: Path) -> tuple[bool, list[str]]:
     return success, errors
 
 
+def verify_sidecar_binary_format(
+    executable_path: Path,
+    *,
+    expected_triple: str | None = None,
+    min_size_bytes: int = 1_000_000,
+) -> dict[str, Any]:
+    """Validate executable file integrity, native binary format (ELF/Mach-O/PE), and architecture."""
+    scripts_dir = str(Path(__file__).resolve().parent)
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    from build_sidecar import detect_target_triple, validate_native_executable_format
+
+    triple = expected_triple or detect_target_triple()
+    info = validate_native_executable_format(
+        executable_path,
+        expected_triple=triple,
+        min_size_bytes=min_size_bytes,
+    )
+    if sys.platform != "win32" and "windows" not in triple and not os.access(executable_path, os.X_OK):
+        raise PermissionError(f"Required sidecar executable lacks execute permission: {executable_path}")
+    return info
+
+
 def smoke_test_sidecar(
     executable_path: str | Path | None = None,
     repo_root: Path | None = None,
     require_executable: bool = False,
+    expected_triple: str | None = None,
 ) -> bool:
-    """Smoke test sidecar engine startup and healthcheck flags (fail-closed when executable is required)."""
+    """Validate binary format/architecture (when executable is targeted) and run behavioral smoke checks."""
     root = repo_root or get_repo_root()
     engine_dir = root / "services" / "engine"
 
     resolved_exe: Path | None = Path(executable_path) if executable_path is not None else None
     if require_executable and resolved_exe is None:
-        sys.path.insert(0, str(root / "scripts"))
+        scripts_dir = str(root / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
         from build_sidecar import resolve_sidecar_binary_path
 
-        resolved_exe = resolve_sidecar_binary_path()
+        resolved_exe = resolve_sidecar_binary_path(expected_triple)
 
     if resolved_exe is not None:
-        if not resolved_exe.exists() or not resolved_exe.is_file():
-            print(f"❌ Required sidecar executable missing: {resolved_exe}")
-            return False
-        if sys.platform != "win32" and not os.access(resolved_exe, os.X_OK):
-            print(f"❌ Required sidecar executable lacks execute permission: {resolved_exe}")
-            return False
-        if require_executable and resolved_exe.stat().st_size < 1_000_000:
-            print(
-                f"❌ Sidecar binary is too small ({resolved_exe.stat().st_size} bytes); "
-                "refusing dummy wrapper."
+        min_sz = 1_000_000 if require_executable else 1
+        try:
+            bin_info = verify_sidecar_binary_format(
+                resolved_exe,
+                expected_triple=expected_triple,
+                min_size_bytes=min_sz,
             )
+            print(
+                f"✅ Binary format verified: {resolved_exe.name} "
+                f"({bin_info['format']}/{','.join(bin_info['archs'])}, {bin_info['size_bytes']:,} bytes)"
+            )
+        except Exception as exc:
+            print(f"❌ Native binary validation failed for {resolved_exe}: {exc}")
             return False
         cmd_version = [str(resolved_exe), "--version"]
         cmd_smoke = [str(resolved_exe), "--smoke-test"]
@@ -348,9 +376,15 @@ def main() -> None:
     v_p = subparsers.add_parser("verify-checksums", help="Verify SHA256 checksums")
     v_p.add_argument("--file", "-f", type=Path, required=True, help="Path to SHA256SUMS.txt")
 
+    # Verify Native Executable Binary Format & Arch
+    vb_p = subparsers.add_parser("verify-binary", help="Verify native ELF/Mach-O/PE format and target triple arch")
+    vb_p.add_argument("--executable", "-e", type=Path, required=True, help="Path to compiled sidecar binary")
+    vb_p.add_argument("--triple", "-t", type=str, default=None, help="Expected Rust/Tauri target triple")
+
     # Smoke Test
     st_p = subparsers.add_parser("smoke-test", help="Smoke test sidecar engine binary or module")
     st_p.add_argument("--executable", "-e", type=Path, default=None, help="Path to compiled sidecar binary")
+    st_p.add_argument("--triple", "-t", type=str, default=None, help="Expected target triple for binary check")
     st_p.add_argument(
         "--require-executable",
         action="store_true",
@@ -371,8 +405,22 @@ def main() -> None:
                 print(f"  - {err}")
             sys.exit(1)
         print("✅ All checksums verified successfully!")
+    elif args.command == "verify-binary":
+        try:
+            info = verify_sidecar_binary_format(args.executable, expected_triple=args.triple)
+            print(
+                f"✅ Native binary validated: {args.executable} "
+                f"({info['triple']}: {info['format']}/{','.join(info['archs'])}, {info['size_bytes']:,} bytes)"
+            )
+        except Exception as exc:
+            print(f"❌ Native binary validation failed: {exc}", file=sys.stderr)
+            sys.exit(1)
     elif args.command == "smoke-test":
-        ok = smoke_test_sidecar(args.executable, require_executable=args.require_executable)
+        ok = smoke_test_sidecar(
+            args.executable,
+            require_executable=args.require_executable,
+            expected_triple=args.triple,
+        )
         if not ok:
             print("❌ Sidecar smoke test failed!")
             sys.exit(1)

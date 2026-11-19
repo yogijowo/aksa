@@ -503,8 +503,10 @@ async def test_p2_01_resolve_replay_path_blocks_traversal_and_symlinks(tmp_path:
 def test_p2_02_engine_honors_per_launch_aksa_manifest_path(tmp_path: Path):
     """Sidecar honors AKSA_MANIFEST_PATH inside runtime dir with 0700 dir and 0600 manifest file (P2-02)."""
     import json
+    import queue
     import re
     import subprocess
+    import threading
     import time
 
     launch_id = "launch-p202-unique-xyz"
@@ -525,18 +527,35 @@ def test_p2_02_engine_honors_per_launch_aksa_manifest_path(tmp_path: Path):
         stderr=subprocess.PIPE,
         text=True,
     )
+    q: queue.Queue[str | None] = queue.Queue()
+    captured: list[str] = []
+
+    def _reader() -> None:
+        assert proc.stderr is not None
+        for ln in proc.stderr:
+            q.put(ln)
+        q.put(None)
+
+    threading.Thread(target=_reader, daemon=True).start()
     try:
         marker_lid = None
         deadline = time.time() + 30
         while time.time() < deadline:
-            line = proc.stderr.readline()
-            m = re.search(r"\[AKSA_ENGINE_READY:port=(\d+):pid=(\d+):launch_id=([^\]]+)\]", line or "")
+            remaining = max(0.05, deadline - time.time())
+            try:
+                line = q.get(timeout=min(0.25, remaining))
+            except queue.Empty:
+                if proc.poll() is not None:
+                    break
+                continue
+            if line is None:
+                break
+            captured.append(line)
+            m = re.search(r"\[AKSA_ENGINE_READY:port=(\d+):pid=(\d+):launch_id=([^\]]+)\]", line)
             if m:
                 marker_lid = m.group(3)
                 break
-            if proc.poll() is not None:
-                break
-        assert marker_lid == launch_id
+        assert marker_lid == launch_id, f"stderr={''.join(captured)}"
         assert target_manifest.exists()
         assert not (runtime_dir / "engine_port.json").exists()
         if sys.platform != "win32":
@@ -546,7 +565,11 @@ def test_p2_02_engine_honors_per_launch_aksa_manifest_path(tmp_path: Path):
         assert data["launch_id"] == launch_id
     finally:
         proc.terminate()
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 # ===========================================================================

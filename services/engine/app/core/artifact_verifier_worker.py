@@ -28,9 +28,42 @@ MAX_WORKER_STDOUT_BYTES = 512 * 1024
 MAX_WORKER_STDERR_BYTES = 64 * 1024
 MAX_WORKER_STDERR_SNIPPET_BYTES = 2048
 WORKER_MEMORY_LIMIT_BYTES = 768 * 1024 * 1024
+DEFAULT_WORKER_FALLBACK_UID_TASKS = 64
+MIN_WORKER_MAX_NPROC = 64
+MAX_WORKER_NPROC_CEILING = 4096
 DEFAULT_WORKER_MAX_NPROC_HEADROOM = 64
 MIN_WORKER_MAX_NPROC_HEADROOM = 16
 MAX_WORKER_MAX_NPROC_HEADROOM = 512
+
+
+def _resolve_system_nproc_hard_limit() -> int | None:
+    """Inspect OS hard ceiling for RLIMIT_NPROC when bounded on POSIX systems."""
+    if sys.platform == "win32":
+        return None
+    try:
+        import resource
+
+        rsrc = getattr(resource, "RLIMIT_NPROC", None)
+        if rsrc is None:
+            return None
+        _soft, hard = resource.getrlimit(rsrc)
+        if hard != resource.RLIM_INFINITY and int(hard) > 0:
+            return int(hard)
+    except Exception:
+        pass
+    return None
+
+
+def _clamp_worker_nproc_to_ceiling(target_limit: int, hard_limit: int | None) -> int:
+    """Keep worker NPROC limit strictly positive and within system hard limit."""
+    effective_ceiling = (
+        min(MAX_WORKER_NPROC_CEILING, int(hard_limit))
+        if (hard_limit is not None and int(hard_limit) > 0)
+        else MAX_WORKER_NPROC_CEILING
+    )
+    if effective_ceiling < MIN_WORKER_MAX_NPROC:
+        return max(1, min(int(target_limit), effective_ceiling))
+    return min(effective_ceiling, max(MIN_WORKER_MAX_NPROC, int(target_limit)))
 
 
 def _resolve_worker_nproc_headroom(uid_tasks: int | None = None) -> int:
@@ -46,6 +79,44 @@ def _resolve_worker_nproc_headroom(uid_tasks: int | None = None) -> int:
         adaptive = max(DEFAULT_WORKER_MAX_NPROC_HEADROOM, int(uid_tasks * 0.5))
         return min(MAX_WORKER_MAX_NPROC_HEADROOM, adaptive)
     return DEFAULT_WORKER_MAX_NPROC_HEADROOM
+
+
+def _compute_initial_worker_nproc_limit(
+    uid_tasks: int | None,
+    headroom: int,
+    *,
+    hard_limit: int | None = None,
+) -> tuple[int, str]:
+    """Compute initial positive RLIMIT_NPROC budget with deterministic fallback when UID count is None."""
+    if uid_tasks is not None and int(uid_tasks) > 0:
+        baseline = int(uid_tasks)
+        source = "proc_uid_tasks"
+    else:
+        baseline = DEFAULT_WORKER_FALLBACK_UID_TASKS
+        source = "deterministic_fallback"
+    raw_target = max(MIN_WORKER_MAX_NPROC, baseline + max(MIN_WORKER_MAX_NPROC_HEADROOM, int(headroom)))
+    return _clamp_worker_nproc_to_ceiling(raw_target, hard_limit), source
+
+
+def _compute_retry_worker_nproc_limit(
+    previous_limit: int,
+    uid_tasks: int | None,
+    headroom: int,
+    *,
+    hard_limit: int | None = None,
+) -> tuple[int, str]:
+    """Compute strictly escalated RLIMIT_NPROC limit anchored on previous attempt & hard ceiling."""
+    prev = max(MIN_WORKER_MAX_NPROC, int(previous_limit))
+    step_up = max(MIN_WORKER_MAX_NPROC, int(headroom))
+    escalated_from_prev = max(prev + step_up, prev * 2)
+    if uid_tasks is not None and int(uid_tasks) > 0:
+        from_uid = int(uid_tasks) + max(MIN_WORKER_MAX_NPROC_HEADROOM, int(headroom))
+        raw_next = max(escalated_from_prev, from_uid)
+        source = "proc_uid_tasks_retry"
+    else:
+        raw_next = escalated_from_prev
+        source = "deterministic_fallback_retry"
+    return _clamp_worker_nproc_to_ceiling(raw_next, hard_limit), source
 
 
 def _is_rlimit_nproc_eagain(stderr_text: str) -> bool:
@@ -103,27 +174,31 @@ def _apply_worker_resource_limits(timeout_sec: float = 10.0) -> None:
     except Exception:
         return
 
-    def _clamp_set(rsrc_name: str, target: int) -> bool:
+    def _clamp_set(rsrc_name: str, target: int, *, allow_raise_soft_to_hard: bool = False) -> bool:
         rsrc = getattr(resource, rsrc_name, None)
         if rsrc is None:
             return False
         try:
             cur_soft, cur_hard = resource.getrlimit(rsrc)
             eff = target if cur_hard == resource.RLIM_INFINITY else min(target, cur_hard)
-            eff_soft = eff if cur_soft == resource.RLIM_INFINITY else min(eff, cur_soft)
+            if allow_raise_soft_to_hard:
+                eff_soft = eff
+            else:
+                eff_soft = eff if cur_soft == resource.RLIM_INFINITY else min(eff, cur_soft)
             resource.setrlimit(rsrc, (eff_soft, eff))
             return True
         except Exception:
             return False
 
-    # Cycle 11 P1-01: NEVER set RLIMIT_NPROC=0 on Linux (causes OpenBLAS pthread_create EAGAIN).
-    # Enforce a strictly positive bounded process/thread ceiling when known, >= 64 otherwise.
+    # Cycle 11–13: NEVER set RLIMIT_NPROC=0 on POSIX (causes OpenBLAS pthread_create EAGAIN).
+    # Enforce a strictly positive bounded process/thread ceiling with deterministic fallback.
     raw_nproc = os.environ.get("AKSA_VERIFIER_MAX_NPROC", "").strip()
     try:
-        nproc_limit = max(32, int(raw_nproc)) if raw_nproc else 64
+        parsed_nproc = int(raw_nproc) if raw_nproc else MIN_WORKER_MAX_NPROC
     except ValueError:
-        nproc_limit = 64
-    _clamp_set("RLIMIT_NPROC", nproc_limit)
+        parsed_nproc = MIN_WORKER_MAX_NPROC
+    nproc_limit = _clamp_worker_nproc_to_ceiling(max(MIN_WORKER_MAX_NPROC, parsed_nproc), None)
+    _clamp_set("RLIMIT_NPROC", nproc_limit, allow_raise_soft_to_hard=True)
 
     _clamp_set("RLIMIT_FSIZE", 0)
     _clamp_set("RLIMIT_CPU", max(5, int(timeout_sec) + 2))
@@ -295,15 +370,22 @@ async def verify_artifact_in_worker(
         else [sys.executable, "-B", "-m", "app.core.artifact_verifier_worker"]
     )
 
-    uid_tasks = _estimate_current_uid_tasks() if sys.platform != "win32" else None
+    is_posix = sys.platform != "win32"
+    uid_tasks = _estimate_current_uid_tasks() if is_posix else None
     headroom = _resolve_worker_nproc_headroom(uid_tasks)
-    max_attempts = 2 if sys.platform.startswith("linux") else 1
+    hard_limit = _resolve_system_nproc_hard_limit() if is_posix else None
+    current_nproc_limit, nproc_source = (
+        _compute_initial_worker_nproc_limit(uid_tasks, headroom, hard_limit=hard_limit)
+        if is_posix
+        else (0, "windows_job_object")
+    )
+    max_attempts = 2 if is_posix else 1
 
     res: dict[str, Any] = {}
     for attempt in range(max_attempts):
         attempt_env = dict(safe_env)
-        if sys.platform != "win32" and uid_tasks is not None:
-            attempt_env["AKSA_VERIFIER_MAX_NPROC"] = str(max(64, uid_tasks + headroom))
+        if is_posix:
+            attempt_env["AKSA_VERIFIER_MAX_NPROC"] = str(current_nproc_limit)
 
         try:
             res = await execute_in_os_sandbox(
@@ -337,17 +419,62 @@ async def verify_artifact_in_worker(
 
         if exit_code != 0 and _is_rlimit_nproc_eagain(stderr_str):
             logger.warning(
-                "verifier_worker.rlimit_nproc_eagain attempt=%d headroom=%d uid_tasks=%s exit_code=%d",
+                "verifier_worker.rlimit_nproc_eagain attempt=%d max_attempts=%d source=%s current_nproc=%d headroom=%d uid_tasks=%s hard_limit=%s exit_code=%d",
                 attempt + 1,
+                max_attempts,
+                nproc_source,
+                current_nproc_limit,
                 headroom,
                 uid_tasks,
+                hard_limit,
                 exit_code,
             )
-            if attempt + 1 < max_attempts:
-                headroom = min(MAX_WORKER_MAX_NPROC_HEADROOM, max(headroom * 2, headroom + 64))
-                if sys.platform.startswith("linux"):
-                    uid_tasks = _estimate_current_uid_tasks() or uid_tasks
+            if is_posix and attempt + 1 < max_attempts:
+                next_headroom = min(MAX_WORKER_MAX_NPROC_HEADROOM, max(headroom * 2, headroom + 64))
+                new_uid_tasks = _estimate_current_uid_tasks() if sys.platform.startswith("linux") else None
+                next_limit, next_source = _compute_retry_worker_nproc_limit(
+                    current_nproc_limit,
+                    new_uid_tasks,
+                    next_headroom,
+                    hard_limit=hard_limit,
+                )
+                if next_limit <= current_nproc_limit:
+                    logger.error(
+                        "verifier_worker.rlimit_nproc_retry_blocked attempt=%d source=%s current_nproc=%d hard_limit=%s",
+                        attempt + 1,
+                        nproc_source,
+                        current_nproc_limit,
+                        hard_limit,
+                    )
+                    return (
+                        False,
+                        f"Worker verifikasi artefak gagal akibat batas proses/thread OS "
+                        f"(RLIMIT_NPROC={current_nproc_limit}, hard_limit={hard_limit or MAX_WORKER_NPROC_CEILING}); "
+                        "retry dihentikan secara terkontrol karena batas maksimum telah tercapai.",
+                    )
+                logger.warning(
+                    "verifier_worker.rlimit_nproc_retrying next_attempt=%d prev_nproc=%d next_nproc=%d prev_headroom=%d next_headroom=%d source=%s",
+                    attempt + 2,
+                    current_nproc_limit,
+                    next_limit,
+                    headroom,
+                    next_headroom,
+                    next_source,
+                )
+                headroom = next_headroom
+                current_nproc_limit = next_limit
+                nproc_source = next_source
+                if new_uid_tasks is not None:
+                    uid_tasks = new_uid_tasks
                 continue
+            logger.error(
+                "verifier_worker.rlimit_nproc_exhausted attempts=%d final_nproc=%d hard_limit=%s source=%s exit_code=%d",
+                attempt + 1,
+                current_nproc_limit,
+                hard_limit,
+                nproc_source,
+                exit_code,
+            )
         break
 
     exit_code = int(res.get("exit_code", 1))

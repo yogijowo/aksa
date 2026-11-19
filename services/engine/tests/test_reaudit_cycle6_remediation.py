@@ -285,6 +285,9 @@ async def test_real_linux_bwrap_isolates_home_and_network(tmp_path: Path):
 
 def test_engine_manifest_includes_launch_id_and_strict_mode_0600(tmp_path: Path):
     """Real engine process writes 0600 atomic manifest with launch_id, 127.0.0.1, version 1.0.0."""
+    import queue
+    import threading
+
     token = "aksa-cycle6-token"
     launch_id = "launch-cycle6-unique-abc123"
     env = {
@@ -301,18 +304,35 @@ def test_engine_manifest_includes_launch_id_and_strict_mode_0600(tmp_path: Path)
         stderr=subprocess.PIPE,
         text=True,
     )
+    q: queue.Queue[str | None] = queue.Queue()
+    captured: list[str] = []
+
+    def _reader() -> None:
+        assert proc.stderr is not None
+        for ln in proc.stderr:
+            q.put(ln)
+        q.put(None)
+
+    threading.Thread(target=_reader, daemon=True).start()
     try:
         marker_port = marker_pid = marker_lid = None
         deadline = time.time() + 30
         while time.time() < deadline:
-            line = proc.stderr.readline()
-            m = re.search(r"\[AKSA_ENGINE_READY:port=(\d+):pid=(\d+):launch_id=([^\]]+)\]", line or "")
+            remaining = max(0.05, deadline - time.time())
+            try:
+                line = q.get(timeout=min(0.25, remaining))
+            except queue.Empty:
+                if proc.poll() is not None:
+                    break
+                continue
+            if line is None:
+                break
+            captured.append(line)
+            m = re.search(r"\[AKSA_ENGINE_READY:port=(\d+):pid=(\d+):launch_id=([^\]]+)\]", line)
             if m:
                 marker_port, marker_pid, marker_lid = int(m.group(1)), int(m.group(2)), m.group(3)
                 break
-            if proc.poll() is not None:
-                break
-        assert marker_port and marker_pid == proc.pid
+        assert marker_port and marker_pid == proc.pid, f"stderr={''.join(captured)}"
         assert marker_lid == launch_id
 
         manifest_path = tmp_path / "runtime" / "engine_port.json"
@@ -327,7 +347,11 @@ def test_engine_manifest_includes_launch_id_and_strict_mode_0600(tmp_path: Path)
         assert manifest["launch_id"] == launch_id
     finally:
         proc.terminate()
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 # ===========================================================================

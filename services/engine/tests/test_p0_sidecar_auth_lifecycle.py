@@ -93,6 +93,7 @@ def test_p0_engine_refuses_to_start_without_token_in_production() -> None:
         capture_output=True,
         text=True,
         env=clean_env,
+        timeout=30,
     )
     assert proc.returncode == 1, (
         f"Process did not terminate with exit code 1 as expected. Returncode={proc.returncode}\n"

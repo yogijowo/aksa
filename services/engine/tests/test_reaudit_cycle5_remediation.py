@@ -119,24 +119,47 @@ def test_os_sandbox_fails_closed_on_unsupported_platform(monkeypatch, tmp_path: 
 # ---- SEC-004-R4: real engine handshake (port 0 + nonce HMAC) ----------------------------------
 
 def test_engine_owns_port_and_answers_nonce_hmac(tmp_path: Path):
+    import queue
+    import threading
+
     token = "aksa-cycle5-integration-token"
     env = {**os.environ, "AKSA_AUTH_TOKEN": token, "AKSA_APPDATA_DIR": str(tmp_path), "PYTHONUNBUFFERED": "1"}
     proc = subprocess.Popen(
         [sys.executable, "-m", "app.main", "--host", "127.0.0.1", "--port", "0", "--production"],
-        cwd=ENGINE_ROOT, env=env, stderr=subprocess.PIPE, text=True,
+        cwd=ENGINE_ROOT,
+        env=env,
+        stderr=subprocess.PIPE,
+        text=True,
     )
+    q: queue.Queue[str | None] = queue.Queue()
+    captured: list[str] = []
+
+    def _reader() -> None:
+        assert proc.stderr is not None
+        for ln in proc.stderr:
+            q.put(ln)
+        q.put(None)
+
+    threading.Thread(target=_reader, daemon=True).start()
     try:
         port = pid = None
         deadline = time.time() + 40
         while time.time() < deadline:
-            line = proc.stderr.readline()
-            m = re.search(r"\[AKSA_ENGINE_READY:port=(\d+):pid=(\d+)(?::launch_id=[^\]]*)?\]", line or "")
+            remaining = max(0.05, deadline - time.time())
+            try:
+                line = q.get(timeout=min(0.25, remaining))
+            except queue.Empty:
+                if proc.poll() is not None:
+                    break
+                continue
+            if line is None:
+                break
+            captured.append(line)
+            m = re.search(r"\[AKSA_ENGINE_READY:port=(\d+):pid=(\d+)(?::launch_id=[^\]]*)?\]", line)
             if m:
                 port, pid = int(m.group(1)), int(m.group(2))
                 break
-            if proc.poll() is not None:
-                break
-        assert port and port != 0, "engine did not report a bound port"
+        assert port and port != 0, f"engine did not report a bound port; stderr={''.join(captured)}"
         assert pid == proc.pid
         nonce = "cycle5nonce"
         body = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}/api/v1/health?nonce={nonce}", timeout=10).read())
@@ -145,7 +168,11 @@ def test_engine_owns_port_and_answers_nonce_hmac(tmp_path: Path):
         assert hmac.compare_digest(body["nonce_hmac"], expected)
     finally:
         proc.terminate()
-        proc.wait(timeout=10)
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
 
 
 # ---- SKILL-002-R4 -----------------------------------------------------------------------------
@@ -282,6 +309,7 @@ except PermissionError as exc:
         [sys.executable, "-m", "app.skills.sandbox_runner", "--script", str(script), "--workspace", str(ws)],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert res.returncode == 13
     assert "di luar batas aman" in res.stderr or "di luar folder kerja dilarang" in res.stderr

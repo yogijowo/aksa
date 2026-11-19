@@ -318,6 +318,26 @@ def run_windows_appcontainer_sandboxed(
             ("Trustee", TRUSTEE_W),
         ]
 
+    class ACL_SIZE_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("AceCount", wintypes.DWORD),
+            ("AclBytesInUse", wintypes.DWORD),
+            ("AclBytesFree", wintypes.DWORD),
+        ]
+
+    class ACE_HEADER(ctypes.Structure):
+        _fields_ = [
+            ("AceType", ctypes.c_uint8),
+            ("AceFlags", ctypes.c_uint8),
+            ("AceSize", ctypes.c_uint16),
+        ]
+
+    class ACCESS_ALLOWED_ACE_PREFIX(ctypes.Structure):
+        _fields_ = [
+            ("Header", ACE_HEADER),
+            ("Mask", wintypes.DWORD),
+        ]
+
     # Configure signatures carefully for 64-bit pointers/handles
     userenv.CreateAppContainerProfile.argtypes = [
         wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR,
@@ -346,6 +366,18 @@ def run_windows_appcontainer_sandboxed(
         ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
     ]
     advapi32.SetNamedSecurityInfoW.restype = wintypes.DWORD
+    is_real_windll = isinstance(ctypes.WinDLL, type) and isinstance(advapi32, ctypes.WinDLL)
+    if is_real_windll:
+        advapi32.ConvertStringSidToSidW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_void_p)]
+        advapi32.ConvertStringSidToSidW.restype = wintypes.BOOL
+        advapi32.GetAclInformation.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.c_int,
+        ]
+        advapi32.GetAclInformation.restype = wintypes.BOOL
+        advapi32.GetAce.argtypes = [ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p)]
+        advapi32.GetAce.restype = wintypes.BOOL
+        advapi32.EqualSid.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        advapi32.EqualSid.restype = wintypes.BOOL
 
     kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
     kernel32.CreateJobObjectW.restype = wintypes.HANDLE
@@ -395,14 +427,22 @@ def run_windows_appcontainer_sandboxed(
     container_name = f"aksa.skill.{uuid.uuid4().hex[:16]}"
     app_container_sid = ctypes.c_void_p()
     profile_created = False
-    modified_acls: list[Path] = []
+    modified_acls: list[tuple[Path, bool]] = []
     h_job = None
     pi = PROCESS_INFORMATION()
     attr_buf = None
     attr_initialized = False
     handles_to_close: list[Any] = []
+    engine_root_dir = Path(__file__).resolve().parent.parent.parent
 
-    def _modify_acl(target_path: Path, access_mask: int, mode: int) -> bool:
+    def _modify_acl(
+        target_path: Path,
+        access_mask: int,
+        mode: int,
+        *,
+        target_sid: Any = None,
+        inherit: bool = True,
+    ) -> bool:
         path_str = str(target_path.resolve())
         old_dacl = ctypes.c_void_p()
         sd = ctypes.c_void_p()
@@ -417,11 +457,11 @@ def run_windows_appcontainer_sandboxed(
             ea = EXPLICIT_ACCESS_W()
             ea.grfAccessPermissions = access_mask
             ea.grfAccessMode = mode
-            ea.grfInheritance = OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+            ea.grfInheritance = (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE) if inherit else 0
             ea.Trustee.MultipleTrusteeOperation = 0
             ea.Trustee.TrusteeForm = TRUSTEE_IS_SID
             ea.Trustee.TrusteeType = TRUSTEE_IS_UNKNOWN
-            ea.Trustee.ptstrName = app_container_sid
+            ea.Trustee.ptstrName = app_container_sid if target_sid is None else target_sid
             err = advapi32.SetEntriesInAclW(1, ctypes.byref(ea), old_dacl, ctypes.byref(new_dacl))
             if err != 0:
                 return False
@@ -436,6 +476,96 @@ def run_windows_appcontainer_sandboxed(
                 kernel32.LocalFree(new_dacl)
             if sd:
                 kernel32.LocalFree(sd)
+
+    def _dacl_has_sid_rx(old_dacl: ctypes.c_void_p, target_sid: ctypes.c_void_p) -> bool:
+        if not old_dacl or not target_sid:
+            return False
+        size_info = ACL_SIZE_INFORMATION()
+        if not advapi32.GetAclInformation(old_dacl, ctypes.byref(size_info), ctypes.sizeof(size_info), 2):
+            return False
+        for idx in range(int(size_info.AceCount)):
+            ace_ptr = ctypes.c_void_p()
+            if not advapi32.GetAce(old_dacl, idx, ctypes.byref(ace_ptr)) or not ace_ptr.value:
+                continue
+            ace = ACCESS_ALLOWED_ACE_PREFIX.from_address(ace_ptr.value)
+            # ACCESS_ALLOWED_ACE_TYPE == 0; skip INHERIT_ONLY_ACE (0x8)
+            if ace.Header.AceType != 0 or (ace.Header.AceFlags & 0x8):
+                continue
+            if (ace.Header.AceFlags & (OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE)) != (
+                OBJECT_INHERIT_ACE | CONTAINER_INHERIT_ACE
+            ):
+                continue
+            if (ace.Mask & FILE_READ_EXEC) != FILE_READ_EXEC:
+                continue
+            sid_addr = ctypes.c_void_p(ace_ptr.value + ctypes.sizeof(ACCESS_ALLOWED_ACE_PREFIX))
+            if advapi32.EqualSid(sid_addr, target_sid):
+                return True
+        return False
+
+    def _is_global_python_runtime_root(target_path: Path) -> bool:
+        if not is_real_windll:
+            return False
+        try:
+            resolved = target_path.resolve()
+            base_py = Path(sys.base_prefix).resolve()
+            if resolved != base_py:
+                return False
+            if resolved == ws_resolved or resolved == engine_root_dir:
+                return False
+            return (resolved / "Lib" / "os.py").is_file() or (resolved / "python.exe").is_file()
+        except Exception:
+            return False
+
+    def _ensure_global_python_runtime_rx(target_path: Path) -> bool:
+        """Grant idempotent ALL APPLICATION PACKAGES (S-1-15-2-1) RX once on read-only Python base runtime."""
+        pkg_sid = ctypes.c_void_p()
+        if not advapi32.ConvertStringSidToSidW("S-1-15-2-1", ctypes.byref(pkg_sid)) or not pkg_sid.value:
+            return False
+        try:
+            old_dacl = ctypes.c_void_p()
+            sd = ctypes.c_void_p()
+            err = advapi32.GetNamedSecurityInfoW(
+                str(target_path.resolve()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                ctypes.byref(old_dacl),
+                None,
+                ctypes.byref(sd),
+            )
+            already_present = False
+            try:
+                if err == 0 and old_dacl.value:
+                    already_present = _dacl_has_sid_rx(old_dacl, pkg_sid)
+            finally:
+                if sd:
+                    kernel32.LocalFree(sd)
+            if already_present:
+                return True
+            return _modify_acl(target_path, FILE_READ_EXEC, GRANT_ACCESS, target_sid=pkg_sid, inherit=True)
+        finally:
+            kernel32.LocalFree(pkg_sid)
+
+    def _grant_read_root(root: Path) -> tuple[bool, bool]:
+        """Grant RX for read root cleanly, scoping engine_root & caching global Python base_prefix."""
+        if _is_global_python_runtime_root(root) and _ensure_global_python_runtime_rx(root):
+            return True, False  # Persistent runtime RX; no per-run revoke tree-walk needed
+        if is_real_windll and root == engine_root_dir and (engine_root_dir / "app" / "__init__.py").is_file():
+            app_dir = engine_root_dir / "app"
+            ok_root = _modify_acl(engine_root_dir, FILE_READ_EXEC, GRANT_ACCESS, inherit=False)
+            if not ok_root:
+                return False, False
+            modified_acls.append((engine_root_dir, False))
+            ok_app = _modify_acl(app_dir, FILE_READ_EXEC, GRANT_ACCESS, inherit=True)
+            if not ok_app:
+                return False, False
+            modified_acls.append((app_dir, True))
+            return True, True
+        ok_std = _modify_acl(root, FILE_READ_EXEC, GRANT_ACCESS, inherit=True)
+        if ok_std:
+            modified_acls.append((root, True))
+        return ok_std, ok_std
 
     try:
         # 1. Create zero-capability AppContainer (network + arbitrary user dirs denied by kernel)
@@ -465,7 +595,7 @@ def run_windows_appcontainer_sandboxed(
             raise WindowsSandboxError(
                 f"Gagal memasang ACL AppContainer pada workspace {redact_path_for_log(ws_resolved)}."
             )
-        modified_acls.append(ws_resolved)
+        modified_acls.append((ws_resolved, True))
 
         req_granted = 0
         for root in validated_required:
@@ -477,7 +607,8 @@ def run_windows_appcontainer_sandboxed(
                 raise WindowsSandboxError(
                     f"Root runtime wajib tidak ditemukan untuk sandbox AppContainer: {redact_path_for_log(root)}."
                 )
-            if not _modify_acl(root, FILE_READ_EXEC, GRANT_ACCESS):
+            ok_req, _tracked = _grant_read_root(root)
+            if not ok_req:
                 logger.warning(
                     "windows_sandbox.acl_required_failed target=%s",
                     redact_path_for_log(root),
@@ -485,22 +616,22 @@ def run_windows_appcontainer_sandboxed(
                 raise WindowsSandboxError(
                     f"Gagal memasang ACL read/exec wajib pada {redact_path_for_log(root)}."
                 )
-            modified_acls.append(root)
             req_granted += 1
 
         opt_granted = 0
         opt_skipped = 0
         for root in validated_optional:
-            if root.exists() and _modify_acl(root, FILE_READ_EXEC, GRANT_ACCESS):
-                modified_acls.append(root)
-                opt_granted += 1
-            else:
-                opt_skipped += 1
-                logger.debug(
-                    "windows_sandbox.acl_optional_skipped target=%s exists=%s",
-                    redact_path_for_log(root),
-                    root.exists(),
-                )
+            if root.exists():
+                ok_opt, _tracked = _grant_read_root(root)
+                if ok_opt:
+                    opt_granted += 1
+                    continue
+            opt_skipped += 1
+            logger.debug(
+                "windows_sandbox.acl_optional_skipped target=%s exists=%s",
+                redact_path_for_log(root),
+                root.exists(),
+            )
 
         logger.info(
             "windows_sandbox.acl_applied required_granted=%d optional_granted=%d optional_skipped=%d",
@@ -731,8 +862,8 @@ def run_windows_appcontainer_sandboxed(
         for h in handles_to_close:
             if h:
                 kernel32.CloseHandle(h)
-        for p in reversed(modified_acls):
-            _modify_acl(p, 0, REVOKE_ACCESS)
+        for p, inherit_acl in reversed(modified_acls):
+            _modify_acl(p, 0, REVOKE_ACCESS, inherit=inherit_acl)
         if profile_created:
             userenv.DeleteAppContainerProfile(container_name)
         if app_container_sid:

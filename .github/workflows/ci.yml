@@ -13,6 +13,7 @@ jobs:
   backend-and-frontend:
     name: Verify Engine & Desktop (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -54,7 +55,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p ../../build
-          python -m pytest tests -v -rs --junitxml=../../build/junit-pytest-${{ matrix.os }}.xml
+          python -m pytest tests -v -rs --durations=15 --junitxml=../../build/junit-pytest-${{ matrix.os }}.xml
 
       - name: Enforce native Windows AppContainer runtime tests (fail on skip)
         if: matrix.os == 'windows-latest'

@@ -28,7 +28,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "dmg", "app"],
+    "targets": ["nsis", "msi", "dmg", "app", "deb", "appimage"],
     "externalBin": ["binaries/aksa-engine"],
     "icon": [
       "icons/32x32.png",
