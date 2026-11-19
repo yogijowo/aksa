@@ -60,10 +60,11 @@ jobs:
       - name: Build frozen native sidecar binary
         run: |
           python scripts/build_sidecar.py --triple ${{ matrix.triple }}
+          python scripts/build_sidecar.py --verify-only --triple ${{ matrix.triple }}
 
       - name: Smoke test frozen native sidecar binary
         run: |
-          python scripts/release_tooling.py smoke-test --executable apps/desktop/src-tauri/binaries/aksa-engine-${{ matrix.triple }}${{ matrix.ext }}
+          python scripts/release_tooling.py smoke-test --executable apps/desktop/src-tauri/binaries/aksa-engine-${{ matrix.triple }}${{ matrix.ext }} --require-executable
 
       - name: Install desktop dependencies
         working-directory: apps/desktop

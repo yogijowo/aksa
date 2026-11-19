@@ -21,6 +21,7 @@ dependencies = [
     "keyring>=25.0.0",
     "cryptography>=43.0.0",
     "jsonschema>=4.20.0",
+    "numpy>=1.26.0",
 ]
 
 [project.optional-dependencies]

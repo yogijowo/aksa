@@ -276,15 +276,36 @@ def verify_checksums(checksums_file: Path) -> tuple[bool, list[str]]:
 def smoke_test_sidecar(
     executable_path: str | Path | None = None,
     repo_root: Path | None = None,
+    require_executable: bool = False,
 ) -> bool:
-    """Smoke test sidecar engine startup and healthcheck flags."""
+    """Smoke test sidecar engine startup and healthcheck flags (fail-closed when executable is required)."""
     root = repo_root or get_repo_root()
     engine_dir = root / "services" / "engine"
 
-    if executable_path and Path(executable_path).exists():
-        cmd_version = [str(executable_path), "--version"]
-        cmd_smoke = [str(executable_path), "--smoke-test"]
+    resolved_exe: Path | None = Path(executable_path) if executable_path is not None else None
+    if require_executable and resolved_exe is None:
+        sys.path.insert(0, str(root / "scripts"))
+        from build_sidecar import resolve_sidecar_binary_path
+
+        resolved_exe = resolve_sidecar_binary_path()
+
+    if resolved_exe is not None:
+        if not resolved_exe.exists() or not resolved_exe.is_file():
+            print(f"❌ Required sidecar executable missing: {resolved_exe}")
+            return False
+        if sys.platform != "win32" and not os.access(resolved_exe, os.X_OK):
+            print(f"❌ Required sidecar executable lacks execute permission: {resolved_exe}")
+            return False
+        if require_executable and resolved_exe.stat().st_size < 1_000_000:
+            print(
+                f"❌ Sidecar binary is too small ({resolved_exe.stat().st_size} bytes); "
+                "refusing dummy wrapper."
+            )
+            return False
+        cmd_version = [str(resolved_exe), "--version"]
+        cmd_smoke = [str(resolved_exe), "--smoke-test"]
         cwd = None
+        timeout_v, timeout_s = 45, 60
     else:
         # Test using python interpreter running app.main
         venv_py = engine_dir / ".venv" / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
@@ -292,16 +313,17 @@ def smoke_test_sidecar(
         cmd_version = [python_exe, "-m", "app.main", "--version"]
         cmd_smoke = [python_exe, "-m", "app.main", "--smoke-test"]
         cwd = str(engine_dir)
+        timeout_v, timeout_s = 15, 25
 
     print(f"Running sidecar --version check: {' '.join(cmd_version)}")
-    res_v = subprocess.run(cmd_version, cwd=cwd, capture_output=True, text=True, timeout=10)
+    res_v = subprocess.run(cmd_version, cwd=cwd, capture_output=True, text=True, timeout=timeout_v)
     if res_v.returncode != 0 or "AKSA Engine" not in res_v.stdout:
         print(f"❌ Version check failed: code={res_v.returncode}, stdout={res_v.stdout}, stderr={res_v.stderr}")
         return False
     print(f"✅ Version check passed: {res_v.stdout.strip()}")
 
     print(f"Running sidecar --smoke-test check: {' '.join(cmd_smoke)}")
-    res_s = subprocess.run(cmd_smoke, cwd=cwd, capture_output=True, text=True, timeout=15)
+    res_s = subprocess.run(cmd_smoke, cwd=cwd, capture_output=True, text=True, timeout=timeout_s)
     if res_s.returncode != 0 or "[SMOKE-TEST]" not in res_s.stdout:
         print(f"❌ Smoke test failed: code={res_s.returncode}, stdout={res_s.stdout}, stderr={res_s.stderr}")
         return False
@@ -329,6 +351,11 @@ def main() -> None:
     # Smoke Test
     st_p = subparsers.add_parser("smoke-test", help="Smoke test sidecar engine binary or module")
     st_p.add_argument("--executable", "-e", type=Path, default=None, help="Path to compiled sidecar binary")
+    st_p.add_argument(
+        "--require-executable",
+        action="store_true",
+        help="Require real compiled target-triple sidecar executable (fail closed if missing or dummy)",
+    )
 
     args = parser.parse_args()
 
@@ -345,7 +372,7 @@ def main() -> None:
             sys.exit(1)
         print("✅ All checksums verified successfully!")
     elif args.command == "smoke-test":
-        ok = smoke_test_sidecar(args.executable)
+        ok = smoke_test_sidecar(args.executable, require_executable=args.require_executable)
         if not ok:
             print("❌ Sidecar smoke test failed!")
             sys.exit(1)

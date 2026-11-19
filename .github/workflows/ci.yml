@@ -103,19 +103,27 @@ jobs:
           assert set(statuses) == required and all(v == "passed" for v in statuses.values()), f"Missing or skipped Linux tests: {statuses}"
           PY
 
-      - name: Run sidecar engine lifecycle smoke test
+      - name: Run Python module sidecar smoke test
         run: |
           python scripts/release_tooling.py smoke-test
 
-      - name: Verify sidecar build configuration
+      - name: Build native PyInstaller sidecar binary for target triple
         run: |
-          python scripts/build_sidecar.py --dry-run
+          python scripts/build_sidecar.py
+
+      - name: Verify target-triple sidecar executable exists and is non-stub
+        run: |
+          python scripts/build_sidecar.py --verify-only
+
+      - name: Smoke-test compiled native sidecar binary
+        run: |
+          python scripts/release_tooling.py smoke-test --require-executable
 
       - name: Install Desktop Frontend dependencies
         working-directory: apps/desktop
         run: |
           npm ci
-          npm audit --omit=dev
+          npm audit --omit=dev --audit-level=high
 
       - name: Run Desktop Frontend Vitest test suite
         working-directory: apps/desktop
@@ -144,7 +152,10 @@ jobs:
         shell: bash
         run: |
           python - <<'PY' >> "$GITHUB_STEP_SUMMARY"
-          import xml.etree.ElementTree as ET, os
+          import xml.etree.ElementTree as ET, os, sys
+          sys.path.insert(0, "scripts")
+          from build_sidecar import detect_target_triple, resolve_sidecar_binary_path
+
           xml_path = "build/junit-pytest-${{ matrix.os }}.xml"
           print("### AKSA Cross-Platform CI Summary (${{ matrix.os }})\n")
           if os.path.exists(xml_path):
@@ -156,5 +167,12 @@ jobs:
                   print("- **Pytest JUnit XML parsed without testsuite element**")
           else:
               print("- **Pytest JUnit XML not produced**")
-          print("- **Checks executed in this job:** pytest + sidecar smoke-test + build_sidecar dry-run + npm audit + vitest + tsc/vite build + cargo test + cargo check + CycloneDX SBOM")
+
+          triple = detect_target_triple()
+          bin_path = resolve_sidecar_binary_path(triple)
+          if bin_path.exists():
+              print(f"- **Sidecar Binary (`{triple}`):** `{bin_path.name}` ({bin_path.stat().st_size:,} bytes)")
+          else:
+              print(f"- **Sidecar Binary (`{triple}`):** missing at `{bin_path}`")
+          print("- **Checks executed in this job:** pytest + real PyInstaller sidecar build & verification + compiled sidecar smoke-test + npm audit + vitest + tsc/vite build + cargo test + cargo check + CycloneDX SBOM")
           PY

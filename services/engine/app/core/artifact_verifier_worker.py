@@ -15,17 +15,51 @@ and Windows zero-capability AppContainer + Job Object):
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 MAX_WORKER_STDIN_BYTES = 512 * 1024
 MAX_WORKER_STDOUT_BYTES = 512 * 1024
 MAX_WORKER_STDERR_BYTES = 64 * 1024
 MAX_WORKER_STDERR_SNIPPET_BYTES = 2048
 WORKER_MEMORY_LIMIT_BYTES = 768 * 1024 * 1024
-DEFAULT_WORKER_MAX_NPROC_HEADROOM = 32
+DEFAULT_WORKER_MAX_NPROC_HEADROOM = 64
+MIN_WORKER_MAX_NPROC_HEADROOM = 16
+MAX_WORKER_MAX_NPROC_HEADROOM = 512
+
+
+def _resolve_worker_nproc_headroom(uid_tasks: int | None = None) -> int:
+    """Resolve configurable or load-adaptive positive headroom above current UID tasks."""
+    raw = os.environ.get("AKSA_VERIFIER_NPROC_HEADROOM", "").strip()
+    if raw:
+        try:
+            val = int(raw)
+            return min(MAX_WORKER_MAX_NPROC_HEADROOM, max(MIN_WORKER_MAX_NPROC_HEADROOM, val))
+        except ValueError:
+            pass
+    if uid_tasks is not None and uid_tasks > 0:
+        adaptive = max(DEFAULT_WORKER_MAX_NPROC_HEADROOM, int(uid_tasks * 0.5))
+        return min(MAX_WORKER_MAX_NPROC_HEADROOM, adaptive)
+    return DEFAULT_WORKER_MAX_NPROC_HEADROOM
+
+
+def _is_rlimit_nproc_eagain(stderr_text: str) -> bool:
+    """Detect POSIX pthread_create / RLIMIT_NPROC resource exhaustion errors for telemetry & retry."""
+    low = (stderr_text or "").lower()
+    return any(
+        tok in low
+        for tok in (
+            "resource temporarily unavailable",
+            "pthread_create failed",
+            "rlimit_nproc",
+            "eagain",
+        )
+    )
 
 
 def _estimate_current_uid_tasks() -> int | None:
@@ -250,40 +284,67 @@ async def verify_artifact_in_worker(
     safe_env["VECLIB_MAXIMUM_THREADS"] = "1"
     safe_env["NUMEXPR_NUM_THREADS"] = "1"
     safe_env["MALLOC_ARENA_MAX"] = "2"
-    if sys.platform != "win32":
-        safe_env["HOME"] = str(ws_real)
-        safe_env["TMPDIR"] = str(ws_real)
-        uid_tasks = _estimate_current_uid_tasks()
-        if uid_tasks is not None:
-            safe_env["AKSA_VERIFIER_MAX_NPROC"] = str(max(64, uid_tasks + DEFAULT_WORKER_MAX_NPROC_HEADROOM))
-
     req_roots, opt_roots = collect_python_runtime_read_roots()
+    worker_cmd = (
+        [sys.executable, "--verifier-worker"]
+        if getattr(sys, "frozen", False)
+        else [sys.executable, "-B", "-m", "app.core.artifact_verifier_worker"]
+    )
 
-    try:
-        res = await execute_in_os_sandbox(
-            cmd=[sys.executable, "-B", "-m", "app.core.artifact_verifier_worker"],
-            cwd=ws_real,
-            env=safe_env,
-            workspace=ws_real,
-            required_read_roots=req_roots,
-            optional_read_roots=opt_roots,
-            stdin_bytes=request_bytes,
-            read_only_workspace=True,
-            timeout=timeout,
-            max_output_bytes=MAX_WORKER_STDOUT_BYTES,
-            max_stderr_bytes=MAX_WORKER_STDERR_BYTES,
-            stderr_retain_bytes=MAX_WORKER_STDERR_SNIPPET_BYTES,
-            abort_on_output_limit=True,
-        )
-    except TimeoutError:
-        return False, f"Verifikasi artefak '{art_path.name}' dihentikan paksa (timeout {timeout}s)."
-    except SandboxOutputLimitError as exc:
-        return (
-            False,
-            f"Output {exc.stream} worker verifikasi melebihi batas ukuran aman ({exc.limit} bytes); proses dihentikan.",
-        )
-    except SandboxUnavailableError as exc:
-        return False, f"Sandbox OS verifikasi tidak tersedia (fail-closed): {exc}"
+    uid_tasks = _estimate_current_uid_tasks() if sys.platform != "win32" else None
+    headroom = _resolve_worker_nproc_headroom(uid_tasks)
+    max_attempts = 2 if sys.platform.startswith("linux") else 1
+
+    res: dict[str, Any] = {}
+    for attempt in range(max_attempts):
+        attempt_env = dict(safe_env)
+        if sys.platform != "win32" and uid_tasks is not None:
+            attempt_env["AKSA_VERIFIER_MAX_NPROC"] = str(max(64, uid_tasks + headroom))
+
+        try:
+            res = await execute_in_os_sandbox(
+                cmd=worker_cmd,
+                cwd=ws_real,
+                env=attempt_env,
+                workspace=ws_real,
+                required_read_roots=req_roots,
+                optional_read_roots=opt_roots,
+                stdin_bytes=request_bytes,
+                read_only_workspace=True,
+                timeout=timeout,
+                max_output_bytes=MAX_WORKER_STDOUT_BYTES,
+                max_stderr_bytes=MAX_WORKER_STDERR_BYTES,
+                stderr_retain_bytes=MAX_WORKER_STDERR_SNIPPET_BYTES,
+                abort_on_output_limit=True,
+            )
+        except TimeoutError:
+            return False, f"Verifikasi artefak '{art_path.name}' dihentikan paksa (timeout {timeout}s)."
+        except SandboxOutputLimitError as exc:
+            return (
+                False,
+                f"Output {exc.stream} worker verifikasi melebihi batas ukuran aman ({exc.limit} bytes); proses dihentikan.",
+            )
+        except SandboxUnavailableError as exc:
+            return False, f"Sandbox OS verifikasi tidak tersedia (fail-closed): {exc}"
+
+        exit_code = int(res.get("exit_code", 1))
+        stdout_str = str(res.get("stdout", "") or "")
+        stderr_str = str(res.get("stderr", "") or "")
+
+        if exit_code != 0 and _is_rlimit_nproc_eagain(stderr_str):
+            logger.warning(
+                "verifier_worker.rlimit_nproc_eagain attempt=%d headroom=%d uid_tasks=%s exit_code=%d",
+                attempt + 1,
+                headroom,
+                uid_tasks,
+                exit_code,
+            )
+            if attempt + 1 < max_attempts:
+                headroom = min(MAX_WORKER_MAX_NPROC_HEADROOM, max(headroom * 2, headroom + 64))
+                if sys.platform.startswith("linux"):
+                    uid_tasks = _estimate_current_uid_tasks() or uid_tasks
+                continue
+        break
 
     exit_code = int(res.get("exit_code", 1))
     stdout_str = str(res.get("stdout", "") or "")
@@ -300,7 +361,8 @@ async def verify_artifact_in_worker(
         return False, f"Respons worker verifikasi tidak valid: {exc}"
 
 
-if __name__ == "__main__":
+def run_verifier_worker_stdio() -> int:
+    """Stdio entrypoint executed inside the OS-sandboxed verifier child process."""
     import mimetypes
 
     # Avoid probing /etc/apache2/mime.types inside strict Seatbelt/bwrap sandboxes
@@ -318,7 +380,7 @@ if __name__ == "__main__":
     raw = sys.stdin.buffer.read(MAX_WORKER_STDIN_BYTES + 1)
     if len(raw) > MAX_WORKER_STDIN_BYTES:
         sys.stdout.write(json.dumps({"ok": False, "detail": "Payload worker melebihi batas.", "breakdown": {}}))
-        sys.exit(0)
+        return 0
     try:
         req = json.loads(raw.decode("utf-8"))
         out = _verify_sync_in_subprocess(req if isinstance(req, dict) else {})
@@ -326,3 +388,8 @@ if __name__ == "__main__":
         out = {"ok": False, "detail": f"Kesalahan internal worker verifikasi: {exc}", "breakdown": {}}
     sys.stdout.write(json.dumps(out, ensure_ascii=False))
     sys.stdout.flush()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(run_verifier_worker_stdio())

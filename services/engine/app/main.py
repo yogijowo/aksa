@@ -238,11 +238,17 @@ def main() -> None:
     parser.add_argument("--production", action="store_true", help="Explicitly enforce production mode")
     parser.add_argument("--version", action="store_true", help="Print AKSA sidecar engine version and exit")
     parser.add_argument("--smoke-test", action="store_true", help="Run internal subsystems health verification and exit")
+    parser.add_argument("--verifier-worker", action="store_true", help="Run sandboxed artifact verifier stdio worker")
     args = parser.parse_args()
 
     if args.version:
         print("AKSA Engine v1.0.0 (API v1)")
         sys.exit(0)
+
+    if args.verifier_worker:
+        from app.core.artifact_verifier_worker import run_verifier_worker_stdio
+
+        sys.exit(run_verifier_worker_stdio())
 
     if args.smoke_test:
         import asyncio
