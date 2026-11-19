@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import os
@@ -489,42 +490,119 @@ def canonicalize_and_validate_path(
     return canonical_candidate
 
 
+_scoped_sandbox_ctx: contextvars.ContextVar[SandboxManager | None] = contextvars.ContextVar(
+    "aksa_scoped_sandbox_manager",
+    default=None,
+)
+
+
+class _ScopedSandboxContext:
+    """Context manager binding an isolated SandboxManager solely to the current async task context."""
+
+    def __init__(self, manager: SandboxManager) -> None:
+        self._manager = manager
+        self._token: contextvars.Token[SandboxManager | None] | None = None
+
+    def __enter__(self) -> SandboxManager:
+        self._token = _scoped_sandbox_ctx.set(self._manager)
+        return self._manager
+
+    def __exit__(self, *args: Any) -> None:
+        if self._token is not None:
+            _scoped_sandbox_ctx.reset(self._token)
+            self._token = None
+
+
 class SandboxManager:
     """Enforces strict path jail checks, automatic .aksa_backup snapshots, and HITL approvals."""
 
-    def __init__(self, allowed_workspaces: list[WorkspacePolicy] | None = None) -> None:
-        self._workspaces: dict[Path, WorkspacePolicy] = {}
+    def __init__(
+        self,
+        allowed_workspaces: list[WorkspacePolicy] | None = None,
+        *,
+        frozen: bool = False,
+    ) -> None:
+        self._own_workspaces: dict[Path, WorkspacePolicy] = {}
+        self._lock = threading.RLock()
+        self._frozen = frozen
         self._pending_approvals: dict[str, HITLApprovalRequest] = {}
         self._approval_events: dict[str, asyncio.Event] = {}
         if allowed_workspaces:
             for ws in allowed_workspaces:
-                self.register_workspace(ws)
+                real_path = Path(os.path.realpath(os.path.expanduser(ws.folder_path)))
+                self._own_workspaces[real_path] = WorkspacePolicy(
+                    folder_path=str(real_path),
+                    allow_read=ws.allow_read,
+                    allow_write=ws.allow_write,
+                    allow_execute=ws.allow_execute,
+                )
+
+    def _resolve_target(self) -> SandboxManager:
+        scoped = _scoped_sandbox_ctx.get()
+        if scoped is not None and scoped is not self:
+            return scoped
+        return self
+
+    def scoped(self, isolated_manager: SandboxManager) -> _ScopedSandboxContext:
+        """Bind an isolated replay/task SandboxManager without mutating global workspace state."""
+        if isolated_manager is self:
+            raise SandboxViolationError(
+                "Konteks sandbox terisolasi tidak boleh merujuk pada singleton sandbox_manager global."
+            )
+        return _ScopedSandboxContext(isolated_manager)
+
+    @property
+    def _workspaces(self) -> dict[Path, WorkspacePolicy]:
+        target = self._resolve_target()
+        return target._own_workspaces
+
+    @_workspaces.setter
+    def _workspaces(self, value: dict[Path, WorkspacePolicy]) -> None:
+        target = self._resolve_target()
+        if target._frozen:
+            raise SandboxViolationError("Kebijakan sandbox replay bersifat immutable dan tidak dapat diubah.")
+        with target._lock:
+            target._own_workspaces = value
 
     def register_workspace(self, policy: WorkspacePolicy) -> Path:
         """Register or update an authorized workspace directory."""
+        target = self._resolve_target()
+        if target._frozen:
+            raise SandboxViolationError("Tidak dapat mendaftarkan workspace ke sandbox yang terkunci (frozen).")
         real_path = Path(os.path.realpath(os.path.expanduser(policy.folder_path)))
-        self._workspaces[real_path] = WorkspacePolicy(
-            folder_path=str(real_path),
-            allow_read=policy.allow_read,
-            allow_write=policy.allow_write,
-            allow_execute=policy.allow_execute,
-        )
+        with target._lock:
+            target._own_workspaces[real_path] = WorkspacePolicy(
+                folder_path=str(real_path),
+                allow_read=policy.allow_read,
+                allow_write=policy.allow_write,
+                allow_execute=policy.allow_execute,
+            )
         return real_path
 
     def remove_workspace(self, folder_path: str | Path) -> bool:
         """Remove a workspace path from the allowed jail."""
+        target = self._resolve_target()
+        if target._frozen:
+            raise SandboxViolationError("Tidak dapat menghapus workspace dari sandbox yang terkunci (frozen).")
         real_path = Path(os.path.realpath(os.path.expanduser(str(folder_path))))
-        return self._workspaces.pop(real_path, None) is not None
+        with target._lock:
+            return target._own_workspaces.pop(real_path, None) is not None
 
     def clear_all_workspaces(self) -> int:
         """Revoke all registered workspace policies in memory immediately."""
-        count = len(self._workspaces)
-        self._workspaces.clear()
-        return count
+        target = self._resolve_target()
+        if target._frozen:
+            raise SandboxViolationError("Tidak dapat menghapus seluruh workspace pada sandbox yang terkunci (frozen).")
+        with target._lock:
+            count = len(target._own_workspaces)
+            target._own_workspaces.clear()
+            return count
 
     def list_policies(self) -> list[WorkspacePolicy]:
         """Return all registered workspace policies."""
-        return list(self._workspaces.values())
+        target = self._resolve_target()
+        with target._lock:
+            return list(target._own_workspaces.values())
 
     def validate_path(
         self,
@@ -558,10 +636,14 @@ class SandboxManager:
 
         resolved = Path(os.path.realpath(expanded))
 
+        target = self._resolve_target()
+        with target._lock:
+            policies_snapshot = list(target._own_workspaces.items())
+
         matched_root: Path | None = None
         matched_policy: WorkspacePolicy | None = None
 
-        for root_path, policy in self._workspaces.items():
+        for root_path, policy in policies_snapshot:
             if resolved == root_path or resolved.is_relative_to(root_path):
                 matched_root = root_path
                 matched_policy = policy
@@ -605,10 +687,12 @@ class SandboxManager:
             return None
 
         # Find workspace root for this file
-        ws_root = next(
-            (root for root in self._workspaces if resolved.is_relative_to(root)),
-            resolved.parent,
-        )
+        target = self._resolve_target()
+        with target._lock:
+            ws_root = next(
+                (root for root in target._own_workspaces if resolved.is_relative_to(root)),
+                resolved.parent,
+            )
         backup_dir = ws_root / ".aksa_backup"
         backup_dir.mkdir(parents=True, exist_ok=True)
 
@@ -655,6 +739,11 @@ class SandboxManager:
         principal_id: str | None = None,
     ) -> HITLApprovalRequest:
         """Create a Human-in-the-Loop approval request and broadcast it to the Desktop UI."""
+        target = self._resolve_target()
+        if target._frozen:
+            raise SandboxViolationError(
+                "Operasi HITL tidak diperbolehkan di dalam sandbox replay yang terisolasi."
+            )
         req_id = f"hitl_{uuid.uuid4().hex[:10]}"
         act_id = action_id or f"act_{uuid.uuid4().hex[:10]}"
         now = datetime.now(timezone.utc)

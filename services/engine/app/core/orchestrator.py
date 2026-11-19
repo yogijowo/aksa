@@ -48,17 +48,148 @@ def _generate_non_colliding_path(directory: Path, base_stem: str, extension: str
         counter += 1
 
 
+MAX_ARTIFACT_VERIFY_BYTES: int = 25 * 1024 * 1024
+MAX_EXCEL_PARSE_CELLS: int = 250_000
+MAX_PDF_PARSE_PAGES: int = 500
+_EXCEL_ERROR_TOKENS: frozenset[str] = frozenset({
+    "#REF!",
+    "#DIV/0!",
+    "#VALUE!",
+    "#NAME?",
+    "#N/A",
+    "#NUM!",
+    "#NULL!",
+})
+
+
+def _evaluate_basic_excel_formula(
+    formula: str,
+    ws_val: Any,
+    ws_fml: Any,
+    *,
+    _depth: int = 0,
+    _seen: set[str] | None = None,
+) -> float | None:
+    """Deterministically evaluate common Excel formulas (SUM, AVERAGE, MIN, MAX, COUNT, + - * /)."""
+    if _depth > 4:
+        return None
+    from openpyxl.utils import get_column_letter
+    from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
+
+    expr = formula.strip()
+    if not expr.startswith("="):
+        return None
+    body = expr[1:].strip()
+    if not body:
+        return None
+
+    seen_set = set(_seen or set())
+
+    def _cell_num(coord: str) -> float | None:
+        c_up = coord.strip().upper()
+        if c_up in seen_set:
+            return None
+        try:
+            row_i, col_i = coordinate_to_tuple(c_up)
+        except Exception:
+            return None
+        v_raw = ws_val.cell(row=row_i, column=col_i).value
+        if isinstance(v_raw, (int, float)) and not isinstance(v_raw, bool):
+            return float(v_raw)
+        f_raw = ws_fml.cell(row=row_i, column=col_i).value
+        if isinstance(f_raw, (int, float)) and not isinstance(f_raw, bool):
+            return float(f_raw)
+        if isinstance(f_raw, str) and f_raw.startswith("="):
+            return _evaluate_basic_excel_formula(
+                f_raw, ws_val, ws_fml, _depth=_depth + 1, _seen=seen_set | {c_up}
+            )
+        return None
+
+    # Pattern 1: Single aggregate function FUNC(arg1, arg2, ...)
+    fn_match = re.fullmatch(r"([A-Z]+)\s*\(([^()]+)\)", body, re.IGNORECASE)
+    if fn_match:
+        fn_name = fn_match.group(1).upper()
+        if fn_name not in {"SUM", "AVERAGE", "MIN", "MAX", "COUNT"}:
+            return None
+        nums: list[float] = []
+        for token in fn_match.group(2).split(","):
+            part = token.strip()
+            if not part:
+                continue
+            if ":" in part:
+                try:
+                    min_c, min_r, max_c, max_r = range_boundaries(part.upper())
+                except Exception:
+                    return None
+                if (max_r - min_r + 1) * (max_c - min_c + 1) > 50_000:
+                    return None
+                for rr in range(min_r, max_r + 1):
+                    for cc in range(min_c, max_c + 1):
+                        val = _cell_num(f"{get_column_letter(cc)}{rr}")
+                        if val is not None:
+                            nums.append(val)
+            else:
+                try:
+                    nums.append(float(part))
+                except ValueError:
+                    val = _cell_num(part)
+                    if val is not None:
+                        nums.append(val)
+        if fn_name == "COUNT":
+            return float(len(nums))
+        if not nums:
+            return 0.0 if fn_name == "SUM" else None
+        if fn_name == "SUM":
+            return float(sum(nums))
+        if fn_name == "AVERAGE":
+            return float(sum(nums) / len(nums))
+        if fn_name == "MIN":
+            return float(min(nums))
+        if fn_name == "MAX":
+            return float(max(nums))
+
+    # Pattern 2: Binary operand expression (<cell|num> <op> <cell|num>)
+    bin_match = re.fullmatch(
+        r"([A-Z]{1,3}\d+|\d+(?:\.\d+)?)\s*([+\-*/])\s*([A-Z]{1,3}\d+|\d+(?:\.\d+)?)",
+        body,
+        re.IGNORECASE,
+    )
+    if bin_match:
+        def _resolve_op(tok: str) -> float | None:
+            try:
+                return float(tok)
+            except ValueError:
+                return _cell_num(tok)
+
+        lhs = _resolve_op(bin_match.group(1))
+        rhs = _resolve_op(bin_match.group(3))
+        op = bin_match.group(2)
+        if lhs is None or rhs is None:
+            return None
+        if op == "+":
+            return lhs + rhs
+        if op == "-":
+            return lhs - rhs
+        if op == "*":
+            return lhs * rhs
+        if op == "/":
+            return None if rhs == 0.0 else (lhs / rhs)
+
+    return None
+
+
 def get_artifact_postcondition_breakdown(
     art_path: Path,
     expected_schema: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Inspect and validate an artifact across four orthogonal gates (P2-03):
-    1. ``file_created`` — non-zero byte file exists on disk.
+    1. ``file_created`` — non-zero byte regular file (non-symlink, bounded size) exists on disk.
     2. ``format_valid`` — parser opens the format cleanly.
     3. ``content_detected`` — non-trivial real structural content exists (rejects scalars,
        1-cell placeholders, empty docs, and ornamental textless vector PDFs).
     4. ``task_requirement_satisfied`` — artifact matches pre-execution prompt/plan
-       expectations (columns, formulas, sections, keywords, minimum row/item counts).
+       expectations (columns, formulas, formula evaluation consistency, expected values,
+       sections, keywords, minimum row/item counts).
 
     ``semantic_postcondition_passed`` is True ONLY when all four gates pass for a
     supported format (NEVER auto-passes unknown extensions).
@@ -74,12 +205,20 @@ def get_artifact_postcondition_breakdown(
         "unsupported_format": False,
         "detail": "",
     }
+    if art_path.is_symlink():
+        res["detail"] = f"Artefak symlink ditolak oleh gerbang verifikasi: {art_path}"
+        return res
     if not art_path.exists():
         res["detail"] = f"File tidak ditemukan: {art_path}"
         return res
     try:
-        if art_path.stat().st_size == 0:
+        st_size = art_path.stat().st_size
+        if st_size == 0:
             res["detail"] = f"File berukuran 0 byte: {art_path}"
+            return res
+        max_bytes = int(schema.get("max_bytes", MAX_ARTIFACT_VERIFY_BYTES))
+        if st_size > max_bytes:
+            res["detail"] = f"Ukuran artefak ({st_size} bytes) melebihi batas verifikasi aman ({max_bytes} bytes)."
             return res
     except Exception as exc:
         res["detail"] = f"Gagal membaca stat file: {exc}"
@@ -96,43 +235,86 @@ def get_artifact_postcondition_breakdown(
         return res
 
     if suffix in (".xlsx", ".xlsm"):
+        wb_val = None
+        wb_fml = None
         try:
             import openpyxl
             wb_val = openpyxl.load_workbook(str(art_path), data_only=True)
             wb_fml = openpyxl.load_workbook(str(art_path), data_only=False)
             if not wb_val.sheetnames:
-                wb_val.close()
-                wb_fml.close()
                 res["detail"] = f"Buku kerja Excel kosong tanpa lembar kerja: {art_path}"
                 return res
             res["format_valid"] = True
 
             non_empty_cells = 0
+            cells_scanned = 0
             max_rows_seen = 0
             all_text_lower: list[str] = []
             header_tokens: set[str] = set()
             has_formula = False
+            seen_formula_funcs: set[str] = set()
+            cell_values_map: dict[str, Any] = {}
+            excel_error: str | None = None
 
             for sname in wb_val.sheetnames:
                 ws = wb_val[sname]
                 ws_f = wb_fml[sname]
                 if ws.max_row and ws.max_row > max_rows_seen:
                     max_rows_seen = ws.max_row
-                for r_idx, row in enumerate(ws.iter_rows(values_only=True), start=1):
-                    for cell_v in row:
-                        if cell_v is not None and str(cell_v).strip() != "":
+                for r_idx, (row_v, row_f) in enumerate(
+                    zip(ws.iter_rows(values_only=False), ws_f.iter_rows(values_only=False)),
+                    start=1,
+                ):
+                    for c_v, c_f in zip(row_v, row_f):
+                        cells_scanned += 1
+                        if cells_scanned > MAX_EXCEL_PARSE_CELLS:
+                            res["detail"] = f"Buku kerja Excel melebihi batas sel aman ({MAX_EXCEL_PARSE_CELLS})."
+                            return res
+
+                        coord = c_f.coordinate
+                        val_v = c_v.value
+                        val_f = c_f.value
+                        if isinstance(val_v, str) and val_v.strip().upper() in _EXCEL_ERROR_TOKENS:
+                            excel_error = f"Sel Excel {sname}!{coord} menghasilkan error rumus: {val_v}"
+                            break
+
+                        is_formula_cell = isinstance(val_f, str) and val_f.startswith("=")
+                        if is_formula_cell:
+                            has_formula = True
+                            fml_str = val_f.strip()
+                            if len(fml_str) < 2 or fml_str.count("(") != fml_str.count(")"):
+                                excel_error = f"Sintaks rumus Excel tidak valid pada {sname}!{coord}: {fml_str}"
+                                break
+                            for fn_tok in re.findall(r"([A-Z][A-Z0-9_.]*)\s*\(", fml_str.upper()):
+                                seen_formula_funcs.add(fn_tok)
+                            computed = _evaluate_basic_excel_formula(fml_str, ws, ws_f)
+                            if (
+                                computed is not None
+                                and isinstance(val_v, (int, float))
+                                and not isinstance(val_v, bool)
+                                and abs(float(val_v) - computed) > 1e-4
+                            ):
+                                excel_error = (
+                                    f"Nilai cache rumus pada {sname}!{coord} ({val_v}) tidak sesuai hasil "
+                                    f"kalkulasi '{fml_str}' ({computed})."
+                                )
+                                break
+                            effective_v = computed if val_v is None else val_v
+                            cell_values_map.setdefault(coord, effective_v)
+                            cell_values_map[f"{sname}!{coord}"] = effective_v
                             non_empty_cells += 1
-                            txt = str(cell_v).strip().lower()
+                        elif val_v is not None and str(val_v).strip() != "":
+                            non_empty_cells += 1
+                            txt = str(val_v).strip().lower()
                             all_text_lower.append(txt)
                             if r_idx <= 2:
                                 header_tokens.add(txt)
-                for row_f in ws_f.iter_rows(values_only=True):
-                    for cf in row_f:
-                        if isinstance(cf, str) and cf.startswith("="):
-                            has_formula = True
-
-            wb_val.close()
-            wb_fml.close()
+                            cell_values_map.setdefault(coord, val_v)
+                            cell_values_map[f"{sname}!{coord}"] = val_v
+                    if excel_error:
+                        break
+                if excel_error:
+                    break
 
             min_cells = int(schema.get("min_cells", 2))
             if non_empty_cells < min_cells:
@@ -144,6 +326,10 @@ def get_artifact_postcondition_breakdown(
 
             res["content_detected"] = True
 
+            if excel_error:
+                res["detail"] = excel_error
+                return res
+
             min_rows = int(schema.get("min_rows", 1))
             if max_rows_seen < min_rows:
                 res["detail"] = f"Jumlah baris Excel ({max_rows_seen}) kurang dari syarat tugas ({min_rows})."
@@ -152,6 +338,27 @@ def get_artifact_postcondition_breakdown(
             if schema.get("require_formulas") and not has_formula:
                 res["detail"] = "Buku kerja Excel tidak memuat formula/rumus dinamis yang disyaratkan tugas."
                 return res
+
+            req_funcs = [str(f).strip().upper() for f in schema.get("required_formula_functions", []) if str(f).strip()]
+            missing_funcs = [f for f in req_funcs if f not in seen_formula_funcs]
+            if missing_funcs:
+                res["detail"] = f"Fungsi rumus wajib Excel tidak ditemukan: {missing_funcs}"
+                return res
+
+            expected_vals = schema.get("expected_values")
+            if isinstance(expected_vals, dict):
+                for coord_key, exp_v in expected_vals.items():
+                    if coord_key not in cell_values_map:
+                        res["detail"] = f"Nilai target sel Excel '{coord_key}' tidak ditemukan."
+                        return res
+                    actual_v = cell_values_map[coord_key]
+                    if isinstance(exp_v, (int, float)) and not isinstance(exp_v, bool):
+                        if not isinstance(actual_v, (int, float)) or abs(float(actual_v) - float(exp_v)) > 1e-4:
+                            res["detail"] = f"Nilai sel '{coord_key}' ({actual_v}) tidak sesuai target ({exp_v})."
+                            return res
+                    elif str(actual_v).strip().lower() != str(exp_v).strip().lower():
+                        res["detail"] = f"Nilai sel '{coord_key}' ('{actual_v}') tidak sesuai target ('{exp_v}')."
+                        return res
 
             req_cols = [str(c).strip().lower() for c in schema.get("required_columns", []) if str(c).strip()]
             if req_cols:
@@ -177,6 +384,17 @@ def get_artifact_postcondition_breakdown(
         except Exception as exc:
             res["detail"] = f"Integritas Excel (.xlsx) tidak valid atau korup: {exc}"
             return res
+        finally:
+            if wb_val is not None:
+                try:
+                    wb_val.close()
+                except Exception:
+                    pass
+            if wb_fml is not None:
+                try:
+                    wb_fml.close()
+                except Exception:
+                    pass
 
     elif suffix == ".docx":
         try:
@@ -279,6 +497,10 @@ def get_artifact_postcondition_breakdown(
             if doc.page_count < 1:
                 doc.close()
                 res["detail"] = f"Dokumen PDF tidak memiliki halaman: {art_path}"
+                return res
+            if doc.page_count > MAX_PDF_PARSE_PAGES:
+                doc.close()
+                res["detail"] = f"Jumlah halaman PDF ({doc.page_count}) melebihi batas verifikasi aman ({MAX_PDF_PARSE_PAGES})."
                 return res
             res["format_valid"] = True
             page_count = doc.page_count

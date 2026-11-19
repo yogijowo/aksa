@@ -478,10 +478,12 @@ async def register_workspace(req: UpsertWorkspaceRequest, request: Request) -> d
 async def delete_workspace(workspace_id: str, request: Request) -> dict[str, Any]:
     """Remove an authorized PC workspace folder with principal authorization (P0-02)."""
     principal_id = resolve_authenticated_principal(request)
-    await authorize_workspace(workspace_id, principal_id, required_permission="delete")
+    ws_rec = await authorize_workspace(workspace_id, principal_id, required_permission="delete")
     deleted = await db_manager.delete_workspace(workspace_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="Folder Kerja tidak ditemukan.")
+    if ws_rec and ws_rec.get("folder_path"):
+        sandbox_manager.remove_workspace(ws_rec["folder_path"])
     return {"deleted": True, "id": workspace_id}
 
 
@@ -1356,6 +1358,8 @@ async def evaluate_agent_candidate_skill(
     req: EvaluateCandidateRequest | None = None,
 ) -> dict[str, Any]:
     """Evaluate candidate skill safety, DAG/schemas, and isolated runtime replay."""
+    if req and req.replay_fixtures and len(req.replay_fixtures) > 20:
+        raise HTTPException(status_code=400, detail="Maksimal 20 variasi fixture diperbolehkan per evaluasi replay.")
     version_svc = SkillVersionService(agent_id)
     try:
         report = await version_svc.evaluate_and_replay_candidate(
@@ -1365,6 +1369,8 @@ async def evaluate_agent_candidate_skill(
         return {"report": report.model_dump()}
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @api_router.post("/agents/{agent_id}/skills/{skill_id}/promote")

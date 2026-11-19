@@ -33,7 +33,7 @@ from app.core.orchestrator import (
     get_artifact_postcondition_breakdown,
     verify_artifact_postcondition,
 )
-from app.core.sandbox import RiskLevel, WorkspacePolicy, sandbox_manager
+from app.core.sandbox import RiskLevel, SandboxManager, WorkspacePolicy, sandbox_manager
 from app.skills.os_sandbox import (
     SandboxUnavailableError,
     build_linux_bwrap_args,
@@ -305,55 +305,60 @@ def test_p1_02_agent_learning_never_accesses_private_tool_handlers():
 
 @pytest.mark.asyncio
 async def test_p1_02_execute_replay_blocks_side_effectful_and_disallowed_tools(tmp_path: Path):
-    """ToolRegistry.execute_replay rejects network/MCP, live computer-use, OS shell, and memory writes."""
+    """ToolRegistry.execute_replay rejects network/MCP, live computer-use, OS shell, memory writes, and bad sandboxes."""
     import app.tools  # noqa: F401
 
     ws = tmp_path / "replay_ws"
     ws.mkdir()
-    old_policies = list(sandbox_manager.list_policies())
-    sandbox_manager.clear_all_workspaces()
-    sandbox_manager.register_workspace(
-        WorkspacePolicy(folder_path=str(ws), allow_read=True, allow_write=True, allow_execute=False)
+    other = tmp_path / "other_ws"
+    other.mkdir()
+
+    for dangerous_tool in (
+        "invoke_mcp_tool",
+        "capture_screen_and_a11y",
+        "visual_screen_action",
+        "control_live_office_app",
+        "run_custom_python_task",
+        "remember_user_fact",
+        "recall_user_memories",
+        "search_workspace_knowledge",
+        "nonexistent_evil_tool",
+    ):
+        assert dangerous_tool not in REPLAY_ALLOWED_TOOLS
+        res = await tool_registry.execute_replay(dangerous_tool, replay_workspace=ws)
+        assert res.success is False
+        assert "ditolak" in res.summary.lower() or "tidak ditemukan" in res.summary.lower()
+
+    # Forbidden policy override params rejected even on allowlisted tools
+    override_res = await tool_registry.execute_replay(
+        "list_workspace_files",
+        replay_workspace=ws,
+        skip_approval=True,
     )
-    try:
-        for dangerous_tool in (
-            "invoke_mcp_tool",
-            "capture_screen_and_a11y",
-            "visual_screen_action",
-            "control_live_office_app",
-            "run_custom_python_task",
-            "remember_user_fact",
-            "recall_user_memories",
-            "search_workspace_knowledge",
-            "nonexistent_evil_tool",
-        ):
-            assert dangerous_tool not in REPLAY_ALLOWED_TOOLS
-            res = await tool_registry.execute_replay(dangerous_tool, replay_workspace=ws)
-            assert res.success is False
-            assert "ditolak" in res.summary.lower() or "tidak ditemukan" in res.summary.lower()
+    assert override_res.success is False
 
-        # Forbidden policy override params rejected even on allowlisted tools
-        override_res = await tool_registry.execute_replay(
-            "list_workspace_files",
-            replay_workspace=ws,
-            skip_approval=True,
-        )
-        assert override_res.success is False
+    # Passing the global singleton or a multi-workspace sandbox MUST fail closed
+    singleton_res = await tool_registry.execute_replay(
+        "list_workspace_files",
+        replay_workspace=ws,
+        replay_sandbox=sandbox_manager,
+        directory=".",
+    )
+    assert singleton_res.success is False
 
-        # SandboxManager jail with extra workspace or allow_execute=True MUST fail closed
-        other = tmp_path / "other_ws"
-        other.mkdir()
-        sandbox_manager.register_workspace(WorkspacePolicy(folder_path=str(other), allow_read=True, allow_write=True))
-        multi_res = await tool_registry.execute_replay(
-            "list_workspace_files",
-            replay_workspace=ws,
-            directory=".",
-        )
-        assert multi_res.success is False
-    finally:
-        sandbox_manager.clear_all_workspaces()
-        for pol in old_policies:
-            sandbox_manager.register_workspace(pol)
+    multi_sandbox = SandboxManager(
+        [
+            WorkspacePolicy(folder_path=str(ws), allow_read=True, allow_write=True, allow_execute=False),
+            WorkspacePolicy(folder_path=str(other), allow_read=True, allow_write=True, allow_execute=False),
+        ]
+    )
+    multi_res = await tool_registry.execute_replay(
+        "list_workspace_files",
+        replay_workspace=ws,
+        replay_sandbox=multi_sandbox,
+        directory=".",
+    )
+    assert multi_res.success is False
 
 
 @pytest.mark.asyncio

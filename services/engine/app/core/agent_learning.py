@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -51,11 +52,17 @@ def _is_replay_path_key(key: str) -> bool:
     return any(tok in kl for tok in _REPLAY_PATH_KEY_TOKENS)
 
 
-def resolve_replay_path(raw_str: str, workspace: Path) -> Path:
-    """Resolve a replay step path canonically inside ``workspace`` (P2-01).
+def resolve_replay_path(
+    raw_str: str,
+    workspace: Path,
+    *,
+    allow_in_workspace_absolute: bool = False,
+) -> Path:
+    """Resolve a replay step, input, or artifact path canonically inside ``workspace`` (P2-01 & Cycle 8 P1-02).
 
     Rejects empty values, null bytes, UNC paths, alternate data streams, ``..`` components,
-    any symlink component under ``workspace``, and any resolved target outside ``workspace``.
+    any symlink component under ``workspace``, any target outside ``workspace``, and (by default)
+    any raw absolute path from untrusted fixture/trace payloads.
     """
     cleaned = str(raw_str or "").strip()
     if not cleaned or "\0" in cleaned:
@@ -68,6 +75,8 @@ def resolve_replay_path(raw_str: str, workspace: Path) -> Path:
     raw_path = Path(cleaned)
     if any(part == ".." for part in raw_path.parts):
         raise AgentIsolationError(f"Path traversal '..' ditolak pada replay: '{cleaned}'.")
+    if raw_path.is_absolute() and not allow_in_workspace_absolute:
+        raise AgentIsolationError(f"Absolute path tidak diizinkan dalam fixture/argumen replay: '{cleaned}'.")
 
     ws_real = workspace.resolve(strict=False)
     candidate = raw_path if raw_path.is_absolute() else (ws_real / raw_path)
@@ -82,7 +91,15 @@ def resolve_replay_path(raw_str: str, workspace: Path) -> Path:
             f"Path replay '{cleaned}' keluar dari batas workspace sandbox terisolasi."
         )
 
-    # Walk segments from ws_real to catch pre-existing symlinks pointing outside or around ws_real
+    # Reject pre-existing symlinks on workspace root components and resolved relative segments
+    if candidate.is_symlink():
+        raise AgentIsolationError(f"Symlink target ditolak pada replay: '{cleaned}'.")
+    for anc in candidate.parents:
+        if anc == ws_real:
+            break
+        if anc.is_relative_to(ws_real) and anc.is_symlink():
+            raise AgentIsolationError(f"Direktori symlink ditolak pada replay: '{cleaned}'.")
+
     rel = resolved.relative_to(ws_real)
     cur = ws_real
     segments = raw_path.parts if not raw_path.is_absolute() else rel.parts
@@ -93,10 +110,38 @@ def resolve_replay_path(raw_str: str, workspace: Path) -> Path:
         if cur.is_symlink():
             raise AgentIsolationError(f"Symlink di dalam path replay ditolak: '{cleaned}'.")
 
-    if candidate.is_symlink():
-        raise AgentIsolationError(f"Symlink target ditolak pada replay: '{cleaned}'.")
-
     return resolved
+
+
+class ReplayExecutionContext:
+    """Isolated per-replay execution context holding its own frozen workspace, sandbox, and allowlist."""
+
+    MAX_VERIFIER_FILE_BYTES: int = 25 * 1024 * 1024
+    VERIFIER_TIMEOUT_SECONDS: float = 10.0
+
+    def __init__(self, workspace: Path) -> None:
+        from app.core.sandbox import SandboxManager, WorkspacePolicy
+        from app.tools.registry import REPLAY_ALLOWED_TOOLS
+
+        self.workspace = workspace.resolve()
+        self.allowed_tools = REPLAY_ALLOWED_TOOLS
+        self.sandbox_manager = SandboxManager(
+            [
+                WorkspacePolicy(
+                    folder_path=str(self.workspace),
+                    allow_read=True,
+                    allow_write=True,
+                    allow_execute=False,
+                )
+            ],
+            frozen=True,
+        )
+
+    def resolve_untrusted_path(self, raw_path: str) -> Path:
+        return resolve_replay_path(raw_path, self.workspace, allow_in_workspace_absolute=False)
+
+    def resolve_tool_artifact(self, raw_path: str) -> Path:
+        return resolve_replay_path(raw_path, self.workspace, allow_in_workspace_absolute=True)
 
 
 class LearningPrivacyFilter:
@@ -622,18 +667,18 @@ class SkillEvaluator:
         skill_id: str,
         candidate_data: dict[str, Any],
         replay_fixtures: list[dict[str, Any]],
-        tool_executor: Any = None,
     ) -> SkillEvaluationResult:
         """Actually replay a candidate workflow across isolated fixture variations in a clean temp sandbox.
 
-        Executes real registered tools (or a sandboxed test executor), verifies produced artifacts
-        against format + semantic postcondition gates, validates output expectations, and computes
-        empirical ``replay_pass_rate`` and ``calibrated_confidence`` (AKSA-AGENT-001-R5).
+        Executes strictly allowlisted deterministic tools inside an isolated per-fixture
+        ``ReplayExecutionContext`` (without ever mutating global ``sandbox_manager``), enforces canonical
+        containment on inputs, arguments, tool artifacts, and ``expected_artifacts``, and calibrates
+        ``replay_pass_rate`` and ``calibrated_confidence``.
         """
         import tempfile
         from app.core.orchestrator import verify_artifact_postcondition
-        from app.core.sandbox import WorkspacePolicy, sandbox_manager
-        from app.tools.registry import REPLAY_ALLOWED_TOOLS, ToolResult, tool_registry
+        from app.core.sandbox import sandbox_manager
+        from app.tools.registry import REPLAY_ALLOWED_TOOLS, tool_registry
 
         # Ensure standard built-in tools are registered before lookup
         import app.tools  # noqa: F401
@@ -663,132 +708,167 @@ class SkillEvaluator:
 
         passed_runs = 0
         runtime_logs: list[dict[str, Any]] = []
-        # Preserve authorized workspaces outside isolated replay
-        prior_workspaces = dict(sandbox_manager._workspaces)
 
-        try:
-            for f_idx, fixture in enumerate(replay_fixtures, 1):
-                fixture_name = str(fixture.get("name", f"fixture_{f_idx}"))
-                with tempfile.TemporaryDirectory(prefix="aksa_skill_replay_") as tmp_dir:
-                    ws = Path(tmp_dir).resolve()
-                    sandbox_manager.clear_all_workspaces()
-                    sandbox_manager.register_workspace(
-                        WorkspacePolicy(
-                            folder_path=str(ws),
-                            allow_read=True,
-                            allow_write=True,
-                            allow_execute=False,
-                        )
-                    )
+        for f_idx, fixture in enumerate(replay_fixtures, 1):
+            fixture_name = str(fixture.get("name", f"fixture_{f_idx}"))
+            with tempfile.TemporaryDirectory(prefix="aksa_skill_replay_") as tmp_dir:
+                ws = Path(tmp_dir).resolve()
+                replay_ctx = ReplayExecutionContext(ws)
 
+                run_ok = True
+                run_artifacts: list[Path] = []
+                run_summaries: list[str] = []
+                fail_reason = ""
+                step_vars: dict[str, Any] = dict(fixture.get("inputs", {}))
+
+                # Scoped ContextVar isolates replay_sandbox cleanly from concurrent global requests
+                with sandbox_manager.scoped(replay_ctx.sandbox_manager):
                     # Materialize fixture input files strictly inside isolated replay workspace
-                    for rel_name, file_content in fixture.get("input_files", {}).items():
-                        dest = resolve_replay_path(str(rel_name), ws)
-                        dest.parent.mkdir(parents=True, exist_ok=True)
-                        dest.write_text(str(file_content), encoding="utf-8")
+                    try:
+                        for rel_name, file_content in fixture.get("input_files", {}).items():
+                            dest = replay_ctx.resolve_untrusted_path(str(rel_name))
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            dest.write_text(str(file_content), encoding="utf-8")
+                    except AgentIsolationError as iso_err:
+                        run_ok = False
+                        fail_reason = str(iso_err)
 
-                    run_ok = True
-                    run_artifacts: list[Path] = []
-                    run_summaries: list[str] = []
-                    fail_reason = ""
-                    step_vars: dict[str, Any] = dict(fixture.get("inputs", {}))
-
-                    for s_idx, trace in enumerate(traces, 1):
-                        tool_name = str(trace.get("tool_name", ""))
-                        base_args = dict(trace.get("input_summary", {})) if isinstance(trace.get("input_summary"), dict) else {}
-                        # Allow per-fixture overrides for tool parameters
-                        per_step_override = fixture.get("step_args", {}).get(tool_name, {})
-                        call_args = {**base_args, **per_step_override}
-
-                        # Recursively substitute {var} placeholders & enforce canonical path/symlink containment (P2-01)
-                        def _resolve_val(key: str, val: Any) -> Any:
-                            if isinstance(val, str):
-                                try:
-                                    v_sub = val.format(**step_vars)
-                                except Exception:
-                                    v_sub = val
-                                if _is_replay_path_key(key):
-                                    return str(resolve_replay_path(v_sub, ws))
-                                return v_sub
-                            if isinstance(val, list):
-                                return [_resolve_val(key, item) for item in val]
-                            if isinstance(val, dict):
-                                return {dk: _resolve_val(dk, dv) for dk, dv in val.items()}
-                            return val
-
-                        if tool_name not in REPLAY_ALLOWED_TOOLS:
-                            run_ok = False
-                            fail_reason = (
-                                f"Replay ditolak (fail-closed): Tool '{tool_name}' tidak diizinkan untuk runtime replay."
-                            )
-                            break
-
-                        try:
-                            resolved_args: dict[str, Any] = {k: _resolve_val(k, v) for k, v in call_args.items()}
-                        except AgentIsolationError as iso_err:
-                            run_ok = False
-                            fail_reason = str(iso_err)
-                            break
-
-                        if tool_executor is not None:
-                            res = await tool_executor(tool_name, resolved_args, ws)
-                            if not isinstance(res, ToolResult):
-                                res = ToolResult(success=bool(res.get("success")), summary=str(res.get("summary", "")), artifacts=res.get("artifacts", []), data=res.get("data"))
-                        else:
-                            # Execute through dedicated deterministic ToolRegistry.execute_replay boundary (P1-02)
-                            res = await tool_registry.execute_replay(tool_name, replay_workspace=ws, **resolved_args)
-
-                        run_summaries.append(res.summary)
-                        if not res.success:
-                            run_ok = False
-                            fail_reason = f"Langkah {s_idx} ({tool_name}) gagal: {res.summary}"
-                            break
-
-                        for art in res.artifacts:
-                            art_p = Path(art)
-                            run_artifacts.append(art_p)
-                        step_vars["last_summary"] = res.summary
-                        if run_artifacts:
-                            step_vars["last_artifact"] = str(run_artifacts[-1])
-
-                    # Verify fixture expectations & postcondition schemas
                     if run_ok:
+                        for s_idx, trace in enumerate(traces, 1):
+                            tool_name = str(trace.get("tool_name", ""))
+                            base_args = dict(trace.get("input_summary", {})) if isinstance(trace.get("input_summary"), dict) else {}
+                            per_step_override = fixture.get("step_args", {}).get(tool_name, {})
+                            call_args = {**base_args, **per_step_override}
+
+                            # Substitute {var} placeholders & reject absolute paths/traversal/symlinks (P2-01)
+                            def _resolve_val(key: str, val: Any) -> Any:
+                                if isinstance(val, str):
+                                    try:
+                                        v_sub = val.format(**step_vars)
+                                    except Exception:
+                                        v_sub = val
+                                    if _is_replay_path_key(key):
+                                        return str(replay_ctx.resolve_untrusted_path(v_sub))
+                                    return v_sub
+                                if isinstance(val, list):
+                                    return [_resolve_val(key, item) for item in val]
+                                if isinstance(val, dict):
+                                    return {dk: _resolve_val(dk, dv) for dk, dv in val.items()}
+                                return val
+
+                            if tool_name not in replay_ctx.allowed_tools:
+                                run_ok = False
+                                fail_reason = (
+                                    f"Replay ditolak (fail-closed): Tool '{tool_name}' tidak diizinkan untuk runtime replay."
+                                )
+                                break
+
+                            try:
+                                resolved_args: dict[str, Any] = {k: _resolve_val(k, v) for k, v in call_args.items()}
+                            except AgentIsolationError as iso_err:
+                                run_ok = False
+                                fail_reason = str(iso_err)
+                                break
+
+                            res = await tool_registry.execute_replay(
+                                tool_name,
+                                replay_workspace=replay_ctx.workspace,
+                                replay_sandbox=replay_ctx.sandbox_manager,
+                                **resolved_args,
+                            )
+
+                            run_summaries.append(res.summary)
+                            if not res.success:
+                                run_ok = False
+                                fail_reason = f"Langkah {s_idx} ({tool_name}) gagal: {res.summary}"
+                                break
+
+                            try:
+                                for art in res.artifacts:
+                                    art_p = replay_ctx.resolve_tool_artifact(str(art))
+                                    run_artifacts.append(art_p)
+                            except AgentIsolationError as art_err:
+                                run_ok = False
+                                fail_reason = f"Artefak output tool melanggar isolasi sandbox: {art_err}"
+                                break
+
+                            step_vars["last_summary"] = res.summary
+                            if run_artifacts:
+                                try:
+                                    step_vars["last_artifact"] = str(run_artifacts[-1].relative_to(replay_ctx.workspace))
+                                except ValueError:
+                                    step_vars["last_artifact"] = run_artifacts[-1].name
+
+                    # Verify fixture expectations & postcondition schemas strictly within ws bounds (Cycle 8 P1-02)
+                    if run_ok:
+                        raw_schema = fixture.get("expected_schema")
+                        bounded_schema = dict(raw_schema) if isinstance(raw_schema, dict) else {}
+                        bounded_schema.setdefault("max_bytes", replay_ctx.MAX_VERIFIER_FILE_BYTES)
+
+                        async def _verify_bounded(path_to_check: Path) -> tuple[bool, str]:
+                            if path_to_check.exists() and path_to_check.stat().st_size > int(bounded_schema["max_bytes"]):
+                                return False, f"Ukuran file artefak melebihi batas replay aman ({bounded_schema['max_bytes']} bytes)."
+                            return await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    verify_artifact_postcondition,
+                                    path_to_check,
+                                    expected_schema=bounded_schema,
+                                ),
+                                timeout=replay_ctx.VERIFIER_TIMEOUT_SECONDS,
+                            )
+
                         exp_files = fixture.get("expected_artifacts", [])
                         for exp_f in exp_files:
-                            target_art = ws / exp_f
-                            ok_art, art_msg = verify_artifact_postcondition(
-                                target_art, expected_schema=fixture.get("expected_schema")
-                            )
+                            try:
+                                target_art = replay_ctx.resolve_untrusted_path(str(exp_f))
+                            except AgentIsolationError as iso_err:
+                                run_ok = False
+                                fail_reason = f"Artefak '{exp_f}' ditolak oleh path containment: {iso_err}"
+                                break
+                            try:
+                                ok_art, art_msg = await _verify_bounded(target_art)
+                            except TimeoutError:
+                                run_ok = False
+                                fail_reason = f"Verifikasi artefak '{exp_f}' melebihi batas waktu aman."
+                                break
                             if not ok_art:
                                 run_ok = False
                                 fail_reason = f"Artefak '{exp_f}' gagal postcondition: {art_msg}"
                                 break
-                        # If fixture expects schema without naming file, validate all produced artifacts
+
                         if run_ok and not exp_files and run_artifacts:
                             for p_art in run_artifacts:
-                                ok_art, art_msg = verify_artifact_postcondition(
-                                    p_art, expected_schema=fixture.get("expected_schema")
-                                )
+                                try:
+                                    safe_art = replay_ctx.resolve_tool_artifact(str(p_art))
+                                    ok_art, art_msg = await _verify_bounded(safe_art)
+                                except AgentIsolationError as iso_err:
+                                    run_ok = False
+                                    fail_reason = f"Artefak output '{p_art.name}' melanggar sandbox: {iso_err}"
+                                    break
+                                except TimeoutError:
+                                    run_ok = False
+                                    fail_reason = f"Verifikasi artefak '{p_art.name}' melebihi batas waktu aman."
+                                    break
                                 if not ok_art:
                                     run_ok = False
                                     fail_reason = f"Artefak '{p_art.name}' gagal postcondition: {art_msg}"
                                     break
-                        for needle in fixture.get("expected_summary_contains", []):
-                            if needle.lower() not in " ".join(run_summaries).lower():
-                                run_ok = False
-                                fail_reason = f"Output ringkasan tidak memuat teks yang diharapkan: '{needle}'"
-                                break
 
-                    if run_ok:
-                        passed_runs += 1
-                    runtime_logs.append({
-                        "fixture": fixture_name,
-                        "passed": run_ok,
-                        "reason": "OK" if run_ok else fail_reason,
-                        "artifacts_produced": [a.name for a in run_artifacts],
-                    })
-        finally:
-            sandbox_manager._workspaces = prior_workspaces
+                        if run_ok:
+                            for needle in fixture.get("expected_summary_contains", []):
+                                if needle.lower() not in " ".join(run_summaries).lower():
+                                    run_ok = False
+                                    fail_reason = f"Output ringkasan tidak memuat teks yang diharapkan: '{needle}'"
+                                    break
+
+                if run_ok:
+                    passed_runs += 1
+                runtime_logs.append({
+                    "fixture": fixture_name,
+                    "passed": run_ok,
+                    "reason": "OK" if run_ok else fail_reason,
+                    "artifacts_produced": [a.name for a in run_artifacts],
+                })
 
         pass_rate = round(passed_runs / len(replay_fixtures), 4)
         all_passed = passed_runs == len(replay_fixtures) and base_eval.dag_valid
@@ -872,7 +952,6 @@ class SkillVersionService:
         self,
         skill_id: str,
         replay_fixtures: list[dict[str, Any]] | None = None,
-        tool_executor: Any = None,
     ) -> SkillEvaluationResult:
         """Run static + DAG/schema checks AND runtime isolated replay when fixtures are provided."""
         cand_dir = agent_directory_service.resolve_agent_path(
@@ -898,7 +977,6 @@ class SkillVersionService:
                 skill_id=skill_id,
                 candidate_data=cand_data,
                 replay_fixtures=fixtures,
-                tool_executor=tool_executor,
             )
             if cand_data and result.calibrated_confidence is not None:
                 cand_data["confidence"] = result.calibrated_confidence

@@ -150,13 +150,18 @@ class ToolRegistry:
         self,
         name: str,
         replay_workspace: Path,
+        replay_sandbox: Any = None,
         **kwargs: Any,
     ) -> ToolResult:
-        """Execute a deterministic workspace-scoped tool cleanly for sandboxed skill replay.
+        """Execute a deterministic workspace-scoped tool strictly inside an isolated replay sandbox.
 
-        Enforces an explicit allowlist (``REPLAY_ALLOWED_TOOLS``), rejects policy/grant override
-        fields, validates arguments against declared schemas/signatures, and verifies that the active
-        ``SandboxManager`` jail is locked exclusively to ``replay_workspace`` with ``allow_execute=False``.
+        Enforces:
+        - Explicit allowlist (``REPLAY_ALLOWED_TOOLS``) and ``replay_safe`` flag.
+        - Rejection of forbidden policy/grant override parameters.
+        - Strict schema and Python handler signature validation.
+        - Isolated non-singleton ``SandboxManager`` (never mutates or reads the global
+          production ``sandbox_manager`` workspace policies) locked to ``replay_workspace``
+          with ``allow_execute=False`` and scoped via context-local binding.
         """
         tool = self._tools.get(name)
         handler = self._handlers.get(name)
@@ -177,7 +182,12 @@ class ToolRegistry:
                 token_estimate=18,
             )
 
-        from app.core.sandbox import FORBIDDEN_POLICY_OVERRIDE_FIELDS, sandbox_manager
+        from app.core.sandbox import (
+            FORBIDDEN_POLICY_OVERRIDE_FIELDS,
+            SandboxManager,
+            WorkspacePolicy,
+            sandbox_manager,
+        )
 
         forbidden_keys = sorted(
             k for k in kwargs if k in FORBIDDEN_POLICY_OVERRIDE_FIELDS or k == "hitl_grant_id"
@@ -221,24 +231,52 @@ class ToolRegistry:
                         token_estimate=16,
                     )
 
-        # Enforce SandboxManager is strictly jailed to replay_workspace ONLY (allow_execute=False)
         ws_real = Path(os.path.realpath(str(replay_workspace)))
-        policies = sandbox_manager.list_policies()
-        if len(policies) != 1:
-            return ToolResult(
-                success=False,
-                summary="Replay ditolak: SandboxManager harus terkunci eksklusif pada satu workspace replay terisolasi.",
-                token_estimate=16,
+        if replay_sandbox is None:
+            active_replay_sandbox = SandboxManager(
+                [
+                    WorkspacePolicy(
+                        folder_path=str(ws_real),
+                        allow_read=True,
+                        allow_write=True,
+                        allow_execute=False,
+                    )
+                ],
+                frozen=True,
             )
-        active_ws = Path(os.path.realpath(policies[0].folder_path))
-        if active_ws != ws_real or policies[0].allow_execute or not policies[0].allow_read:
-            return ToolResult(
-                success=False,
-                summary="Replay ditolak: Kebijakan SandboxManager tidak terisolasi ke workspace replay.",
-                token_estimate=16,
-            )
+        else:
+            if replay_sandbox is sandbox_manager:
+                return ToolResult(
+                    success=False,
+                    summary=(
+                        "Replay ditolak: Sandbox replay tidak boleh berbagi instance singleton produksi."
+                    ),
+                    token_estimate=16,
+                )
+            if not isinstance(replay_sandbox, SandboxManager):
+                return ToolResult(
+                    success=False,
+                    summary="Replay ditolak: Tipe replay_sandbox tidak valid.",
+                    token_estimate=14,
+                )
+            policies = replay_sandbox.list_policies()
+            if len(policies) != 1:
+                return ToolResult(
+                    success=False,
+                    summary="Replay ditolak: Sandbox replay harus terkunci eksklusif pada satu workspace terisolasi.",
+                    token_estimate=16,
+                )
+            active_ws = Path(os.path.realpath(policies[0].folder_path))
+            if active_ws != ws_real or policies[0].allow_execute or not policies[0].allow_read:
+                return ToolResult(
+                    success=False,
+                    summary="Replay ditolak: Kebijakan Sandbox replay tidak terisolasi ke workspace replay.",
+                    token_estimate=16,
+                )
+            active_replay_sandbox = replay_sandbox
 
-        return await handler(**kwargs)
+        with sandbox_manager.scoped(active_replay_sandbox):
+            return await handler(**kwargs)
 
 
 tool_registry = ToolRegistry()

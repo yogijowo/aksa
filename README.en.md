@@ -14,8 +14,8 @@
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%20%7C%20Linux-21211F?style=for-the-badge" alt="Cross Platform">
   <img src="https://img.shields.io/badge/Desktop-Tauri%20v2%20%2B%20React%2019-D97757?style=for-the-badge" alt="Tauri v2 + React 19">
   <img src="https://img.shields.io/badge/Sidecar-Python%203.12%20%2B%20FastAPI-10B981?style=for-the-badge" alt="Python 3.12">
-  <img src="https://img.shields.io/badge/Security%20Audit-Cycle%207%20Remediated-F59E0B?style=for-the-badge" alt="Security Audit Cycle 7 Remediated">
-  <img src="https://img.shields.io/badge/Tests%20(macOS)-270%20Passed%20%7C%204%20CI--Only%20Skipped-3B82F6?style=for-the-badge" alt="macOS Local Verification">
+  <img src="https://img.shields.io/badge/Security%20Audit-Cycle%208%20Remediated-F59E0B?style=for-the-badge" alt="Security Audit Cycle 8 Remediated">
+  <img src="https://img.shields.io/badge/Tests%20(macOS)-279%20Passed%20%7C%204%20CI--Only%20Skipped-3B82F6?style=for-the-badge" alt="macOS Local Verification">
 </p>
 
 <p align="center">
@@ -92,7 +92,7 @@ npm run dev
 # Or run Native Tauri v2 Desktop Window (Requires Rust / Cargo)
 npm run dev:tauri
 
-# Run full Python + Frontend + Rust verification suite (274 total tests: 247 Pytest [243 passed on macOS, 4 Windows/Linux-only skipped] + 9 Vitest + 18 Cargo)
+# Run full Python + Frontend + Rust verification suite (283 total tests: 256 Pytest [252 passed on macOS, 4 Windows/Linux-only skipped] + 9 Vitest + 18 Cargo)
 npm test && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
 
 # Run TypeScript typecheck & Vite production bundle
@@ -100,15 +100,16 @@ npm run test:frontend
 ```
 
 > **Honest Audit & Cross-Platform Verification Status:**
-> * All **P1 (`P1-01`–`P1-03`)** and **P2 (`P2-01`–`P2-04`)** findings from [`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) have been remediated in source code.
-> * **Local Verification (macOS `darwin`):** `pytest` **243 passed, 4 skipped** (native Windows AppContainer & Linux `bwrap` runtime tests), `cargo test` **18 passed**, `vitest` **9 passed**, `cargo check` clean, `tsc --noEmit && vite build` clean, sidecar `--smoke-test` passed, and `npm audit --omit=dev --audit-level=high` **0 vulnerabilities**.
-> * **Public Beta Gate:** Real OS runtime tests on GitHub Actions **`windows-latest`** and **`ubuntu-latest`** CI runners plus **External Independent Re-Audit Cycle 8** remain required before claiming Public Beta certification.
+> * All **P1 (`P1-01`, `P1-02`)** and **P2 (`P2-01`–`P2-03`)** findings from [`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-8-2026-11-19.md`](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-8-2026-11-19.md) (as well as Cycle 7) have been remediated in source code.
+> * **Local Verification (macOS `darwin`):** `pytest` **252 passed, 4 skipped** (native Windows AppContainer & Linux `bwrap` runtime tests), `cargo test` **18 passed**, `vitest` **9 passed**, `cargo check` clean, `tsc --noEmit && vite build` clean, sidecar `--smoke-test` passed, and `npm audit --omit=dev --audit-level=high` **0 vulnerabilities**.
+> * **Public Beta Gate:** Real OS runtime tests on GitHub Actions **`windows-latest`** and **`ubuntu-latest`** CI runners plus **External Independent Re-Audit Cycle 9** remain required before claiming Public Beta certification.
 
 ---
 
 ## Technical & Governance Documentation
 
-* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) — **Latest Independent Re-Audit Cycle 7 Report** & remediation verification ledger.
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-8-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-8-2026-11-19.md) — **Latest Independent Re-Audit Cycle 8 Report** & remediation ledger.
+* [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-7-2026-11-19.md) — Independent Re-Audit Cycle 7 Report & remediation verification ledger.
 * [**`docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-REAUDIT-CYCLE-3-2026-11-18.md) — Historical Cycle 3 report (superseded by Cycles 4–7).
 * [**`docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md`**](./docs/AKSA-INDEPENDENT-TECHNICAL-AUDIT-2026-11-18.md) — Initial Independent Technical Audit Report.
 * [**`SECURITY.md`**](./SECURITY.md) • [**`PRIVACY.md`**](./PRIVACY.md) • [**`SUPPORT.md`**](./SUPPORT.md) • [**`CHANGELOG.md`**](./CHANGELOG.md) • [**`CONTRIBUTING.md`**](./CONTRIBUTING.md) • [**`CODE_OF_CONDUCT.md`**](./CODE_OF_CONDUCT.md) • [**`PROGRESS.md`**](./PROGRESS.md)
