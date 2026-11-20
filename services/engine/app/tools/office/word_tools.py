@@ -73,8 +73,13 @@ def _sync_word_create_document(
     title: str,
     sections: list[dict[str, Any]] | None = None,
     style_preset: str = "laporan_kerja",
+    header_organization: str | None = None,
+    header_address: str | None = None,
+    **kwargs: Any,
 ) -> ToolResult:
-    resolved = sandbox_manager.validate_path(file_path, mode="write")
+    # Accept file_name as alias for file_path if passed by LLM
+    target_path = file_path or kwargs.get("file_name", "Dokumen.docx")
+    resolved = sandbox_manager.validate_path(target_path, mode="write")
     resolved.parent.mkdir(parents=True, exist_ok=True)
     if resolved.exists():
         sandbox_manager.backup_before_modify(resolved)
@@ -86,37 +91,29 @@ def _sync_word_create_document(
     normal_style.font.name = "Calibri"
     normal_style.font.size = Pt(11)
 
-    if style_preset == "surat_resmi":
+    # Optional official letterhead (kop surat) - ONLY inserted if user or agent explicitly provides header_organization
+    if header_organization:
         kop = doc.add_paragraph()
         kop.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_kop = kop.add_run("PT NUSANTARA DIGITAL MANDIRI\n")
+        run_kop = kop.add_run(f"{header_organization.strip()}\n")
         run_kop.bold = True
         run_kop.font.size = Pt(14)
         run_kop.font.color.rgb = RGBColor(30, 41, 59)
-        sub_kop = kop.add_run("Jl. Jend. Sudirman Kav. 52-53, Jakarta Selatan • Indonesia\n")
-        sub_kop.font.size = Pt(9.5)
+        if header_address:
+            sub_kop = kop.add_run(f"{header_address.strip()}\n")
+            sub_kop.font.size = Pt(9.5)
+            sub_kop.font.color.rgb = RGBColor(100, 116, 139)
 
     heading = doc.add_heading(title, level=0)
-    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER if style_preset == "surat_resmi" else WD_ALIGN_PARAGRAPH.LEFT
+    heading.alignment = WD_ALIGN_PARAGRAPH.CENTER if (style_preset == "surat_resmi" or header_organization) else WD_ALIGN_PARAGRAPH.LEFT
 
     if not sections:
         sections = [
             {
-                "heading": "1. Ringkasan Eksekutif",
+                "heading": "Bagian Utama",
                 "paragraphs": [
-                    "Dokumen ini disusun secara otomatis oleh Spesialis Administrasi & Office AKSA berdasarkan data di dalam Folder Kerja.",
+                    f"Draf dokumen '{title}' telah disiapkan. Lengkapi isi dan sesuaikan klausul atau ketentuan sesuai kebutuhan kerja Anda.",
                 ],
-                "bullets": [
-                    "Efisiensi pemrosesan dokumen meningkat dengan arsitektur Multi-Agen.",
-                    "Seluruh angka keuangan telah diverifikasi terhadap rekap Excel.",
-                ],
-                "table": {
-                    "headers": ["Indikator", "Status", "Keterangan"],
-                    "rows": [
-                        ["Kualitas Data", "Terverifikasi", "Sesuai arsip Folder Kerja"],
-                        ["Efisiensi Token", "Optimal", "Isolasi Konteks Sub-Agen Aktif"],
-                    ],
-                },
             }
         ]
 
@@ -165,10 +162,20 @@ async def word_create_document(
     title: str,
     sections: list[dict[str, Any]] | None = None,
     style_preset: str = "laporan_kerja",
+    header_organization: str | None = None,
+    header_address: str | None = None,
+    **kwargs: Any,
 ) -> ToolResult:
     """Create a formatted Microsoft Word (.docx) document with Indonesian business presets."""
     return await asyncio.to_thread(
-        _sync_word_create_document, file_path, title, sections, style_preset
+        _sync_word_create_document,
+        file_path=file_path,
+        title=title,
+        sections=sections,
+        style_preset=style_preset,
+        header_organization=header_organization,
+        header_address=header_address,
+        **kwargs,
     )
 
 
@@ -252,13 +259,82 @@ def register_word_tools() -> None:
         description="Ekstrak outline, daftar judul, paragraf, dan tabel dari dokumen Word (.docx).",
         handler=word_inspect,
         risk_level=RiskLevel.LOW,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Jalur berkas .docx yang ingin diperiksa di dalam Folder Kerja.",
+                }
+            },
+            "required": ["file_path"],
+        },
     )
     tool_registry.register(
         name="word_create_document",
         category="office_word",
-        description="Buat dokumen Microsoft Word (.docx) resmi seperti surat bisnis, laporan, atau SOP.",
+        description="Buat dokumen Microsoft Word (.docx) resmi seperti surat bisnis, nota kesepahaman (MoU), laporan, atau SOP.",
         handler=word_create_document,
         risk_level=RiskLevel.LOW,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Nama file atau jalur berkas .docx yang akan dibuat di folder kerja (contoh: 'Surat_Perjanjian_MoU.docx').",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Judul utama dokumen yang dicetak di bagian atas (contoh: 'MEMORANDUM OF UNDERSTANDING (MoU)').",
+                },
+                "sections": {
+                    "type": "array",
+                    "description": "Daftar bab/bagian isi dokumen secara terstruktur.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "heading": {
+                                "type": "string",
+                                "description": "Judul bab atau klausul (contoh: 'Pasal 1: Maksud dan Tujuan').",
+                            },
+                            "paragraphs": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Daftar paragraf isi teks di dalam bab ini.",
+                            },
+                            "bullets": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Poin-poin rincian daftar (opsional).",
+                            },
+                            "table": {
+                                "type": "object",
+                                "properties": {
+                                    "headers": {"type": "array", "items": {"type": "string"}},
+                                    "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}},
+                                },
+                                "description": "Tabel data jika bab ini memuat tabel (opsional).",
+                            },
+                        },
+                        "required": ["heading"],
+                    },
+                },
+                "style_preset": {
+                    "type": "string",
+                    "enum": ["surat_resmi", "laporan_kerja", "standar", "sop"],
+                    "description": "Preset gaya tata letak dokumen (default: 'laporan_kerja').",
+                },
+                "header_organization": {
+                    "type": "string",
+                    "description": "Nama instansi/perusahaan untuk kop surat resmi jika ada (opsional).",
+                },
+                "header_address": {
+                    "type": "string",
+                    "description": "Alamat instansi untuk kop surat resmi jika ada (opsional).",
+                },
+            },
+            "required": ["file_path", "title"],
+        },
     )
     tool_registry.register(
         name="word_fill_template",
@@ -266,6 +342,24 @@ def register_word_tools() -> None:
         description="Isi placeholder {{nama}} pada template surat/dokumen Word (.docx) tanpa merusak format.",
         handler=word_fill_template,
         risk_level=RiskLevel.MEDIUM,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "template_path": {
+                    "type": "string",
+                    "description": "Jalur berkas template .docx.",
+                },
+                "output_path": {
+                    "type": "string",
+                    "description": "Jalur berkas tujuan penyimpanan .docx.",
+                },
+                "replacements": {
+                    "type": "object",
+                    "description": "Pemetaan placeholder ke nilai teks pengganti, contoh: {'nama': 'Budi', 'jabatan': 'Direktur'}.",
+                },
+            },
+            "required": ["template_path", "output_path", "replacements"],
+        },
     )
 
 

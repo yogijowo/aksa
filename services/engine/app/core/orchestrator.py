@@ -170,29 +170,82 @@ class HierarchicalOrchestrator:
             return []
 
         lower = prompt.lower()
+        has_search_intent = any(k in lower for k in ("baca", "cari", "temukan", "referensi", "arsip", "cek dokumen"))
+        has_office_intent = any(
+            k in lower
+            for k in (
+                "excel", "xlsx", "word", "docx", "surat", "mou", "laporan",
+                "rekap", "ppt", "slide", "presentasi", "duplikasi", "duplikat",
+                "konversi", "salin", "dokumen"
+            )
+        ) and any(
+            k in lower
+            for k in ("buat", "bikin", "generate", "tulis", "rekap", "susun", "duplikasi", "duplikat", "konversi", "salin", "docs")
+        )
+        has_automation_intent = any(k in lower for k in ("python", "skrip", "script", "aplikasi", "otomatis", "csv"))
+
         selected: list[dict[str, Any]] = []
+        selected_ids: set[str] = set()
 
-        for agt in sub_agents:
-            cats = set(agt.get("tool_categories", []))
-            if any(k in lower for k in ("baca", "cari", "dokumen", "pdf", "arsip", "folder", "data")):
-                if "rag_search" in cats or "filesystem" in cats:
+        # 1. Select search/research specialist if search intent is detected
+        if has_search_intent:
+            for agt in sub_agents:
+                cats = set(agt.get("tool_categories", []))
+                if ("rag_search" in cats or "pdf_tools" in cats) and agt["id"] not in selected_ids:
                     selected.append(agt)
+                    selected_ids.add(agt["id"])
+                    break
+
+        # 2. Select office specialist if office/document generation intent is detected
+        if has_office_intent:
+            is_word = any(k in lower for k in ("word", "docx", "surat", "mou", "laporan", "sop", "duplikasi", "duplikat", "docs"))
+            is_excel = any(k in lower for k in ("excel", "xlsx", "rekap", "hitung", "tabel"))
+            is_ppt = any(k in lower for k in ("ppt", "pptx", "slide", "presentasi"))
+
+            for agt in sub_agents:
+                if agt["id"] in selected_ids:
                     continue
-            if any(
-                k in lower
-                for k in ("excel", "xlsx", "word", "docx", "surat", "laporan", "rekap", "ppt", "slide", "duplikasi", "duplikat", "konversi", "salin")
+                cats = set(agt.get("tool_categories", []))
+                if is_word and "office_word" in cats:
+                    selected.append(agt)
+                    selected_ids.add(agt["id"])
+                    break
+                elif is_excel and "office_excel" in cats:
+                    selected.append(agt)
+                    selected_ids.add(agt["id"])
+                    break
+                elif is_ppt and "office_ppt" in cats:
+                    selected.append(agt)
+                    selected_ids.add(agt["id"])
+                    break
+
+            # If no format-specific agent was picked yet, select any available office specialist
+            if not any(
+                any(c in agt.get("tool_categories", []) for c in ("office_word", "office_excel", "office_ppt"))
+                for agt in selected
             ):
-                if "office_excel" in cats or "office_word" in cats or "office_ppt" in cats:
-                    selected.append(agt)
-                    continue
-            if any(k in lower for k in ("python", "skrip", "script", "aplikasi", "otomatis", "csv")):
-                if "uv_python" in cats or "os_automation" in cats or "computer_use" in cats:
-                    selected.append(agt)
-                    continue
+                for agt in sub_agents:
+                    if agt["id"] in selected_ids:
+                        continue
+                    cats = set(agt.get("tool_categories", []))
+                    if any(c in cats for c in ("office_word", "office_excel", "office_ppt", "pdf_tools")):
+                        selected.append(agt)
+                        selected_ids.add(agt["id"])
+                        break
 
+        # 3. Select automation specialist if script or app automation is requested
+        if has_automation_intent:
+            for agt in sub_agents:
+                if agt["id"] in selected_ids:
+                    continue
+                cats = set(agt.get("tool_categories", []))
+                if any(c in cats for c in ("uv_python", "os_automation", "computer_use")):
+                    selected.append(agt)
+                    selected_ids.add(agt["id"])
+                    break
+
+        # 4. Fallback if no specialist matched, but user wanted an action
         if not selected:
-            # Only delegate to specialists if the prompt asks for concrete document or search tasks
-            # Conversational greetings and general questions are answered directly by the supervisor
             wants_action = any(
                 k in lower
                 for k in ("buat", "bikin", "generate", "tulis", "rekap", "cari", "analisis", "eksekusi", "jalankan", "proses")
@@ -388,10 +441,35 @@ class HierarchicalOrchestrator:
 
         for idx, sub in enumerate(delegated_agents, start=1):
             _, lazy_saved = token_optimizer.get_lazy_tools_for_agent(sub.get("tool_categories", []))
-            task_brief = (
-                f"Sub-tugas #{idx} dari {supervisor['name']}: Kerjakan bagian sesuai keahlian "
-                f"({sub['role_title']}) untuk perintah pengguna: '{prompt}'"
-            )
+            cats = set(sub.get("tool_categories", []))
+            lower_p = prompt.lower()
+
+            if "office_word" in cats and any(k in lower_p for k in ("word", "docx", "surat", "mou", "laporan", "sop", "buat", "bikin", "docs")):
+                task_brief = (
+                    f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas menyusun dan membuat dokumen Word (.docx) "
+                    f"untuk instruksi pengguna: '{prompt}'. Panggil tool 'word_create_document' secara langsung dengan 'file_path', "
+                    f"'title', dan struktur 'sections' yang lengkap, profesional, dan nyata tanpa data dummy."
+                )
+            elif "office_excel" in cats and any(k in lower_p for k in ("excel", "xlsx", "rekap", "tabel", "hitung")):
+                task_brief = (
+                    f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas menyusun file Excel (.xlsx) untuk instruksi: "
+                    f"'{prompt}'. Panggil tool 'excel_create_workbook' dengan tabel dan rumus yang rapi."
+                )
+            elif "office_ppt" in cats and any(k in lower_p for k in ("ppt", "pptx", "slide", "presentasi")):
+                task_brief = (
+                    f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas membuat slide presentasi PowerPoint (.pptx) "
+                    f"untuk instruksi: '{prompt}'. Panggil tool 'ppt_create_presentation' dengan struktur slide yang rapi."
+                )
+            elif "rag_search" in cats or "pdf_tools" in cats:
+                task_brief = (
+                    f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas memeriksa Folder Kerja dan mencari "
+                    f"referensi yang relevan untuk instruksi: '{prompt}'. Berikan ringkasan temuan Anda."
+                )
+            else:
+                task_brief = (
+                    f"Sub-tugas #{idx} dari {supervisor['name']}: Kerjakan bagian sesuai keahlian "
+                    f"({sub['role_title']}) untuk perintah pengguna: '{prompt}'"
+                )
 
             await ws_manager.broadcast_event(
                 "sub_agent_delegated",
@@ -443,6 +521,9 @@ class HierarchicalOrchestrator:
                         {"agent": sub["name"], "tool": fn_name, "arguments": fn_args},
                         session_id=session_id,
                     )
+
+                    if "file_name" in fn_args and "file_path" not in fn_args:
+                        fn_args["file_path"] = fn_args.pop("file_name")
 
                     if "file_path" in fn_args:
                         fp = Path(fn_args["file_path"])
@@ -498,6 +579,28 @@ class HierarchicalOrchestrator:
                 cost_usd=0.0 if sub["provider"] in ("ollama", "lmstudio") else 0.0004,
             )
 
+            sub_tools_called = [tc.get("function", {}).get("name") for tc in sub_tool_calls] if sub_tool_calls else []
+            if "word_create_document" in sub_tools_called:
+                step_action = f"Menyusun draf dokumen Word .docx ({sub['name']})"
+            elif "excel_create_workbook" in sub_tools_called:
+                step_action = f"Membuat rekap data Excel .xlsx ({sub['name']})"
+            elif "ppt_create_presentation" in sub_tools_called:
+                step_action = f"Membuat slide presentasi PowerPoint ({sub['name']})"
+            elif "pdf_generate_report" in sub_tools_called:
+                step_action = f"Membuat dokumen laporan PDF ({sub['name']})"
+            elif any(c in sub.get("tool_categories", []) for c in ("rag_search", "pdf_tools")):
+                step_action = f"Mencari & memeriksa referensi dokumen ({sub['name']})"
+            elif "office_word" in sub.get("tool_categories", []):
+                step_action = f"Menyiapkan draf naskah dokumen ({sub['name']})"
+            else:
+                step_action = f"Memproses tugas spesialis ({sub['name']})"
+
+            clean_step_detail = handback_summary
+            if "Isolasi Konteks" in clean_step_detail:
+                clean_step_detail = clean_step_detail.split("...(Diringkas")[0].strip()
+            if not clean_step_detail or clean_step_detail.startswith("["):
+                clean_step_detail = f"Tugas berhasil diselesaikan oleh {sub['name']}."
+
             execution_steps.append(
                 {
                     "id": f"step_{uuid.uuid4().hex[:8]}",
@@ -505,11 +608,8 @@ class HierarchicalOrchestrator:
                     "agent_role": sub["role_title"],
                     "provider": sub["provider"],
                     "model_id": sub["model_id"],
-                    "action_label": f"Menjalankan {sub['role_title']} di {ws_dir.name}",
-                    "detail": (
-                        f"Isolasi Konteks: Meringkas {metrics.raw_scratchpad_tokens} token kerja mentah "
-                        f"menjadi {metrics.handback_summary_tokens} token + Lazy Tools."
-                    ),
+                    "action_label": step_action,
+                    "detail": clean_step_detail,
                     "status": "completed",
                     "tokens_used": step_tokens,
                     "tokens_saved": metrics.total_tokens_saved,
@@ -625,33 +725,165 @@ class HierarchicalOrchestrator:
                             f"- Jelaskan secara jujur kepada pengguna bahwa proses duplikasi gagal."
                         )
             elif not is_duplication:
-                base_stem = "Dokumen_Resmi" if is_word else ("Presentasi" if is_ppt else ("Laporan_Resmi" if is_pdf else "Rekap_Data"))
-                ext = "docx" if is_word else ("pptx" if is_ppt else ("pdf" if is_pdf else "xlsx"))
-                real_target = _generate_non_colliding_path(ws_dir, base_stem, ext)
-                artifact_ext = ext
-                artifact_name = real_target.name
+                expected_ext = "docx" if is_word else ("pptx" if is_ppt else ("pdf" if is_pdf else "xlsx"))
+                already_created = any(a.get("file_type") == expected_ext for a in artifacts)
 
-                if ws_candidate.exists() and ws_candidate.is_dir():
-                    if artifact_ext == "docx":
+                if not already_created and ws_candidate.exists() and ws_candidate.is_dir():
+                    if expected_ext == "docx":
+                        if any(k in lower_prompt for k in ("mou", "perjanjian", "kesepahaman", "kerjasama")):
+                            doc_title = "MEMORANDUM OF UNDERSTANDING (MoU) KERJASAMA"
+                            base_stem = "Surat_Perjanjian_Kerjasama_MoU"
+                            doc_style = "surat_resmi"
+                            doc_sections = [
+                                {
+                                    "heading": "PIHAK-PIHAK YANG BERSEPAKAT",
+                                    "paragraphs": [
+                                        "Pada hari ini, dibuat dan ditandatangani Nota Kesepahaman (Memorandum of Understanding) kerja sama oleh dan antara:",
+                                        "1. PIHAK PERTAMA: [Nama Instansi / Perusahaan Pihak Pertama], berkedudukan di [Alamat Pihak Pertama], dalam hal ini diwakili oleh [Nama Perwakilan] selaku [Jabatan].",
+                                        "2. PIHAK KEDUA: [Nama Instansi / Perusahaan Pihak Kedua], berkedudukan di [Alamat Pihak Kedua], dalam hal ini diwakili oleh [Nama Perwakilan] selaku [Jabatan].",
+                                        "Pihak Pertama dan Pihak Kedua secara bersama-sama selanjutnya disebut sebagai Para Pihak.",
+                                    ],
+                                },
+                                {
+                                    "heading": "PASAL 1: MAKSUD DAN TUJUAN",
+                                    "paragraphs": [
+                                        "1. Maksud dari Nota Kesepahaman ini adalah sebagai pedoman dan landasan awal kerja sama strategis antara Pihak Pertama dan Pihak Kedua.",
+                                        "2. Tujuan kerja sama ini adalah untuk menyinergikan potensi, sumber daya, dan keahlian masing-masing pihak demi mencapai hasil yang optimal dan saling menguntungkan.",
+                                    ],
+                                },
+                                {
+                                    "heading": "PASAL 2: RUANG LINGKUP KERJASAMA",
+                                    "paragraphs": [
+                                        "Ruang lingkup kerja sama yang disepakati oleh Para Pihak meliputi ketentuan-ketentuan berikut:",
+                                    ],
+                                    "bullets": [
+                                        "Koordinasi teknis dan pertukaran informasi yang relevan dalam pelaksanaan kegiatan.",
+                                        "Pemanfaatan sarana, fasilitas, dan sumber daya kerja yang disepakati bersama.",
+                                        "Pelaksanaan program kerja, pelatihan, atau pendampingan operasional sesuai kebutuhan.",
+                                        "Monitoring, pengawasan, dan evaluasi berkala terhadap pelaksanaan kegiatan bersama.",
+                                    ],
+                                },
+                                {
+                                    "heading": "PASAL 3: HAK DAN KEWAJIBAN",
+                                    "table": {
+                                        "headers": ["Para Pihak", "Hak", "Kewajiban"],
+                                        "rows": [
+                                            [
+                                                "Pihak Pertama",
+                                                "Menerima laporan perkembangan kemitraan secara berkala",
+                                                "Memberikan arahan strategis dan dukungan sumber daya",
+                                            ],
+                                            [
+                                                "Pihak Kedua",
+                                                "Mendapatkan fasilitas dan pendampingan teknis kerja",
+                                                "Menjalankan operasional kemitraan secara profesional",
+                                            ],
+                                        ],
+                                    },
+                                },
+                                {
+                                    "heading": "PASAL 4: JANGKA WAKTU PERJANJIAN",
+                                    "paragraphs": [
+                                        "1. Nota Kesepahaman ini berlaku untuk jangka waktu 1 (satu) tahun terhitung sejak tanggal ditandatangani oleh Para Pihak.",
+                                        "2. Nota Kesepahaman ini dapat diperpanjang atau diakhiri atas kesepakatan tertulis Para Pihak dengan pemberitahuan tertulis paling lambat 30 (tiga puluh) hari kalender sebelumnya.",
+                                    ],
+                                },
+                                {
+                                    "heading": "PASAL 5: KETENTUAN PENUTUP & TANDA TANGAN",
+                                    "paragraphs": [
+                                        "Demikian Nota Kesepahaman ini dibuat dalam rangkap 2 (dua) asli bermeterai cukup, memiliki kekuatan hukum yang sama, dan ditandatangani oleh wakil yang sah dari Para Pihak.",
+                                        "\nPIHAK PERTAMA\t\t\t\t\t\tPIHAK KEDUA\n\n\n\n(____________________)\t\t\t\t\t(____________________)",
+                                    ],
+                                },
+                            ]
+                        elif any(k in lower_prompt for k in ("sop", "prosedur")):
+                            doc_title = "STANDAR OPERASIONAL PROSEDUR (SOP)"
+                            base_stem = "Standar_Operasional_Prosedur"
+                            doc_style = "sop"
+                            doc_sections = [
+                                {
+                                    "heading": "1. TUJUAN DAN RUANG LINGKUP",
+                                    "paragraphs": [
+                                        "SOP ini disusun sebagai acuan kerja operasional yang baku, terukur, dan konsisten.",
+                                    ],
+                                },
+                                {
+                                    "heading": "2. PROSEDUR KERJA",
+                                    "bullets": [
+                                        "Tahap Persiapan: Pemeriksaan data awal dan kelengkapan dokumen pendukung.",
+                                        "Tahap Pelaksanaan: Eksekusi aktivitas sesuai spesifikasi teknis dan standar mutu.",
+                                        "Tahap Evaluasi: Verifikasi hasil kerja dan pelaporan kepada penanggung jawab.",
+                                    ],
+                                },
+                            ]
+                        elif any(k in lower_prompt for k in ("laporan", "evaluasi")):
+                            doc_title = "LAPORAN KERJA OPERASIONAL"
+                            base_stem = "Laporan_Kerja"
+                            doc_style = "laporan_kerja"
+                            doc_sections = [
+                                {
+                                    "heading": "1. PENDAHULUAN & LATAR BELAKANG",
+                                    "paragraphs": [
+                                        "Laporan ini menyajikan ringkasan hasil kegiatan operasional serta evaluasi capaian kerja pada periode berjalan.",
+                                    ],
+                                },
+                                {
+                                    "heading": "2. HASIL DAN CAPAIAN KERJA",
+                                    "bullets": [
+                                        "Seluruh target operasional utama berhasil diselesaikan tepat waktu.",
+                                        "Koordinasi antar tim berjalan efektif dengan pencatatan terstruktur.",
+                                    ],
+                                },
+                            ]
+                        else:
+                            doc_title = "SURAT RESMI DOKUMEN KERJA"
+                            base_stem = "Surat_Resmi"
+                            doc_style = "surat_resmi"
+                            doc_sections = [
+                                {
+                                    "heading": "RINCIAN DOKUMEN",
+                                    "paragraphs": [
+                                        f"Draf dokumen resmi '{doc_title}' telah disiapkan sesuai instruksi kerja pengguna. Silakan lengkapi atau sesuaikan rincian klausul sesuai kebutuhan Anda.",
+                                    ],
+                                }
+                            ]
+
+                        real_target = _generate_non_colliding_path(ws_dir, base_stem, "docx")
+                        artifact_ext = "docx"
+                        artifact_name = real_target.name
+
                         res = await tool_registry.execute(
                             "word_create_document",
                             file_path=str(real_target),
-                            title="Dokumen Resmi AKSA",
-                            style_preset="surat_resmi",
+                            title=doc_title,
+                            sections=doc_sections,
+                            style_preset=doc_style,
                         )
-                    elif artifact_ext == "pptx":
+                    elif expected_ext == "pptx":
+                        base_stem = "Presentasi_Kerja"
+                        real_target = _generate_non_colliding_path(ws_dir, base_stem, "pptx")
+                        artifact_ext = "pptx"
+                        artifact_name = real_target.name
                         res = await tool_registry.execute(
                             "ppt_create_presentation",
                             file_path=str(real_target),
-                            title="Presentasi Eksekutif AKSA",
+                            title="Presentasi Rencana Kerja & Kemitraan",
                         )
-                    elif artifact_ext == "pdf":
+                    elif expected_ext == "pdf":
+                        base_stem = "Laporan_Resmi"
+                        real_target = _generate_non_colliding_path(ws_dir, base_stem, "pdf")
+                        artifact_ext = "pdf"
+                        artifact_name = real_target.name
                         res = await tool_registry.execute(
                             "pdf_generate_report",
                             file_path=str(real_target),
-                            title="Laporan Resmi AKSA",
+                            title="Laporan Resmi Operasional",
                         )
                     else:
+                        base_stem = "Rekap_Data"
+                        real_target = _generate_non_colliding_path(ws_dir, base_stem, "xlsx")
+                        artifact_ext = "xlsx"
+                        artifact_name = real_target.name
                         res = await tool_registry.execute(
                             "excel_create_workbook",
                             file_path=str(real_target),

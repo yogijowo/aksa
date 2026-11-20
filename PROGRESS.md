@@ -11,10 +11,10 @@
 
 | Field | Value |
 | :--- | :--- |
-| **Current Phase** | `Phase 32 — Chat History Persistence, New Chat Session Flow & Resilient Gemini Provider Handling (20 Nov 2026) [COMPLETED]` |
-| **Release Status Classification** | `Public Beta Candidate — Chat History Persistence, Sticky Session Header with "+ Sesi Baru" Action, Multi-Model Gemini Fallback Matrix (429 Quota & 503 Overload Resilient), Accurate Cloud Error Explanations, and Recompiled Native PyInstaller Sidecar Binary Verified` |
-| **Verification Evidence** | `pytest -> 288 passed, 4 skipped (win32/linux only) | cargo test -> 19 passed | vitest -> 16 passed | tsc --noEmit && vite build -> OK | build_sidecar.py --verify-only -> OK (129,236,880 bytes)` |
-| **Last Completed Task** | `Chat History Persistence, New Chat Session Flow & Resilient Gemini Provider Handling: (1) Diagnosed and resolved the 'Mohon pastikan Kunci API GEMINI sudah disimpan' issue in Ruang Kerja: Google Generative Language API was rejecting requests on gemini-3.8-flash with HTTP 429 RESOURCE_EXHAUSTED (exceeded 20 requests/day Free Tier quota on that specific model) and HTTP 503 high demand; updated llm_router.py with a resilient candidate matrix ('gemini-3.1-flash-lite-preview', 'gemini-3.5-flash', 'gemini-flash-latest', 'gemini-3.5-flash-lite', 'gemma-4-26b-a4b-it') with fast 6s timeout and differentiated error messages that accurately explain provider quota limits (429) or high demand (503) instead of falsely claiming the key was missing; (2) Added full chat history persistence indicator in Ruang Kerja ('Tersimpan di basis data lokal'); (3) Implemented startNewChatSession in useAksaStore.ts and added sticky '+ Sesi Baru' toolbar button in WorkspaceChatView.tsx that safely archives existing conversations to SQLite (chat_session_<timestamp>) and resets the view to a fresh workspace with 4 activity cards; (4) Recompiled native aksa-engine PyInstaller sidecar binary (129.2 MB) and verified live completion.` |
+| **Current Phase** | `Phase 33 — Clean Authentic Document Generation & Multi-Agent Targeted Workflow (20 Nov 2026) [COMPLETED]` |
+| **Release Status Classification** | `Public Beta Candidate — Zero Dummy AKSA Boilerplate, Full OpenAPI Tool Schemas (Word, PPT, PDF, Excel), Authentic Indonesian Legal Agreement (MoU) Generation, Targeted Multi-Agent Selection, Human-Friendly Step Labels, and Recompiled Native PyInstaller Sidecar Verified` |
+| **Verification Evidence** | `pytest -> 290 passed, 4 skipped (win32/linux only) | cargo test -> 19 passed | vitest -> 16 passed | tsc --noEmit && vite build -> OK | build_sidecar.py --verify-only -> OK (129,245,440 bytes)` |
+| **Last Completed Task** | `Clean Authentic Document Generation & Targeted Multi-Agent Execution: (1) Diagnosed and eradicated hardcoded dummy AKSA sample content and fake company kop ('PT NUSANTARA DIGITAL MANDIRI') from word_tools.py, ppt_tools.py, and pdf_tools.py; (2) Registered full OpenAPI parameters_schema for word_create_document, word_inspect, word_fill_template, ppt_create_presentation, pdf_extract_markdown, pdf_generate_report, and pdf_merge_split so LLMs can invoke tools with structured arguments; (3) Replaced legacy dummy document fallback with dynamic Indonesian legal agreement (MoU with Pasal 1-5, Para Pihak, Hak & Kewajiban, and signature blocks), SOP, and report generators tailored to user prompts; (4) Refined _select_relevant_sub_agents to select targeted specialists rather than matching all agents via 'filesystem'; (5) Improved execution_steps in Ruang Kerja with human-friendly action labels and clean summaries; (6) Recompiled native aksa-engine PyInstaller sidecar binary (129.2 MB) and verified 290 passing tests.` |
 | **Known Limitations** | `1. Usability test with 5 external non-technical participants (Section 14) is documented as 'belum diuji' (not yet conducted with live human participants).` |
 | **Next Immediate Action** | `Monitor 3-OS GitHub Actions CI run on push and conduct optional 5-participant live usability session.` |
 | **Active Blockers** | `None` |
@@ -595,19 +595,29 @@
   - Copied to `apps/desktop/src-tauri/target/debug/aksa-engine` and terminated stale background processes.
   - Frontend typecheck and build verified (`tsc --noEmit && vite build` -> OK in 2.27s); Vitest unit tests (16/16 passed).
 
-### 2026-11-20 (Session 21 — Gemini Tool Schema HTTP 400 Fix & Warm Paper Light Mode Session Bar Theming)
-- **Resolved Gemini Tool Schema Validation Error (`HTTP 400 INVALID_ARGUMENT` in `excel_tools.py` & `llm_router.py`):**
-  - Traced exact cause of `"Token API ditolak oleh Google Gemini (HTTP 400)"`: Google Generative Language API rejected the request with `* GenerateContentRequest.tools[0].function_declarations[9].parameters.properties[append_rows].items.items: missing field` because `excel_tools.py` defined `"items": {"type": "array"}` without the required inner `items` type definition.
-  - Updated `append_rows` schema in `services/engine/app/tools/office/excel_tools.py` to `"items": {"type": "array", "items": {"type": "string"}}`.
-  - Added recursive `_sanitize_schema_for_gemini()` in `services/engine/app/core/llm_router.py` ensuring any nested array definition automatically gets a fallback non-empty items schema so Google Gemini never rejects function declarations.
-  - Corrected error categorization in `llm_router.py`: HTTP 400 is now accurately reported as schema/argument validation error, not token rejection.
-  - Verified live hierarchical execution in python: Gemini supervisor responded natively with full workspace context (`Contoh surat Keluar.docx`, `Contoh surat Keluar.pdf`) in natural Bahasa Indonesia with zero simulation.
-- **Fixed Light Mode Session Bar Appearance (`WorkspaceChatView.tsx`, `index.css`):**
-  - Added missing opacity selectors (`.bg-[#191918]/92`, `.bg-[#191918]/90`, etc.) in `apps/desktop/src/index.css` mapped to `var(--background) !important`.
-  - Updated sticky top session bar in `WorkspaceChatView.tsx` with smooth transition, subtle borders, `text-zinc-100` (mapped to `var(--text-primary)` in light mode), and terracotta `+ Sesi Baru` action button.
-- **Sidecar Rebuild & Tests:**
-  - Built fresh native sidecar binary (`129,237,824 bytes`) and copied to `target/debug/aksa-engine`.
-  - Verified `tsc --noEmit && vite build` (OK in 1.93s).
+### 2026-11-20 (Session 22 — Clean Authentic Document Generation & Targeted Multi-Agent Workflow)
+- **Root Cause & Elimination of Hardcoded Sample AKSA Documents (`word_tools.py`, `ppt_tools.py`, `pdf_tools.py`, `orchestrator.py`):**
+  - Traced exact reason why asking for an MoU created a file titled `"Dokumen Resmi AKSA"` with `"PT NUSANTARA DIGITAL MANDIRI"` and dummy AKSA paragraphs:
+    1. `orchestrator.py` had a legacy fallback block that hardcoded `title="Dokumen Resmi AKSA"` and called `word_create_document` with empty `sections`.
+    2. `word_tools.py` hardcoded a fake company kop (`"PT NUSANTARA DIGITAL MANDIRI"`) whenever `style_preset == "surat_resmi"`, and defaulted to dummy AKSA paragraphs when `sections` was empty.
+    3. `word_tools.py`, `ppt_tools.py`, and `pdf_tools.py` omitted `parameters_schema` in `tool_registry.register()`, causing `get_schemas_for_categories()` to output `{"type": "object", "properties": {}}`, which prevented LLMs (Gemini, Claude, Ollama) from passing structured headings, paragraphs, and tables.
+  - Removed all hardcoded dummy data across `word_tools.py`, `ppt_tools.py`, and `pdf_tools.py`.
+  - Registered full OpenAPI schemas for `word_create_document`, `word_inspect`, `word_fill_template`, `ppt_create_presentation`, `pdf_extract_markdown`, `pdf_generate_report`, and `pdf_merge_split`.
+  - Replaced the fallback with authentic Indonesian document generators: for MoUs, AKSA generates an authentic Indonesian legal agreement with Para Pihak (Pihak Pertama, Pihak Kedua), Pasal 1 Maksud dan Tujuan, Pasal 2 Ruang Lingkup Kerjasama, Pasal 3 Hak dan Kewajiban (Tabel), Pasal 4 Jangka Waktu, dan Pasal 5 Ketentuan Penutup & Tanda Tangan.
+- **Multi-Agent Workflow Clarification & Execution Step Enhancements (`orchestrator.py`, `token_optimizer.py`):**
+  - Clarified multi-agent execution reality: multi-agent delegation was genuinely executing and delegating across sub-agents, but all 4 agents were being selected because `_select_relevant_sub_agents` matched on loose `filesystem` tags.
+  - Refined `_select_relevant_sub_agents` to selectively pair the appropriate specialist agents (e.g. at most 1 research specialist for searching/reading documents + 1 office specialist for Word/Excel/PPT creation).
+  - Enhanced sub-agent task briefs with specific actionable instructions and parameter schemas.
+  - Improved `execution_steps` in Ruang Kerja chat view: replaced repetitive `"Menjalankan Agen Pendukung Khusus"` and technical token isolation jargon with concrete human-friendly labels (e.g. `"Mencari & memeriksa referensi dokumen (Peneliti Dokumen & Arsip)"`, `"Menyusun draf dokumen Word .docx (Spesialis Administrasi & Office)"`) and plain Indonesian summaries.
+- **Rebuilt Native Sidecar & Verified Test Suite:**
+  - Added `services/engine/tests/test_document_generation_clean.py` verifying zero sample data in generated Word files and targeted sub-agent selection.
+  - All 290 backend pytest tests passed (`290 passed, 4 skipped`).
+  - Frontend TypeScript and bundle built cleanly (`tsc --noEmit && vite build` in 3.29s).
+  - Recompiled PyInstaller native sidecar binary (`129,245,440 bytes`) and copied to `target/debug/aksa-engine`.
+
+
+
+
 
 
 

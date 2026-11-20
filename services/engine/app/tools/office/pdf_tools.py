@@ -72,8 +72,10 @@ def _sync_pdf_generate_report(
     file_path: str,
     title: str,
     sections: list[dict[str, Any]] | None = None,
+    **kwargs: Any,
 ) -> ToolResult:
-    resolved = sandbox_manager.validate_path(file_path, mode="write")
+    target_path = file_path or kwargs.get("file_name", "Laporan.pdf")
+    resolved = sandbox_manager.validate_path(target_path, mode="write")
     resolved.parent.mkdir(parents=True, exist_ok=True)
     if resolved.exists():
         sandbox_manager.backup_before_modify(resolved)
@@ -111,9 +113,9 @@ def _sync_pdf_generate_report(
     if not sections:
         sections = [
             {
-                "heading": "Ringkasan Laporan Resmi",
+                "heading": "Ringkasan Laporan",
                 "paragraphs": [
-                    "Dokumen PDF ini dicetak secara otomatis oleh Mesin Dokumen AKSA di dalam Folder Kerja yang diizinkan."
+                    f"Dokumen laporan '{title}' telah disiapkan. Lengkapi isi laporan sesuai kebutuhan kerja Anda."
                 ],
             }
         ]
@@ -161,9 +163,10 @@ async def pdf_generate_report(
     file_path: str,
     title: str,
     sections: list[dict[str, Any]] | None = None,
+    **kwargs: Any,
 ) -> ToolResult:
     """Generate a formatted printable PDF report using ReportLab."""
-    return await asyncio.to_thread(_sync_pdf_generate_report, file_path, title, sections)
+    return await asyncio.to_thread(_sync_pdf_generate_report, file_path, title, sections, **kwargs)
 
 
 def _sync_pdf_merge_split(
@@ -227,6 +230,21 @@ def register_pdf_tools() -> None:
         description="Ekstrak halaman PDF menjadi teks Markdown bersih.",
         handler=pdf_extract_markdown,
         risk_level=RiskLevel.LOW,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Jalur berkas PDF yang ingin diekstrak.",
+                },
+                "pages": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Daftar nomor halaman yang ingin diekstrak (contoh: [1, 2, 3]). Jika kosong, mengekstrak halaman awal.",
+                },
+            },
+            "required": ["file_path"],
+        },
     )
     tool_registry.register(
         name="pdf_generate_report",
@@ -234,6 +252,36 @@ def register_pdf_tools() -> None:
         description="Buat dokumen laporan PDF rapi siap cetak.",
         handler=pdf_generate_report,
         risk_level=RiskLevel.LOW,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Nama atau jalur berkas .pdf tujuan di Folder Kerja (contoh: 'Laporan_Evaluasi.pdf').",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Judul laporan utama yang dicetak di halaman pertama.",
+                },
+                "sections": {
+                    "type": "array",
+                    "description": "Daftar bagian/bab laporan.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "heading": {"type": "string", "description": "Judul bab laporan."},
+                            "paragraphs": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Daftar paragraf di dalam bab ini.",
+                            },
+                        },
+                        "required": ["heading"],
+                    },
+                },
+            },
+            "required": ["file_path", "title"],
+        },
     )
     tool_registry.register(
         name="pdf_merge_split",
@@ -241,6 +289,31 @@ def register_pdf_tools() -> None:
         description="Gabungkan beberapa file PDF atau pisahkan halaman PDF tertentu.",
         handler=pdf_merge_split,
         risk_level=RiskLevel.MEDIUM,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "input_paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Daftar jalur berkas PDF sumber.",
+                },
+                "output_path": {
+                    "type": "string",
+                    "description": "Jalur berkas PDF hasil penggabungan atau pemisahan.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["merge", "split"],
+                    "description": "Operasi yang dilakukan: 'merge' untuk menggabungkan, 'split' untuk memisahkan.",
+                },
+                "page_numbers": {
+                    "type": "array",
+                    "items": {"type": "integer"},
+                    "description": "Nomor halaman yang diambil jika mode 'split' (contoh: [1, 2]).",
+                },
+            },
+            "required": ["input_paths", "output_path"],
+        },
     )
 
 

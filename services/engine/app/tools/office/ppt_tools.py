@@ -15,10 +15,12 @@ from app.tools.registry import ToolResult, tool_registry
 def _sync_ppt_create_presentation(
     file_path: str,
     title: str,
-    subtitle: str = "Disusun Otomatis oleh Tim Agen AKSA",
+    subtitle: str | None = None,
     slides_spec: list[dict[str, Any]] | None = None,
+    **kwargs: Any,
 ) -> ToolResult:
-    resolved = sandbox_manager.validate_path(file_path, mode="write")
+    target_path = file_path or kwargs.get("file_name", "Presentasi.pptx")
+    resolved = sandbox_manager.validate_path(target_path, mode="write")
     resolved.parent.mkdir(parents=True, exist_ok=True)
     if resolved.exists():
         sandbox_manager.backup_before_modify(resolved)
@@ -30,27 +32,27 @@ def _sync_ppt_create_presentation(
     slide0 = prs.slides.add_slide(title_layout)
     if slide0.shapes.title:
         slide0.shapes.title.text = title
-    if len(slide0.placeholders) > 1:
+    if len(slide0.placeholders) > 1 and subtitle:
         slide0.placeholders[1].text = subtitle
 
     if not slides_spec:
         slides_spec = [
             {
                 "layout": "bullets",
-                "title": "Pokok Bahasan Utama",
+                "title": f"Pokok Bahasan {title}",
                 "bullets": [
-                    "Ringkasan Kinerja & Operasional Kuartal",
-                    "Evaluasi Anggaran dan Efisiensi Biaya",
-                    "Rencana Tindak Lanjut Tim",
+                    "Latar Belakang & Tujuan",
+                    "Rincian Ruang Lingkup",
+                    "Rencana Kerja & Kesimpulan",
                 ],
             },
             {
-                "layout": "table",
-                "title": "Ringkasan Data Utama",
-                "headers": ["Divisi", "Target", "Capaian"],
-                "rows": [
-                    ["Operasional", "95%", "98%"],
-                    ["Keuangan", "100%", "100%"],
+                "layout": "bullets",
+                "title": "Rencana Tindak Lanjut",
+                "bullets": [
+                    "Koordinasi tim teknis dan operasional",
+                    "Penyusunan jadwal pelaksanaan kegiatan",
+                    "Monitoring dan evaluasi berkala",
                 ],
             },
         ]
@@ -132,12 +134,18 @@ def _sync_ppt_create_presentation(
 async def ppt_create_presentation(
     file_path: str,
     title: str,
-    subtitle: str = "Disusun Otomatis oleh Tim Agen AKSA",
+    subtitle: str | None = None,
     slides_spec: list[dict[str, Any]] | None = None,
+    **kwargs: Any,
 ) -> ToolResult:
     """Create a Microsoft PowerPoint (.pptx) presentation with title, bullet, two-column, and table slides."""
     return await asyncio.to_thread(
-        _sync_ppt_create_presentation, file_path, title, subtitle, slides_spec
+        _sync_ppt_create_presentation,
+        file_path=file_path,
+        title=title,
+        subtitle=subtitle,
+        slides_spec=slides_spec,
+        **kwargs,
     )
 
 
@@ -145,9 +153,71 @@ def register_ppt_tools() -> None:
     tool_registry.register(
         name="ppt_create_presentation",
         category="office_ppt",
-        description="Buat slide presentasi PowerPoint (.pptx) lengkap dengan poin, dua kolom, dan tabel.",
+        description="Buat slide presentasi PowerPoint (.pptx) lengkap dengan slide pembuka, poin, dua kolom, dan tabel.",
         handler=ppt_create_presentation,
         risk_level=RiskLevel.LOW,
+        parameters_schema={
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "Nama atau jalur berkas .pptx di Folder Kerja (contoh: 'Presentasi_Kemitraan.pptx').",
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Judul utama presentasi.",
+                },
+                "subtitle": {
+                    "type": "string",
+                    "description": "Sub-judul pada slide utama (opsional).",
+                },
+                "slides_spec": {
+                    "type": "array",
+                    "description": "Daftar slide presentasi.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "layout": {
+                                "type": "string",
+                                "enum": ["bullets", "two_column", "table"],
+                                "description": "Tata letak slide (bullets, two_column, atau table).",
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "Judul slide.",
+                            },
+                            "bullets": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Poin-poin untuk tata letak bullets.",
+                            },
+                            "left_bullets": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Poin-poin kolom kiri untuk two_column.",
+                            },
+                            "right_bullets": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Poin-poin kolom kanan untuk two_column.",
+                            },
+                            "headers": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Header kolom untuk slide table.",
+                            },
+                            "rows": {
+                                "type": "array",
+                                "items": {"type": "array", "items": {"type": "string"}},
+                                "description": "Baris data untuk slide table.",
+                            },
+                        },
+                        "required": ["title"],
+                    },
+                },
+            },
+            "required": ["file_path", "title"],
+        },
     )
 
 

@@ -82,12 +82,12 @@ CATEGORY_TOOL_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "file_name": {"type": "string"},
+                        "file_path": {"type": "string", "description": "Nama atau jalur berkas .xlsx di folder kerja."},
                         "sheet_title": {"type": "string"},
                         "headers": {"type": "array", "items": {"type": "string"}},
                         "include_chart": {"type": "boolean"},
                     },
-                    "required": ["file_name", "sheet_title"],
+                    "required": ["file_path"],
                 },
             },
         }
@@ -97,15 +97,29 @@ CATEGORY_TOOL_SCHEMAS: dict[str, list[dict[str, Any]]] = {
             "type": "function",
             "function": {
                 "name": "word_create_document",
-                "description": "Buat dokumen Microsoft Word (.docx) resmi seperti surat, laporan, atau SOP.",
+                "description": "Buat dokumen Microsoft Word (.docx) resmi seperti surat bisnis, nota kesepahaman (MoU), laporan, atau SOP.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "file_name": {"type": "string"},
-                        "title": {"type": "string"},
-                        "sections": {"type": "array", "items": {"type": "string"}},
+                        "file_path": {"type": "string", "description": "Nama atau jalur berkas .docx di folder kerja (contoh: 'Surat_Perjanjian_MoU.docx')."},
+                        "title": {"type": "string", "description": "Judul utama dokumen yang dicetak di bagian atas."},
+                        "sections": {
+                            "type": "array",
+                            "description": "Daftar bab/bagian isi dokumen dengan heading dan paragraphs.",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "heading": {"type": "string"},
+                                    "paragraphs": {"type": "array", "items": {"type": "string"}},
+                                    "bullets": {"type": "array", "items": {"type": "string"}},
+                                },
+                                "required": ["heading"],
+                            },
+                        },
+                        "style_preset": {"type": "string", "enum": ["surat_resmi", "laporan_kerja", "standar", "sop"]},
+                        "header_organization": {"type": "string", "description": "Nama organisasi/instansi untuk kop resmi jika diminta."},
                     },
-                    "required": ["file_name", "title"],
+                    "required": ["file_path", "title"],
                 },
             },
         }
@@ -119,10 +133,11 @@ CATEGORY_TOOL_SCHEMAS: dict[str, list[dict[str, Any]]] = {
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "file_name": {"type": "string"},
+                        "file_path": {"type": "string", "description": "Nama atau jalur berkas .pptx di folder kerja."},
                         "title": {"type": "string"},
+                        "subtitle": {"type": "string"},
                     },
-                    "required": ["file_name", "title"],
+                    "required": ["file_path", "title"],
                 },
             },
         }
@@ -258,7 +273,9 @@ class TokenOptimizer:
             f"ATURAN MUTLAK:\n"
             f"1. JANGAN PERNAH menampilkan kode Python (seperti 'import os', 'working_dir = ...', 'os.listdir()') untuk memeriksa isi folder! "
             f"Gunakan daftar berkas nyata di atas secara langsung.\n"
-            f"2. Berikan hasil kerja dan ringkasan padat, jelas, dan akurat (maksimal 250 kata) dalam Bahasa Indonesia untuk Manajer Utama."
+            f"2. Berikan hasil kerja dan ringkasan padat, jelas, dan akurat (maksimal 250 kata) dalam Bahasa Indonesia untuk Manajer Utama.\n"
+            f"3. Jika tugas memerlukan pembuatan atau pengubahan berkas (seperti Word .docx, Excel .xlsx, PPT, PDF), PANGGIL TOOL YANG TERSEDIA secara langsung dengan parameter lengkap (file_path, title, sections/sheets). JANGAN hanya menjawab dengan teks jika Anda dapat membuat berkasnya langsung.\n"
+            f"4. JANGAN PERNAH menyisipkan data contoh/palsu (seperti nama PT fiktif atau teks 'Dokumen ini dibuat otomatis oleh AKSA'). Tuliskan isi dokumen yang nyata, profesional, dan relevan dengan instruksi pengguna."
         )
         return [
             {"role": "system", "content": system_content},
