@@ -784,7 +784,7 @@ export const WorkspaceChatView: React.FC = () => {
 
           <form
             onSubmit={(e) => void handleSubmit(e)}
-            className="flex items-center gap-2.5 rounded-2xl bg-[#21211F] border border-white/[0.1] focus-within:border-[#D97757]/70 shadow-xl px-4 py-3 transition-colors"
+            className="flex items-center gap-2.5 rounded-2xl bg-[#21211F] border border-white/[0.09] focus-within:border-[#D97757]/60 focus-within:ring-2 focus-within:ring-[#D97757]/15 shadow-xl px-3.5 py-2.5 transition-all"
           >
             <button
               type="button"
@@ -794,7 +794,7 @@ export const WorkspaceChatView: React.FC = () => {
                   ? `Menggunakan file di folder: ${activeWorkspace.name}`
                   : "Pilih folder ruang kerja untuk membaca atau menyimpan file"
               }
-              className="flex items-center gap-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.08] px-2.5 py-1.5 text-xs text-zinc-300 shrink-0 transition-colors"
+              className="flex items-center gap-1.5 rounded-xl bg-white/[0.05] hover:bg-white/[0.1] border border-white/[0.07] px-2.5 py-1.5 text-xs text-zinc-300 shrink-0 transition-colors"
             >
               <Paperclip size={13} className="text-[#D97757]" />
               <span className="hidden sm:inline max-w-[130px] truncate">
@@ -812,7 +812,7 @@ export const WorkspaceChatView: React.FC = () => {
               }}
               aria-label="Apa yang ingin Anda kerjakan?"
               placeholder="Apa yang ingin Anda kerjakan? (Contoh: Buatkan rekap Excel atau rangkum PDF di folder ini)"
-              className="flex-1 bg-transparent text-[14px] text-zinc-100 placeholder:text-zinc-400 focus:outline-none"
+              className="flex-1 bg-transparent border-0 outline-none focus:outline-none focus:ring-0 text-[14px] text-zinc-100 placeholder:text-zinc-400"
             />
 
             <button

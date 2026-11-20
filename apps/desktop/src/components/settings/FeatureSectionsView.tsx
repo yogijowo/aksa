@@ -1105,30 +1105,21 @@ export const FeatureSectionsView: React.FC = () => {
                       {/* Saved Token Indicator vs Input Area (Section 5 Perilaku input token) */}
                       <div className="space-y-2.5 pt-1">
                         {hasSavedToken && !editingTokenProvider[prov.id] ? (
-                          <div className="rounded-xl bg-[#191918] border border-white/[0.08] p-3 space-y-2.5">
-                            <div className="flex items-center justify-between gap-2">
-                              <div className="flex items-center gap-2 text-xs font-medium text-emerald-300">
-                                <Lock size={13} className="shrink-0" />
-                                <span>Token sudah tersimpan di perangkat</span>
-                              </div>
-                              {maskedHint && (
-                                <span
-                                  title="Petunjuk aman token yang tersimpan"
-                                  className="font-mono text-[11px] text-zinc-400"
-                                >
-                                  {maskedHint}
-                                </span>
-                              )}
+                          <div className="rounded-xl bg-[#191918] border border-white/[0.08] px-3.5 py-2.5 flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Lock size={13} className="shrink-0 text-emerald-400" />
+                              <span className="text-xs font-medium text-emerald-300">
+                                Token tersimpan
+                              </span>
+                              <span
+                                aria-label={`Token ${prov.name} sudah tersimpan`}
+                                className="font-mono text-xs text-zinc-400 tracking-wider select-none"
+                              >
+                                {maskedHint || "••••••••••••••••"}
+                              </span>
                             </div>
 
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="password"
-                                disabled
-                                value="••••••••••••••••"
-                                aria-label={`Token ${prov.name} sudah tersimpan`}
-                                className="flex-1 rounded-xl bg-[#262624] border border-white/[0.06] px-3 py-1.5 text-xs text-zinc-400 select-none cursor-not-allowed"
-                              />
+                            <div className="flex items-center gap-1.5 shrink-0">
                               <button
                                 type="button"
                                 onClick={() =>
@@ -1137,19 +1128,19 @@ export const FeatureSectionsView: React.FC = () => {
                                     [prov.id]: true,
                                   }))
                                 }
-                                className="inline-flex items-center gap-1 rounded-xl bg-white/[0.07] hover:bg-white/[0.13] border border-white/[0.1] px-3 py-1.5 text-xs font-medium text-zinc-200 transition-colors shrink-0"
+                                className="inline-flex items-center gap-1 rounded-lg bg-white/[0.07] hover:bg-white/[0.13] border border-white/[0.09] px-2.5 py-1 text-xs font-medium text-zinc-200 transition-colors"
                               >
-                                <Edit3 size={12} />
+                                <Edit3 size={11} />
                                 <span>Ganti token</span>
                               </button>
                               <button
                                 type="button"
                                 onClick={() => setProviderPendingDeleteToken(prov.id)}
                                 title={`Hapus token ${prov.name}`}
-                                className="inline-flex items-center gap-1 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 px-2.5 py-1.5 text-xs font-medium text-rose-300 transition-colors shrink-0"
+                                className="inline-flex items-center gap-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 border border-rose-500/30 px-2.5 py-1 text-xs font-medium text-rose-300 transition-colors"
                               >
-                                <Trash2 size={12} />
-                                <span>Hapus token</span>
+                                <Trash2 size={11} />
+                                <span>Hapus</span>
                               </button>
                             </div>
                           </div>

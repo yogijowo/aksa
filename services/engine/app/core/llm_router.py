@@ -507,6 +507,7 @@ class UnifiedLLMRouter:
         # 2. Cloud Providers — strictly use ONLY the requested provider's key (no silent cross-provider routing)
         saved_keys = await self.get_saved_api_keys()
         api_key = saved_keys.get(prov) or os.environ.get(f"{prov.upper()}_API_KEY")
+        last_http_status: int | None = None
 
         # 2a. Google Gemini Native REST API
         if prov == "gemini" and api_key:
@@ -594,6 +595,10 @@ class UnifiedLLMRouter:
                                     "cloud_called": True,
                                     "provider_used": "gemini",
                                 }
+                        else:
+                            last_http_status = resp.status_code
+                            if resp.status_code in (400, 401, 403) and "API_KEY_INVALID" in resp.text:
+                                break
                 except Exception:
                     continue
 
@@ -638,6 +643,8 @@ class UnifiedLLMRouter:
                             "cloud_called": True,
                             "provider_used": prov,
                         }
+                    else:
+                        last_http_status = resp.status_code
             except Exception:
                 pass
 
@@ -701,11 +708,28 @@ class UnifiedLLMRouter:
                             "cloud_called": True,
                             "provider_used": "anthropic",
                         }
+                    else:
+                        last_http_status = resp.status_code
             except Exception:
                 pass
 
-        # Fallback when no valid API key for the requested provider
+        # Fallback when no valid API key or provider call failed
         user_last = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
+        error_detail: str | None = None
+        if last_http_status in (400, 401, 403):
+            if prov == "gemini":
+                error_detail = (
+                    f"Token API ditolak oleh Google Gemini (HTTP {last_http_status}). "
+                    "Pastikan Anda menggunakan API Key dari Google AI Studio (umumnya diawali 'AIza...')."
+                )
+            else:
+                error_detail = (
+                    f"Token API ditolak oleh penyedia {prov.upper()} (HTTP {last_http_status}). "
+                    "Periksa kembali apakah token API yang dimasukkan sudah benar dan masih aktif."
+                )
+        elif last_http_status == 429:
+            error_detail = f"Batas kuota atau batas permintaan (HTTP 429) pada penyedia {prov.upper()} telah tercapai."
+
         simulated_reply = (
             f"Halo! Saya Asisten AKSA. Mohon pastikan Kunci API {prov.upper()} sudah disimpan di menu Pengaturan "
             f"atau gunakan model lokal untuk memproses instruksi: \"{str(user_last)[:120]}\"."
@@ -718,5 +742,6 @@ class UnifiedLLMRouter:
             "simulated": True,
             "cloud_called": False,
             "provider_used": prov,
+            "error_detail": error_detail,
         }
 

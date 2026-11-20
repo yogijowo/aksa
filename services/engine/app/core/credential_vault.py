@@ -218,9 +218,14 @@ class CredentialVault:
                 self.dpapi_key_file.write_bytes(protected)
                 return new_key
 
-        # 2. Production fail-closed check: refuse unencrypted key on disk unless in dev/testing or explicit opt-in
+        # 2. Production fail-closed check: refuse unencrypted key on disk when keyring was forced/reported broken
         is_dev_or_test = settings.dev_mode or settings.testing
-        allow_insecure_fallback = is_dev_or_test or os.environ.get("AKSA_ALLOW_INSECURE_VAULT_FALLBACK") == "1"
+        allow_macos_local_vault = sys.platform == "darwin" and not self._force_keyring_failure
+        allow_insecure_fallback = (
+            is_dev_or_test
+            or allow_macos_local_vault
+            or os.environ.get("AKSA_ALLOW_INSECURE_VAULT_FALLBACK") == "1"
+        )
         if not allow_insecure_fallback:
             raise KeyringUnavailableError(
                 "Penyimpanan OS Keyring (Keychain/Secret Service/DPAPI) tidak tersedia. "
@@ -276,8 +281,16 @@ class CredentialVault:
             except Exception:
                 pass
 
-    def _store_in_keyring(self, credential_ref: str, secret: str) -> bool:
+    def _should_skip_os_keyring(self) -> bool:
+        """Skip interactive macOS Keychain modal prompts for unsigned Python sidecar unless explicitly requested."""
         if self._force_keyring_failure or settings.testing:
+            return True
+        if sys.platform == "darwin" and os.environ.get("AKSA_USE_MACOS_KEYCHAIN") != "1":
+            return True
+        return False
+
+    def _store_in_keyring(self, credential_ref: str, secret: str) -> bool:
+        if self._should_skip_os_keyring():
             return False
         try:
             keyring.set_password(SERVICE_NAME, credential_ref, secret)
@@ -286,7 +299,7 @@ class CredentialVault:
             return False
 
     def _get_from_keyring(self, credential_ref: str) -> str | None:
-        if self._force_keyring_failure or settings.testing:
+        if self._should_skip_os_keyring():
             return None
         try:
             return keyring.get_password(SERVICE_NAME, credential_ref)
@@ -294,7 +307,7 @@ class CredentialVault:
             return None
 
     def _delete_from_keyring(self, credential_ref: str) -> bool:
-        if self._force_keyring_failure or settings.testing:
+        if self._should_skip_os_keyring():
             return False
         try:
             keyring.delete_password(SERVICE_NAME, credential_ref)

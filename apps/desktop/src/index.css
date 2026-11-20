@@ -50,14 +50,22 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Accessible keyboard focus indicator */
+/* Accessible keyboard focus indicator for buttons and links only;
+   form inputs use smooth border color transitions without double outlines */
 button:focus-visible,
-input:focus-visible,
-select:focus-visible,
-textarea:focus-visible,
 a:focus-visible {
   outline: 2px solid var(--accent-claude);
   outline-offset: 2px;
+}
+
+input:focus,
+input:focus-visible,
+select:focus,
+select:focus-visible,
+textarea:focus,
+textarea:focus-visible {
+  outline: none !important;
+  box-shadow: none;
 }
 
 ::-webkit-scrollbar {

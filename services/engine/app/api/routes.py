@@ -235,6 +235,8 @@ async def test_model_connection(req: TestModelRequest) -> dict[str, Any]:
         model_id=req.model_id,
         messages=[{"role": "user", "content": "Balas singkat: OK"}],
         max_tokens=32,
+        data_classification="PUBLIC",
+        user_consent_granted=True,
     )
     is_verified = not bool(res.get("simulated")) and not bool(res.get("blocked_by_privacy_gate"))
     if is_verified:
@@ -250,7 +252,12 @@ async def test_model_connection(req: TestModelRequest) -> dict[str, Any]:
         }
 
     if res.get("blocked_by_privacy_gate"):
-        err_msg = "Koneksi ke layanan Cloud diblokir oleh pengaturan Mode Privasi Lokal. Ubah mode privasi jika ingin menguji penyedia Cloud."
+        err_msg = (
+            "Mode Privasi 'Hanya Lokal (Offline Penuh)' sedang aktif di Pengaturan → Privasi & Data. "
+            "Ubah ke 'Izinkan Model Cloud Terpilih' atau 'Utamakan Pemrosesan Lokal' untuk menggunakan penyedia Cloud."
+        )
+    elif res.get("error_detail"):
+        err_msg = str(res["error_detail"])
     elif is_local:
         err_msg = f"Layanan AI lokal ({req.provider}) belum aktif atau model '{req.model_id}' belum tersedia di komputer Anda."
     else:
