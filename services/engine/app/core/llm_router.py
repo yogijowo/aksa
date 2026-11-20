@@ -24,11 +24,12 @@ SUPPORTED_PROVIDERS: list[dict[str, Any]] = [
         "is_local": False,
         "env_key": "GEMINI_API_KEY",
         "recommended_models": [
+            "gemini-3.5-flash",
+            "gemini-flash-latest",
+            "gemini-3.5-flash-lite",
+            "gemini-3.8-flash",
             "gemini-4-carbon",
             "gemini-4-argon",
-            "gemini-4-hydrogen",
-            "gemini-3.8-flash",
-            "gemini-3.5-flash-lite",
         ],
     },
     {
@@ -570,16 +571,20 @@ class UnifiedLLMRouter:
         # 2a. Google Gemini Native REST API
         if prov == "gemini" and api_key:
             clean_model = model_id.replace("gemini/", "").replace("google/", "")
-            if clean_model in ("gemini-2.5-pro", "gemini-pro"):
-                clean_model = "gemini-2.5-flash"
+            if clean_model in ("gemini-2.5-pro", "gemini-pro", "gemini-2.5-flash", "gemini-2.0-flash"):
+                clean_model = "gemini-3.5-flash"
 
             gemini_candidates: list[str] = []
             for cand in [
                 clean_model,
-                "gemini-2.5-flash",
-                "gemini-2.0-flash",
+                "gemini-3.1-flash-lite-preview",
+                "gemini-3.5-flash",
                 "gemini-flash-latest",
-                "gemini-2.5-flash-lite",
+                "gemini-3.5-flash-lite",
+                "gemini-3.1-flash-lite",
+                "gemini-3.8-flash",
+                "gemma-4-26b-a4b-it",
+                "gemini-4-carbon",
             ]:
                 if cand and cand not in gemini_candidates:
                     gemini_candidates.append(cand)
@@ -631,7 +636,7 @@ class UnifiedLLMRouter:
                     payload["tools"] = [{"functionDeclarations": function_declarations}]
 
                 try:
-                    async with httpx.AsyncClient(timeout=30.0) as client:
+                    async with httpx.AsyncClient(timeout=6.0) as client:
                         resp = await client.post(url, json=payload, headers=headers)
                         if resp.status_code == 200:
                             data = resp.json()
@@ -826,11 +831,20 @@ class UnifiedLLMRouter:
                 )
         elif last_http_status == 429:
             error_detail = f"Batas kuota atau batas permintaan (HTTP 429) pada penyedia {prov.upper()} telah tercapai."
+        elif last_http_status in (500, 502, 503, 504):
+            error_detail = f"Server penyedia {prov.upper()} sedang mengalami beban tinggi atau gangguan sementara (HTTP {last_http_status})."
 
-        simulated_reply = (
-            f"Halo! Saya Asisten AKSA. Mohon pastikan Kunci API {prov.upper()} sudah disimpan di menu Pengaturan "
-            f"atau gunakan model lokal untuk memproses instruksi: \"{str(user_last)[:120]}\"."
-        )
+        if api_key:
+            simulated_reply = (
+                f"Layanan penyedia {prov.upper()} saat ini tidak dapat merespons permintaan "
+                f"({error_detail or 'server penyedia sedang sibuk atau mengalami kendala koneksi'}). "
+                f"Silakan coba sesaat lagi atau gunakan model AI Lokal (Ollama) yang tidak bergantung pada koneksi cloud."
+            )
+        else:
+            simulated_reply = (
+                f"Halo! Saya Asisten AKSA. Mohon pastikan Kunci API {prov.upper()} sudah disimpan di menu Pengaturan "
+                f"atau gunakan model lokal untuk memproses instruksi: \"{str(user_last)[:120]}\"."
+            )
         return {
             "content": simulated_reply,
             "tool_calls": [],

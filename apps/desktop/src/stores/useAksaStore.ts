@@ -263,6 +263,7 @@ interface AksaState {
   autoLayoutAgents: () => Promise<void>;
   deleteAgentNode: (agentId: string) => Promise<void>;
   sendUserPrompt: (promptText: string) => Promise<void>;
+  startNewChatSession: () => Promise<void>;
   requestSampleApproval: () => Promise<void>;
   resolveApproval: (requestId: string, approved: boolean) => Promise<void>;
   toggleMcpServer: (serverId: string, enabled: boolean) => Promise<void>;
@@ -986,6 +987,32 @@ export const useAksaStore = create<AksaState>((set, get) => ({
         liveExecutionSteps: [],
       });
     }
+  },
+
+  startNewChatSession: async () => {
+    const currentMessages = get().messages;
+    if (currentMessages.length > 0) {
+      const archiveKey = `chat_session_${Date.now()}`;
+      try {
+        await saveSystemSettingRemote(archiveKey, {
+          timestamp: new Date().toISOString(),
+          messages: currentMessages,
+          workspace_id: get().activeWorkspaceId,
+        });
+      } catch (err) {
+        console.warn("Gagal mengarsipkan sesi percakapan ke basis data:", err);
+      }
+    }
+    void saveSystemSettingRemote("workspace_chat_state", {
+      messages: [],
+      artifacts: get().artifacts.slice(0, 40),
+    });
+    set({
+      messages: [],
+      liveExecutionSteps: [],
+      activeAgentStep: null,
+      activeAgentId: null,
+    });
   },
 
   syncWithBackendEngine: async () => {

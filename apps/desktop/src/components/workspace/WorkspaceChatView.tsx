@@ -19,6 +19,8 @@ import {
   Clock,
   AlertTriangle,
   Paperclip,
+  Database,
+  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAksaStore } from "@/stores/useAksaStore";
@@ -108,6 +110,7 @@ export const WorkspaceChatView: React.FC = () => {
   const {
     messages,
     sendUserPrompt,
+    startNewChatSession,
     workspaces,
     activeWorkspaceId,
     isExecuting,
@@ -157,6 +160,15 @@ export const WorkspaceChatView: React.FC = () => {
     setInputPrompt(promptText);
     setEmptyHintWarning(null);
     inputRef.current?.focus();
+  };
+
+  const handleNewSession = async () => {
+    if (isExecuting) {
+      toast.warning("Mohon tunggu proses yang sedang berjalan selesai terlebih dahulu.");
+      return;
+    }
+    await startNewChatSession();
+    toast.success("Sesi baru dimulai. Percakapan sebelumnya telah diarsipkan secara aman di basis data.");
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -375,6 +387,11 @@ export const WorkspaceChatView: React.FC = () => {
                   <span>Izin akses hanya diminta saat dibutuhkan</span>
                 </span>
                 <span>•</span>
+                <span className="inline-flex items-center gap-1.5 text-zinc-400">
+                  <Database size={13} className="text-sky-400" />
+                  <span>Riwayat percakapan otomatis tersimpan di basis data lokal</span>
+                </span>
+                <span>•</span>
                 <button
                   type="button"
                   onClick={() => setOnboardingStep(0)}
@@ -386,11 +403,34 @@ export const WorkspaceChatView: React.FC = () => {
               </div>
             </div>
           ) : (
-            messages.map((msg) => {
-              const isUser = msg.sender_role === "user";
-              const isExpanded = expandedTraces[msg.id] ?? false;
-              const totalSavedInMsg =
-                msg.execution_steps?.reduce((acc, s) => acc + s.tokens_saved, 0) ?? 0;
+            <div className="space-y-6">
+              {/* Sticky Top Session Toolbar with New Session Action */}
+              <div className="sticky top-0 z-10 -mx-6 -mt-8 mb-4 px-6 py-2.5 bg-[#191918]/92 backdrop-blur-md border-b border-white/[0.07] flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="flex h-2 w-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50" />
+                  <span className="font-medium text-zinc-200">Sesi Percakapan Aktif</span>
+                  <span className="text-zinc-600">•</span>
+                  <span className="text-zinc-400 flex items-center gap-1">
+                    <Database size={11} className="text-zinc-500" />
+                    <span>{messages.length} pesan tersimpan di basis data</span>
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleNewSession}
+                  className="flex items-center gap-1.5 rounded-lg bg-[#242422] hover:bg-[#2c2c29] active:bg-[#343430] border border-white/[0.1] px-3 py-1.5 text-xs font-medium text-zinc-200 hover:text-white transition-all shadow-sm focus:outline-none focus:ring-1 focus:ring-[#D97757]"
+                  title="Mulai sesi percakapan baru (sesi saat ini tersimpan otomatis)"
+                >
+                  <Plus size={13} className="text-[#D97757]" />
+                  <span>Sesi Baru</span>
+                </button>
+              </div>
+
+              {messages.map((msg) => {
+                const isUser = msg.sender_role === "user";
+                const isExpanded = expandedTraces[msg.id] ?? false;
+                const totalSavedInMsg =
+                  msg.execution_steps?.reduce((acc, s) => acc + s.tokens_saved, 0) ?? 0;
 
               if (isUser) {
                 return (
@@ -624,8 +664,9 @@ export const WorkspaceChatView: React.FC = () => {
                   </div>
                 </div>
               );
-            })
-          )}
+            })}
+          </div>
+        )}
 
           {/* Live Execution Status Card (Section 5.1 Status Eksekusi) */}
           {isExecuting && (

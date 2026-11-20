@@ -155,10 +155,10 @@ const CLOUD_PROVIDERS: {
   {
     id: "gemini",
     name: "Google Gemini",
-    desc: "Gemini 4 Carbon, 4 Argon & 3.8 Flash",
+    desc: "Gemini 3.5 Flash, 3.8 Flash & 4 Carbon",
     exampleFormat: "Contoh format: AIza... (tempel token baru)",
     link: "https://aistudio.google.com/app/apikey",
-    defaultTestModel: "gemini-3.8-flash",
+    defaultTestModel: "gemini-3.5-flash",
   },
   {
     id: "anthropic",
