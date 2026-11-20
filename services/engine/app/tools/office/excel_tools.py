@@ -407,7 +407,7 @@ def register_excel_tools() -> None:
                 "append_rows": {
                     "type": "array",
                     "description": "Daftar baris baru yang ingin ditambahkan.",
-                    "items": {"type": "array"},
+                    "items": {"type": "array", "items": {"type": "string"}},
                 },
             },
             "required": ["file_path"],

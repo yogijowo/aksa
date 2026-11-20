@@ -595,5 +595,19 @@
   - Copied to `apps/desktop/src-tauri/target/debug/aksa-engine` and terminated stale background processes.
   - Frontend typecheck and build verified (`tsc --noEmit && vite build` -> OK in 2.27s); Vitest unit tests (16/16 passed).
 
+### 2026-11-20 (Session 21 — Gemini Tool Schema HTTP 400 Fix & Warm Paper Light Mode Session Bar Theming)
+- **Resolved Gemini Tool Schema Validation Error (`HTTP 400 INVALID_ARGUMENT` in `excel_tools.py` & `llm_router.py`):**
+  - Traced exact cause of `"Token API ditolak oleh Google Gemini (HTTP 400)"`: Google Generative Language API rejected the request with `* GenerateContentRequest.tools[0].function_declarations[9].parameters.properties[append_rows].items.items: missing field` because `excel_tools.py` defined `"items": {"type": "array"}` without the required inner `items` type definition.
+  - Updated `append_rows` schema in `services/engine/app/tools/office/excel_tools.py` to `"items": {"type": "array", "items": {"type": "string"}}`.
+  - Added recursive `_sanitize_schema_for_gemini()` in `services/engine/app/core/llm_router.py` ensuring any nested array definition automatically gets a fallback non-empty items schema so Google Gemini never rejects function declarations.
+  - Corrected error categorization in `llm_router.py`: HTTP 400 is now accurately reported as schema/argument validation error, not token rejection.
+  - Verified live hierarchical execution in python: Gemini supervisor responded natively with full workspace context (`Contoh surat Keluar.docx`, `Contoh surat Keluar.pdf`) in natural Bahasa Indonesia with zero simulation.
+- **Fixed Light Mode Session Bar Appearance (`WorkspaceChatView.tsx`, `index.css`):**
+  - Added missing opacity selectors (`.bg-[#191918]/92`, `.bg-[#191918]/90`, etc.) in `apps/desktop/src/index.css` mapped to `var(--background) !important`.
+  - Updated sticky top session bar in `WorkspaceChatView.tsx` with smooth transition, subtle borders, `text-zinc-100` (mapped to `var(--text-primary)` in light mode), and terracotta `+ Sesi Baru` action button.
+- **Sidecar Rebuild & Tests:**
+  - Built fresh native sidecar binary (`129,237,824 bytes`) and copied to `target/debug/aksa-engine`.
+  - Verified `tsc --noEmit && vite build` (OK in 1.93s).
+
 
 

@@ -17,6 +17,22 @@ from app.core.privacy_gate import DataClassification, ProviderMode, privacy_poli
 from app.core.token_optimizer import token_optimizer
 from app.db.models import DatabaseManager, _now_iso
 
+def _sanitize_schema_for_gemini(schema: Any) -> Any:
+    """Recursively ensures all array definitions contain a valid non-empty items schema required by Google Gemini."""
+    if not isinstance(schema, dict):
+        return schema
+    s = dict(schema)
+    if s.get("type") == "array":
+        items = s.get("items")
+        if not items or not isinstance(items, dict):
+            s["items"] = {"type": "string"}
+        else:
+            s["items"] = _sanitize_schema_for_gemini(items)
+    if "properties" in s and isinstance(s["properties"], dict):
+        s["properties"] = {k: _sanitize_schema_for_gemini(v) for k, v in s["properties"].items()}
+    return s
+
+
 SUPPORTED_PROVIDERS: list[dict[str, Any]] = [
     {
         "id": "gemini",
@@ -631,7 +647,7 @@ class UnifiedLLMRouter:
                             "description": fn.get("description", ""),
                         }
                         if fn.get("parameters"):
-                            decl["parameters"] = fn["parameters"]
+                            decl["parameters"] = _sanitize_schema_for_gemini(fn["parameters"])
                         function_declarations.append(decl)
                     payload["tools"] = [{"functionDeclarations": function_declarations}]
 
@@ -818,7 +834,7 @@ class UnifiedLLMRouter:
         # Fallback when no valid API key or provider call failed
         user_last = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")
         error_detail: str | None = None
-        if last_http_status in (400, 401, 403):
+        if last_http_status in (401, 403):
             if prov == "gemini":
                 error_detail = (
                     f"Token API ditolak oleh Google Gemini (HTTP {last_http_status}). "
@@ -829,6 +845,8 @@ class UnifiedLLMRouter:
                     f"Token API ditolak oleh penyedia {prov.upper()} (HTTP {last_http_status}). "
                     "Periksa kembali apakah token API yang dimasukkan sudah benar dan masih aktif."
                 )
+        elif last_http_status == 400:
+            error_detail = f"Permintaan ditolak oleh penyedia {prov.upper()} karena format parameter atau skema panggilan tidak valid (HTTP 400)."
         elif last_http_status == 429:
             error_detail = f"Batas kuota atau batas permintaan (HTTP 429) pada penyedia {prov.upper()} telah tercapai."
         elif last_http_status in (500, 502, 503, 504):

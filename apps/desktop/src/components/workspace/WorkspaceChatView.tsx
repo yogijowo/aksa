@@ -405,20 +405,20 @@ export const WorkspaceChatView: React.FC = () => {
           ) : (
             <div className="space-y-6">
               {/* Sticky Top Session Toolbar with New Session Action */}
-              <div className="sticky top-0 z-10 -mx-6 -mt-8 mb-4 px-6 py-2.5 bg-[#191918]/92 backdrop-blur-md border-b border-white/[0.07] flex items-center justify-between">
+              <div className="sticky top-0 z-10 -mx-6 -mt-8 mb-4 px-6 py-2.5 bg-[#191918]/90 backdrop-blur-md border-b border-white/[0.08] flex items-center justify-between transition-colors">
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="flex h-2 w-2 rounded-full bg-emerald-400 shadow-sm shadow-emerald-400/50" />
-                  <span className="font-medium text-zinc-200">Sesi Percakapan Aktif</span>
-                  <span className="text-zinc-600">•</span>
-                  <span className="text-zinc-400 flex items-center gap-1">
-                    <Database size={11} className="text-zinc-500" />
+                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/40" />
+                  <span className="font-semibold text-zinc-100">Sesi Percakapan Aktif</span>
+                  <span className="text-zinc-500">•</span>
+                  <span className="text-zinc-400 flex items-center gap-1.5 font-medium">
+                    <Database size={12} className="text-sky-500 shrink-0" />
                     <span>{messages.length} pesan tersimpan di basis data</span>
                   </span>
                 </div>
                 <button
                   type="button"
                   onClick={handleNewSession}
-                  className="flex items-center gap-1.5 rounded-lg bg-[#242422] hover:bg-[#2c2c29] active:bg-[#343430] border border-white/[0.1] px-3 py-1.5 text-xs font-medium text-zinc-200 hover:text-white transition-all shadow-sm focus:outline-none focus:ring-1 focus:ring-[#D97757]"
+                  className="flex items-center gap-1.5 rounded-xl bg-[#262624] hover:bg-[#21211F] active:scale-98 border border-white/[0.1] px-3.5 py-1.5 text-xs font-semibold text-zinc-100 transition-all shadow-sm focus:outline-none focus:ring-1 focus:ring-[#D97757]"
                   title="Mulai sesi percakapan baru (sesi saat ini tersimpan otomatis)"
                 >
                   <Plus size={13} className="text-[#D97757]" />
