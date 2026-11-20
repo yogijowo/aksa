@@ -2,6 +2,7 @@ import React, { useEffect, Suspense } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopHeader } from "@/components/layout/TopHeader";
 import { ArtifactDrawer } from "@/components/layout/ArtifactDrawer";
+import { ChatSessionHistoryDrawer } from "@/components/workspace/ChatSessionHistoryDrawer";
 import { WorkspaceChatView } from "@/components/workspace/WorkspaceChatView";
 import { HITLApprovalModal } from "@/components/workspace/HITLApprovalModal";
 import { AppLoadingScreen } from "@/components/layout/AppLoadingScreen";
@@ -113,8 +114,9 @@ export const App: React.FC = () => {
             {activeNav !== "ruang_kerja" && activeNav !== "tim_agen" && <FeatureSectionsView />}
           </Suspense>
 
-          {/* Pane 3: Slide-Over File Artifact Inspector Drawer */}
+          {/* Pane 3: Slide-Over File Artifact Inspector Drawer & Chat Session History */}
           <ArtifactDrawer />
+          <ChatSessionHistoryDrawer />
         </div>
       </div>
     </div>

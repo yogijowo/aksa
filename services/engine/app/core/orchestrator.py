@@ -255,6 +255,96 @@ class HierarchicalOrchestrator:
 
         return selected
 
+    def _generate_suggested_followups(
+        self,
+        prompt: str,
+        artifacts: list[dict[str, Any]],
+        sub_agent_summaries: list[str],
+    ) -> list[dict[str, Any]]:
+        """Generate dynamic, context-relevant follow-up prompt suggestions based on user intent and created artifacts."""
+        lower = prompt.lower()
+        art_exts = {a.get("file_type", "").lower() for a in artifacts if isinstance(a, dict)}
+
+        # 1. Data Analysis / Excel / Chart / Rekap intent
+        if "xlsx" in art_exts or any(k in lower for k in ("excel", "xlsx", "analisa", "data", "grafik", "grafict", "chart", "rekap", "hitung")):
+            return [
+                {
+                    "label": "Buatkan visualisasi grafik",
+                    "prompt": "Buatkan visualisasi grafik chart batang/garis dari hasil analisa data tersebut untuk presentasi.",
+                },
+                {
+                    "label": "Susun laporan resmi Word",
+                    "prompt": "Susun draf dokumen laporan resmi Word (.docx) berdasarkan hasil analisa data di atas.",
+                },
+                {
+                    "label": "Ekspor ringkasan ke PDF",
+                    "prompt": "Ekspor poin-poin hasil analisa data ini menjadi dokumen laporan PDF siap cetak.",
+                },
+            ]
+
+        # 2. Word Document (.docx) / MoU / Surat Resmi
+        if "docx" in art_exts or any(k in lower for k in ("word", "docx", "surat", "mou", "perjanjian", "sop", "laporan")):
+            return [
+                {
+                    "label": "Konversi ke format PDF",
+                    "prompt": "Konversikan berkas Word tersebut menjadi dokumen PDF resmi siap cetak.",
+                },
+                {
+                    "label": "Buatkan slide presentasi",
+                    "prompt": "Buatkan materi slide presentasi PowerPoint (.pptx) dari poin-poin utama dokumen ini.",
+                },
+                {
+                    "label": "Periksa pasal & klausul",
+                    "prompt": "Lakukan audit pemeriksaan pasal dan klausul penting dalam draf dokumen tersebut.",
+                },
+            ]
+
+        # 3. PowerPoint (.pptx)
+        if "pptx" in art_exts or any(k in lower for k in ("ppt", "pptx", "slide", "presentasi")):
+            return [
+                {
+                    "label": "Tambahkan slide rincian data",
+                    "prompt": "Tambahkan slide rincian tabel data capaian dan target pada materi presentasi tersebut.",
+                },
+                {
+                    "label": "Buatkan naskah presentasi",
+                    "prompt": "Buatkan naskah berbicara (speaker notes) bahasa Indonesia untuk setiap slide presentasi tersebut.",
+                },
+                {
+                    "label": "Ekspor slide ke PDF",
+                    "prompt": "Ekspor seluruh slide presentasi tersebut ke dalam format PDF siap cetak.",
+                },
+            ]
+
+        # 4. Document Research / RAG / Search
+        if any(k in lower for k in ("cari", "temukan", "referensi", "baca", "arsip", "dokumen", "pdf")):
+            return [
+                {
+                    "label": "Buat draf naskah resmi",
+                    "prompt": "Buatkan draf naskah dokumen resmi berdasarkan referensi dan temuan dokumen di atas.",
+                },
+                {
+                    "label": "Rangkum poin eksekutif",
+                    "prompt": "Buatkan ringkasan eksekutif poin penting dalam bentuk tabel dan butir capaian.",
+                },
+                {
+                    "label": "Cari informasi pendukung",
+                    "prompt": "Cari apakah ada berkas pendukung lain yang berkaitan dengan topik tersebut di folder kerja.",
+                },
+            ]
+
+        # 5. Default General Action Suggestions
+        return [
+            {
+                "label": "Rangkum poin penting",
+                "prompt": "Buatkan ringkasan poin-poin penting dari penjelasan di atas.",
+            },
+            {
+                "label": "Susun rencana aksi kerja",
+                "prompt": "Buatkan rencana aksi bertahap (action plan) berdasarkan arahan di atas.",
+            },
+        ]
+
     async def _log_token_usage(
         self,
         session_id: str | None,
@@ -1079,10 +1169,23 @@ class HierarchicalOrchestrator:
         elif tool_failed:
             final_reply = f"Gagal memproses dokumen: {tool_failure_message}. Berkas tidak berhasil dibuat di folder kerja."
         else:
-            final_reply = sup_completion["content"]
-            if artifacts and not any(a["name"] in final_reply for a in artifacts):
+            final_reply = (sup_completion.get("content") or "").strip()
+            # If the supervisor reply was empty, synthesize from sub-agent handbacks or artifacts
+            if not final_reply and sub_agent_summaries:
+                final_reply = "\n\n".join(s for s in sub_agent_summaries if s.strip())
+            if not final_reply and artifacts:
+                art_names = ", ".join(f"**`{a['name']}`**" for a in artifacts)
+                final_reply = f"Tugas berhasil diselesaikan. Berkas {art_names} telah berhasil dibuat dan disimpan di folder kerja Anda."
+            elif not final_reply:
+                final_reply = (
+                    "Pekerjaan telah selesai diproses oleh tim agen sesuai instruksi Anda. "
+                    f"Folder kerja '{ws_dir.name}' telah diperiksa dan disinkronkan."
+                )
+            elif artifacts and not any(a["name"] in final_reply for a in artifacts):
                 art_names = ", ".join(f"**`{a['name']}`**" for a in artifacts)
                 final_reply += f"\n\nFile hasil kerja {art_names} telah siap di panel Artefak."
+
+        suggested_followups = self._generate_suggested_followups(prompt, artifacts, sub_agent_summaries)
 
         if not execution_steps:
             execution_steps.append(
@@ -1207,5 +1310,6 @@ class HierarchicalOrchestrator:
             "artifacts": artifacts,
             "tokens_used": total_tokens_used,
             "tokens_saved": total_tokens_saved,
+            "suggested_followups": suggested_followups,
         }
 

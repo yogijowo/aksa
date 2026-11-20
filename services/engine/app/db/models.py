@@ -863,6 +863,13 @@ class DatabaseManager:
             await db.commit()
             return await self.get_session(session_id)
 
+    async def delete_session(self, session_id: str) -> bool:
+        """Delete a chat session and all its associated messages."""
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            await db.commit()
+            return True
+
     # --- Installed Applications CRUD ---
     async def upsert_installed_app(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Store or update a normalized application discovery record."""
@@ -1387,6 +1394,12 @@ class DatabaseManager:
                 (key, val_json, now),
             )
             await db.commit()
+
+    async def delete_setting(self, key: str) -> bool:
+        async with aiosqlite.connect(self.db_path) as db:
+            await db.execute("DELETE FROM app_settings WHERE key = ?", (key,))
+            await db.commit()
+            return True
 
 
 db_manager = DatabaseManager()

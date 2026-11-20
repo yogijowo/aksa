@@ -8,6 +8,7 @@ import type {
   MCPServerItem,
   ProviderStatusDetail,
   ProviderTokenStatus,
+  SuggestedFollowup,
   WorkspaceFolder,
   WorkspaceFolderInspection,
 } from "@/types/aksa";
@@ -421,6 +422,7 @@ export async function executeTaskOnEngine(params: {
   artifacts: FileArtifact[];
   tokens_used: number;
   tokens_saved: number;
+  suggested_followups?: SuggestedFollowup[];
 } | null> {
   try {
     const res = await apiFetch("/api/v1/orchestrate/execute", {
@@ -576,6 +578,28 @@ export async function saveSystemSettingRemote(key: string, value: unknown): Prom
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key, value }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteSystemSettingRemote(key: string): Promise<boolean> {
+  try {
+    const res = await apiFetch(`/api/v1/system/settings/${encodeURIComponent(key)}`, {
+      method: "DELETE",
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function deleteSessionRemote(sessionId: string): Promise<boolean> {
+  try {
+    const res = await apiFetch(`/api/v1/sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
     });
     return res.ok;
   } catch {

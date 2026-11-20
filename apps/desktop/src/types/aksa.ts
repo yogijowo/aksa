@@ -141,6 +141,24 @@ export interface ExecutionStep {
   tokens_saved: number;
 }
 
+export interface SuggestedFollowup {
+  label: string;
+  prompt: string;
+  requires_confirmation?: boolean;
+}
+
+export interface ChatSessionItem {
+  id: string;
+  key: string;
+  title: string;
+  timestamp: string;
+  formatted_date: string;
+  message_count: number;
+  artifact_count: number;
+  workspace_id?: string;
+  messages: ChatMessage[];
+}
+
 export interface ChatMessage {
   id: string;
   sender_role: "user" | "supervisor";
@@ -149,6 +167,7 @@ export interface ChatMessage {
   timestamp_label: string;
   execution_steps?: ExecutionStep[];
   artifacts?: FileArtifact[];
+  suggested_followups?: SuggestedFollowup[];
 }
 
 export interface EngineHealth {

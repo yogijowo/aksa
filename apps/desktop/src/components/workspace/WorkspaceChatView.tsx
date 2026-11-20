@@ -2,6 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import {
   ArrowUp,
+  ArrowUpRight,
+  Play,
+  X,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -20,7 +23,6 @@ import {
   AlertTriangle,
   Paperclip,
   Database,
-  Plus,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAksaStore } from "@/stores/useAksaStore";
@@ -29,7 +31,7 @@ import { ProviderIcon } from "@/components/ui/DynamicIcon";
 import { ErrorStateCard, StatusBadge } from "@/components/ui/UXPrimitives";
 import { openFileInDefaultApp } from "@/services/engineClient";
 import { getParentFolderPath } from "@/components/layout/ArtifactDrawer";
-import type { FileArtifact } from "@/types/aksa";
+import type { FileArtifact, SuggestedFollowup } from "@/types/aksa";
 
 interface ActivityCardItem {
   id: string;
@@ -110,7 +112,6 @@ export const WorkspaceChatView: React.FC = () => {
   const {
     messages,
     sendUserPrompt,
-    startNewChatSession,
     workspaces,
     activeWorkspaceId,
     isExecuting,
@@ -125,6 +126,16 @@ export const WorkspaceChatView: React.FC = () => {
   const [sendError, setSendError] = useState<string | null>(null);
   const [expandedTraces, setExpandedTraces] = useState<Record<string, boolean>>({});
   const [showLiveDetails, setShowLiveDetails] = useState(false);
+  const [pendingFollowup, setPendingFollowup] = useState<SuggestedFollowup | null>(null);
+  const [rememberFollowupChoice, setRememberFollowupChoice] = useState(false);
+  const [autoExecFollowups, setAutoExecFollowups] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        return localStorage.getItem("aksa_auto_exec_followup") === "true";
+      } catch {}
+    }
+    return false;
+  });
   const [onboardingStep, setOnboardingStep] = useState<number | null>(() => {
     if (typeof window !== "undefined") {
       try {
@@ -162,13 +173,43 @@ export const WorkspaceChatView: React.FC = () => {
     inputRef.current?.focus();
   };
 
-  const handleNewSession = async () => {
+  const handleTriggerFollowup = async (followup: SuggestedFollowup) => {
     if (isExecuting) {
       toast.warning("Mohon tunggu proses yang sedang berjalan selesai terlebih dahulu.");
       return;
     }
-    await startNewChatSession();
-    toast.success("Sesi baru dimulai. Percakapan sebelumnya telah diarsipkan secara aman di basis data.");
+    if (autoExecFollowups || !followup.requires_confirmation) {
+      setEmptyHintWarning(null);
+      setSendError(null);
+      try {
+        await sendUserPrompt(followup.prompt);
+      } catch (err: any) {
+        toast.error(err?.message || "Gagal menjalankan langkah lanjutan.");
+      }
+    } else {
+      setPendingFollowup(followup);
+    }
+  };
+
+  const handleConfirmFollowup = async (rememberChoice: boolean) => {
+    if (!pendingFollowup) return;
+    const promptToRun = pendingFollowup.prompt;
+    setPendingFollowup(null);
+    if (rememberChoice) {
+      setAutoExecFollowups(true);
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("aksa_auto_exec_followup", "true");
+        } catch {}
+      }
+    }
+    setEmptyHintWarning(null);
+    setSendError(null);
+    try {
+      await sendUserPrompt(promptToRun);
+    } catch (err: any) {
+      toast.error(err?.message || "Gagal menjalankan langkah lanjutan.");
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -404,28 +445,6 @@ export const WorkspaceChatView: React.FC = () => {
             </div>
           ) : (
             <div className="space-y-6">
-              {/* Sticky Top Session Toolbar with New Session Action */}
-              <div className="sticky top-0 z-10 -mx-6 -mt-8 mb-4 px-6 py-2.5 bg-[#191918]/90 backdrop-blur-md border-b border-white/[0.08] flex items-center justify-between transition-colors">
-                <div className="flex items-center gap-2 text-xs">
-                  <span className="flex h-2 w-2 rounded-full bg-emerald-500 shadow-sm shadow-emerald-500/40" />
-                  <span className="font-semibold text-zinc-100">Sesi Percakapan Aktif</span>
-                  <span className="text-zinc-500">•</span>
-                  <span className="text-zinc-400 flex items-center gap-1.5 font-medium">
-                    <Database size={12} className="text-sky-500 shrink-0" />
-                    <span>{messages.length} pesan tersimpan di basis data</span>
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleNewSession}
-                  className="flex items-center gap-1.5 rounded-xl bg-[#262624] hover:bg-[#21211F] active:scale-98 border border-white/[0.1] px-3.5 py-1.5 text-xs font-semibold text-zinc-100 transition-all shadow-sm focus:outline-none focus:ring-1 focus:ring-[#D97757]"
-                  title="Mulai sesi percakapan baru (sesi saat ini tersimpan otomatis)"
-                >
-                  <Plus size={13} className="text-[#D97757]" />
-                  <span>Sesi Baru</span>
-                </button>
-              </div>
-
               {messages.map((msg) => {
                 const isUser = msg.sender_role === "user";
                 const isExpanded = expandedTraces[msg.id] ?? false;
@@ -572,7 +591,8 @@ export const WorkspaceChatView: React.FC = () => {
                         },
                       }}
                     >
-                      {msg.content}
+                      {msg.content?.trim() ||
+                        "Pekerjaan telah berhasil diselesaikan oleh tim agen AKSA. Silakan periksa file hasil pekerjaan pada kartu di bawah ini atau panel Hasil Pekerjaan."}
                     </ReactMarkdown>
 
                     {/* Work Artifacts & Actionable Next Steps (Section 5.1) */}
@@ -639,28 +659,43 @@ export const WorkspaceChatView: React.FC = () => {
                       </div>
                     )}
 
-                    {/* Relevant Follow-up Suggestions */}
-                    <div className="pt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-400">
-                      <span>Langkah lanjutan:</span>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleSelectActivity("Buatkan ringkasan poin penting dari hasil pekerjaan di atas.")
-                        }
-                        className="rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] px-2.5 py-1 text-zinc-300 hover:text-white transition-colors"
-                      >
-                        Rangkum hasil
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          handleSelectActivity("Rapikan kembali format laporan tersebut agar siap dipresentasikan.")
-                        }
-                        className="rounded-lg bg-white/[0.04] hover:bg-white/[0.09] border border-white/[0.07] px-2.5 py-1 text-zinc-300 hover:text-white transition-colors"
-                      >
-                        Sesuaikan format
-                      </button>
-                    </div>
+                    {/* Dynamic Contextual Follow-up Suggestions */}
+                    {((msg.suggested_followups && msg.suggested_followups.length > 0) ||
+                      (msg.artifacts && msg.artifacts.length > 0)) && (
+                      <div className="pt-2.5 border-t border-white/[0.06] flex flex-wrap items-center gap-2 text-xs">
+                        <span className="text-zinc-400 font-medium">Langkah lanjutan:</span>
+                        {(msg.suggested_followups && msg.suggested_followups.length > 0
+                          ? msg.suggested_followups
+                          : [
+                              {
+                                label: "Buatkan Ringkasan Dokumen Word",
+                                prompt:
+                                  "Buatkan dokumen ringkasan resmi (.docx) dari file hasil pekerjaan di atas.",
+                                requires_confirmation: false,
+                              },
+                              {
+                                label: "Ekspor ke Format PDF",
+                                prompt: "Konversikan dokumen hasil di atas ke format PDF siap cetak.",
+                                requires_confirmation: false,
+                              },
+                            ]
+                        ).map((followup, idx) => (
+                          <button
+                            key={`${msg.id}_fup_${idx}`}
+                            type="button"
+                            onClick={() => void handleTriggerFollowup(followup)}
+                            title={`Jalankan instruksi: "${followup.prompt}"`}
+                            className="group inline-flex items-center gap-1.5 rounded-lg bg-white/[0.05] hover:bg-[#D97757]/15 border border-white/[0.08] hover:border-[#D97757]/40 px-2.5 py-1 text-zinc-300 hover:text-white transition-all shadow-sm active:scale-98"
+                          >
+                            <ArrowUpRight
+                              size={12}
+                              className="text-[#D97757] group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform"
+                            />
+                            <span className="font-medium">{followup.label}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -881,6 +916,70 @@ export const WorkspaceChatView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Follow-up Execution Confirmation Modal */}
+      {pendingFollowup && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 animate-in fade-in duration-150"
+        >
+          <div className="w-full max-w-md rounded-2xl bg-[#21211F] border border-white/[0.12] shadow-2xl p-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-[14.5px] font-semibold text-zinc-100">
+                <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[#D97757]/20 text-[#D97757]">
+                  <ArrowUpRight size={16} />
+                </div>
+                <span>Konfirmasi Langkah Lanjutan</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPendingFollowup(null)}
+                className="rounded-lg p-1 text-zinc-400 hover:text-zinc-100 hover:bg-white/[0.06]"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs text-zinc-400">
+                AKSA akan segera memproses instruksi lanjutan berikut di ruang kerja aktif Anda:
+              </p>
+              <div className="rounded-xl bg-[#191918] border border-white/[0.08] p-3 text-[13px] text-zinc-200 font-mono leading-relaxed">
+                "{pendingFollowup.prompt}"
+              </div>
+            </div>
+
+            <label className="flex items-center gap-2 cursor-pointer text-xs text-zinc-300 select-none">
+              <input
+                type="checkbox"
+                checked={rememberFollowupChoice}
+                onChange={(e) => setRememberFollowupChoice(e.target.checked)}
+                className="rounded border-white/[0.2] bg-white/[0.06] text-[#D97757] focus:ring-[#D97757]"
+              />
+              <span>Selalu jalankan langsung tanpa konfirmasi di klik berikutnya</span>
+            </label>
+
+            <div className="pt-2 border-t border-white/[0.08] flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setPendingFollowup(null)}
+                className="rounded-xl px-3.5 py-1.5 text-xs font-medium text-zinc-300 hover:text-white hover:bg-white/[0.06] transition-colors"
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleConfirmFollowup(rememberFollowupChoice)}
+                className="flex items-center gap-1.5 rounded-xl bg-[#D97757] hover:bg-[#c96a4b] text-white px-4 py-1.5 text-xs font-semibold transition-colors shadow-sm"
+              >
+                <Play size={12} fill="currentColor" />
+                <span>Jalankan Sekarang</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

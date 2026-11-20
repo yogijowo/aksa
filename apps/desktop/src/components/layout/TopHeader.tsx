@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ShieldCheck,
   ExternalLink,
+  History,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAksaStore } from "@/stores/useAksaStore";
@@ -28,6 +29,9 @@ export const TopHeader: React.FC = () => {
     activeTeamId,
     isArtifactDrawerOpen,
     setArtifactDrawerOpen,
+    isSessionHistoryOpen,
+    setSessionHistoryOpen,
+    savedSessions,
     artifacts,
     engineHealth,
     setActiveNav,
@@ -168,7 +172,7 @@ export const TopHeader: React.FC = () => {
         </button>
       </div>
 
-      {/* Right: Integration Status & Work Results Drawer Toggle */}
+      {/* Right: Integration Status, Session History & Work Results Drawer Toggle */}
       <div className="flex items-center gap-2">
         <button
           type="button"
@@ -186,7 +190,38 @@ export const TopHeader: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => setArtifactDrawerOpen(!isArtifactDrawerOpen)}
+          onClick={() => {
+            if (!isSessionHistoryOpen && isArtifactDrawerOpen) {
+              setArtifactDrawerOpen(false);
+            }
+            setSessionHistoryOpen(!isSessionHistoryOpen);
+          }}
+          title="Buka atau tutup riwayat sesi percakapan"
+          aria-expanded={isSessionHistoryOpen}
+          className={cn(
+            "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[13px] font-medium transition-colors",
+            isSessionHistoryOpen
+              ? "bg-white/[0.09] text-zinc-100 border-[#D97757]/60 text-[#D97757]"
+              : "bg-transparent text-zinc-300 border-white/[0.08] hover:bg-white/[0.05] hover:text-zinc-100"
+          )}
+        >
+          <History size={15} />
+          <span className="hidden sm:inline">Riwayat Sesi</span>
+          {savedSessions.length > 0 && (
+            <span className="rounded-md bg-white/[0.1] px-1.5 py-0.5 text-xs text-zinc-200">
+              {savedSessions.length}
+            </span>
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (!isArtifactDrawerOpen && isSessionHistoryOpen) {
+              setSessionHistoryOpen(false);
+            }
+            setArtifactDrawerOpen(!isArtifactDrawerOpen);
+          }}
           title="Buka atau tutup daftar file hasil pekerjaan"
           aria-expanded={isArtifactDrawerOpen}
           className={cn(

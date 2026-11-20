@@ -941,6 +941,13 @@ async def create_session(req: CreateSessionRequest) -> dict[str, Any]:
     return {"session": session}
 
 
+@api_router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str) -> dict[str, Any]:
+    """Delete a chat session."""
+    deleted = await db_manager.delete_session(session_id)
+    return {"status": "deleted" if deleted else "not_found", "session_id": session_id}
+
+
 class ExecuteToolRequest(BaseModel):
     tool_name: str
     arguments: dict[str, Any] = Field(default_factory=dict)
@@ -1744,6 +1751,13 @@ async def save_system_setting(payload: AppSettingPayload) -> dict[str, Any]:
     """Persist a system setting into SQLite app_settings (P2-5)."""
     await db_manager.set_setting(payload.key, payload.value)
     return {"status": "saved", "key": payload.key, "value": payload.value}
+
+
+@api_router.delete("/system/settings/{key}")
+async def delete_system_setting(key: str) -> dict[str, Any]:
+    """Delete a system setting from SQLite app_settings."""
+    deleted = await db_manager.delete_setting(key)
+    return {"status": "deleted" if deleted else "not_found", "key": key}
 
 
 

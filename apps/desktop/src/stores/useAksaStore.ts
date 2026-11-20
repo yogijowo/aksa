@@ -3,6 +3,7 @@ import type {
   AgentNodeConfig,
   AgentTeam,
   ChatMessage,
+  ChatSessionItem,
   EngineHealth,
   ExecutionStep,
   FileArtifact,
@@ -19,6 +20,7 @@ import {
   createHITLApprovalRemote,
   createWorkspaceRemote,
   deleteAgentRemote,
+  deleteSystemSettingRemote,
   deleteWorkspaceRemote,
   executeTaskOnEngine,
   fetchAgentTeams,
@@ -188,6 +190,8 @@ interface AksaState {
   activeNav: NavSection;
   isSidebarCollapsed: boolean;
   isArtifactDrawerOpen: boolean;
+  isSessionHistoryOpen: boolean;
+  savedSessions: ChatSessionItem[];
   themeMode: ThemeMode;
   resolvedTheme: ResolvedTheme;
   uiDensity: UIDensityMode;
@@ -226,6 +230,10 @@ interface AksaState {
   setActiveNav: (nav: NavSection) => void;
   toggleSidebar: () => void;
   setArtifactDrawerOpen: (open: boolean) => void;
+  setSessionHistoryOpen: (open: boolean) => void;
+  loadSavedSessions: () => Promise<void>;
+  switchChatSession: (sessionId: string) => Promise<void>;
+  deleteChatSession: (sessionId: string) => Promise<void>;
   setThemeMode: (mode: ThemeMode) => void;
   syncSystemTheme: (osPrefersDark: boolean) => void;
   setUiDensity: (density: UIDensityMode) => void;
@@ -275,6 +283,8 @@ export const useAksaStore = create<AksaState>((set, get) => ({
   activeNav: getSavedStorage("aksa_active_nav", "ruang_kerja") as NavSection,
   isSidebarCollapsed: false,
   isArtifactDrawerOpen: false,
+  isSessionHistoryOpen: false,
+  savedSessions: [],
   themeMode: INITIAL_THEME_MODE,
   resolvedTheme: INITIAL_RESOLVED_THEME,
   uiDensity: INITIAL_UI_DENSITY,
@@ -355,6 +365,89 @@ export const useAksaStore = create<AksaState>((set, get) => ({
   },
   toggleSidebar: () => set((state) => ({ isSidebarCollapsed: !state.isSidebarCollapsed })),
   setArtifactDrawerOpen: (open) => set({ isArtifactDrawerOpen: open }),
+  setSessionHistoryOpen: (open) => set({ isSessionHistoryOpen: open }),
+
+  loadSavedSessions: async () => {
+    try {
+      const settings = await fetchSystemSettingsRemote();
+      if (!settings) return;
+      const sessions: ChatSessionItem[] = [];
+      for (const [key, val] of Object.entries(settings)) {
+        if (key.startsWith("chat_session_") && val && typeof val === "object") {
+          const sVal = val as Record<string, unknown>;
+          const msgs = Array.isArray(sVal.messages) ? (sVal.messages as ChatMessage[]) : [];
+          if (msgs.length === 0) continue;
+          const firstUserMsg = msgs.find((m) => m.sender_role === "user");
+          const title = firstUserMsg ? firstUserMsg.content.slice(0, 48) : "Sesi Percakapan";
+          const rawTime = typeof sVal.timestamp === "string" ? sVal.timestamp : null;
+          const dateObj = rawTime
+            ? new Date(rawTime)
+            : new Date(Number(key.replace("chat_session_", "")) || Date.now());
+          const formattedDate = dateObj.toLocaleDateString("id-ID", {
+            day: "numeric",
+            month: "short",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit",
+          });
+          sessions.push({
+            id: key,
+            key,
+            title,
+            timestamp: rawTime || dateObj.toISOString(),
+            formatted_date: formattedDate,
+            message_count: msgs.length,
+            artifact_count: msgs.reduce((acc, m) => acc + (m.artifacts?.length || 0), 0),
+            workspace_id: typeof sVal.workspace_id === "string" ? sVal.workspace_id : undefined,
+            messages: msgs,
+          });
+        }
+      }
+      sessions.sort(
+        (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+      );
+      set({ savedSessions: sessions });
+    } catch (err) {
+      console.warn("Gagal memuat riwayat sesi percakapan:", err);
+    }
+  },
+
+  switchChatSession: async (sessionId: string) => {
+    const session = get().savedSessions.find((s) => s.id === sessionId);
+    if (!session) return;
+    const currentMessages = get().messages;
+    if (currentMessages.length > 0) {
+      const archiveKey = `chat_session_${Date.now()}`;
+      try {
+        await saveSystemSettingRemote(archiveKey, {
+          timestamp: new Date().toISOString(),
+          messages: currentMessages,
+          workspace_id: get().activeWorkspaceId,
+        });
+      } catch (err) {
+        console.warn("Gagal mengarsipkan sesi saat ini:", err);
+      }
+    }
+    set({
+      messages: session.messages,
+      activeWorkspaceId: session.workspace_id || get().activeWorkspaceId,
+      liveExecutionSteps: [],
+      activeAgentStep: null,
+      activeAgentId: null,
+    });
+    void saveSystemSettingRemote("workspace_chat_state", {
+      messages: session.messages.slice(-40),
+      artifacts: get().artifacts.slice(0, 40),
+    });
+    await get().loadSavedSessions();
+  },
+
+  deleteChatSession: async (sessionId: string) => {
+    await deleteSystemSettingRemote(sessionId);
+    set((state) => ({
+      savedSessions: state.savedSessions.filter((s) => s.id !== sessionId),
+    }));
+  },
 
   setThemeMode: (mode) => {
     const resolved = resolveEffectiveTheme(mode, getSystemPrefersDark());
@@ -901,6 +994,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
           timestamp_label: "Baru saja",
           execution_steps: remoteRes.execution_steps,
           artifacts: taggedArtifacts,
+          suggested_followups: remoteRes.suggested_followups,
         };
         set((state) => {
           const nextMessages = [...state.messages, replyMsg];
@@ -961,6 +1055,26 @@ export const useAksaStore = create<AksaState>((set, get) => ({
             : []),
         ],
         artifacts: wantsDoc ? [newArtifact] : [],
+        suggested_followups: wantsDoc
+          ? [
+              {
+                label: "Buat Laporan Ringkasan Word",
+                prompt: "Buatkan dokumen ringkasan resmi (.docx) dari file hasil pekerjaan di atas.",
+                requires_confirmation: false,
+              },
+              {
+                label: "Ekspor ke Format PDF",
+                prompt: "Konversikan dokumen hasil di atas ke format PDF siap cetak.",
+                requires_confirmation: false,
+              },
+            ]
+          : [
+              {
+                label: "Rangkum Poin Penting",
+                prompt: "Buatkan ringkasan poin-poin utama dari penjelasan di atas.",
+                requires_confirmation: false,
+              },
+            ],
       };
 
       set((state) => {
@@ -1013,6 +1127,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       activeAgentStep: null,
       activeAgentId: null,
     });
+    await get().loadSavedSessions();
   },
 
   syncWithBackendEngine: async () => {
@@ -1175,6 +1290,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
               : state.totalTokensSaved,
         };
       });
+      void get().loadSavedSessions();
     } catch (err) {
       console.warn("[AKSA] Gagal sinkronisasi awal dengan mesin backend:", err);
       set({
