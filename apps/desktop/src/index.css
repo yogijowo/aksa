@@ -114,8 +114,12 @@ textarea:focus-visible {
 }
 
 [data-theme="light"] .bg-\[\#21211F\],
+[data-theme="light"] .bg-\[\#21211F\]\/90,
 [data-theme="light"] .bg-\[\#21211F\]\/80,
-[data-theme="light"] .bg-\[\#21211F\]\/60 {
+[data-theme="light"] .bg-\[\#21211F\]\/70,
+[data-theme="light"] .bg-\[\#21211F\]\/60,
+[data-theme="light"] .bg-\[\#21211F\]\/50,
+[data-theme="light"] .bg-\[\#21211F\]\/40 {
   background-color: var(--surface-1) !important;
 }
 

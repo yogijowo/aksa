@@ -201,17 +201,15 @@ export const TopHeader: React.FC = () => {
           className={cn(
             "flex items-center gap-1.5 rounded-xl border px-3 py-1.5 text-[13px] font-medium transition-colors",
             isSessionHistoryOpen
-              ? "bg-white/[0.09] text-zinc-100 border-[#D97757]/60 text-[#D97757]"
+              ? "bg-white/[0.09] text-zinc-100 border-white/[0.14]"
               : "bg-transparent text-zinc-300 border-white/[0.08] hover:bg-white/[0.05] hover:text-zinc-100"
           )}
         >
           <History size={15} />
           <span className="hidden sm:inline">Riwayat Sesi</span>
-          {savedSessions.length > 0 && (
-            <span className="rounded-md bg-white/[0.1] px-1.5 py-0.5 text-xs text-zinc-200">
-              {savedSessions.length}
-            </span>
-          )}
+          <span className="rounded-md bg-white/[0.1] px-1.5 py-0.5 text-xs text-zinc-200">
+            {savedSessions.length}
+          </span>
         </button>
 
         <button
