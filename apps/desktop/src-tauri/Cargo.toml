@@ -1,6 +1,6 @@
 [package]
 name = "aksa-desktop"
-version = "0.1.0"
+version = "1.0.0"
 description = "AKSA — Asisten Kerja Cerdas & Otonom Desktop Shell"
 authors = ["AKSA Contributors"]
 edition = "2021"

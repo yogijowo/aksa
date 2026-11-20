@@ -88,7 +88,7 @@ export const App: React.FC = () => {
       data-theme={resolvedTheme}
       data-density={uiDensity}
       data-reduce-motion={String(reducedMotion)}
-      className="flex h-screen w-screen overflow-hidden bg-[#191918] text-[#ECECEB] animate-in fade-in duration-300"
+      className="flex h-screen w-screen overflow-hidden bg-[var(--background)] text-[var(--text-primary)] animate-in fade-in duration-300"
     >
       {/* Global Human-in-the-Loop Confirmation Modal */}
       <HITLApprovalModal />
