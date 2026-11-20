@@ -1,0 +1,79 @@
+name: Build Windows Setup Executable (.exe)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Package Windows .exe Installer
+    runs-on: windows-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.2.0
+        with:
+          node-version: "20"
+
+      - name: Install Rust toolchain (x86_64-pc-windows-msvc)
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Install Python dependencies & PyInstaller
+        working-directory: services/engine
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      - name: Build Python Sidecar Engine (.exe)
+        run: |
+          python scripts/build_sidecar.py --triple x86_64-pc-windows-msvc
+          dir apps\desktop\src-tauri\binaries
+
+      - name: Install Frontend Dependencies & Build Bundle
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run build
+
+      - name: Build Tauri Windows NSIS Installer (.exe)
+        working-directory: apps/desktop
+        run: |
+          npx tauri build --bundles nsis
+
+      - name: Locate and Stage Windows .exe Installer
+        shell: bash
+        run: |
+          mkdir -p dist/windows-installer
+          nsis_dir="apps/desktop/src-tauri/target/release/bundle/nsis"
+          if [ -d "$nsis_dir" ]; then
+            cp "$nsis_dir"/*.exe dist/windows-installer/
+            echo "Staged Windows installer files:"
+            ls -lh dist/windows-installer/
+          else
+            echo "Error: NSIS bundle directory not found at $nsis_dir"
+            exit 1
+          fi
+
+      - name: Upload Windows Setup .exe Artifact (Private, Non-Release)
+        uses: actions/upload-artifact@v4
+        with:
+          name: AKSA-Windows-x64-Setup
+          path: dist/windows-installer/*.exe
+          if-no-files-found: error
