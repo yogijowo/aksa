@@ -270,3 +270,4 @@ Phase 41: AKSA Virtual Office Experience (Visual Agent Canvas)
 - [ ] **AC-4 (Google Workspace):** Pengguna dapat login via Google OAuth, mengekspor laporan Word/Excel lokal langsung ke Google Drive/Docs/Sheets, dan menjadwalkan agenda di Google Calendar.
 - [ ] **AC-5 (Social Media):** Agen Spesialis Medsos dapat menyusun draf postingan LinkedIn / X dari dokumen kerja lokal, menampilkan pratinjau kartu media sosial di desktop, dan memublikasikan postingan hanya setelah tombol persetujuan ditekan.
 - [ ] **AC-6 (No Emojis & Clean UI):** Seluruh visual antarmuka baru menggunakan ikon vektor dinamis `lucide-react`, palet tema resmi, dan bebas dari emoji Unicode statis.
+
