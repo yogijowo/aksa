@@ -974,11 +974,20 @@ export const useAksaStore = create<AksaState>((set, get) => ({
     }
 
     try {
+      const priorMessages = get().messages.slice(0, -1);
+      const recentHistory = priorMessages.slice(-8).map((m) => ({
+        role: m.sender_role === "user" ? ("user" as const) : ("assistant" as const),
+        sender_name: m.sender_name,
+        content: m.content,
+      }));
+
       const remoteRes = await executeTaskOnEngine({
         prompt: trimmed,
         team_id: get().activeTeamId,
         workspace_id: activeWs?.id,
         workspace_path: folderPath || undefined,
+        session_id: get().activeWorkspaceId || "default_session",
+        conversation_history: recentHistory,
       });
 
       if (remoteRes) {

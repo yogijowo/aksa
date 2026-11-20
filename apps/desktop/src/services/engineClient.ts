@@ -415,6 +415,12 @@ export async function executeTaskOnEngine(params: {
   team_id?: string;
   workspace_id?: string;
   workspace_path?: string;
+  session_id?: string;
+  conversation_history?: Array<{
+    role: "user" | "assistant";
+    sender_name?: string;
+    content: string;
+  }>;
 }): Promise<{
   supervisor_name: string;
   reply: string;

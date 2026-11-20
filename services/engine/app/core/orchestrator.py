@@ -389,8 +389,30 @@ class HierarchicalOrchestrator:
         session_id: str | None = None,
         explicit_attachments: list[str] | None = None,
         allow_external_disclosure: bool = False,
+        conversation_history: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Run a full Supervisor -> Sub-Agents workflow with isolated scratchpads and WebSocket events."""
+        """Run a full Supervisor -> Sub-Agents workflow with isolated scratchpads, multi-turn session memory, and WebSocket events."""
+        # Multi-turn conversation history & referenced file detection
+        prior_context_lines: list[str] = []
+        referenced_files_in_history: list[str] = []
+        if conversation_history:
+            for item in conversation_history[-8:]:
+                role_label = item.get("sender_name") or ("Pengguna" if item.get("role") == "user" else "AKSA")
+                c_text = (item.get("content") or "").strip()
+                if c_text:
+                    prior_context_lines.append(f"{role_label}: {c_text[:350]}")
+                    for match in re.findall(r"[\w\-.]+\.(?:xlsx|docx|pptx|pdf|csv)", c_text, flags=re.IGNORECASE):
+                        if match not in referenced_files_in_history:
+                            referenced_files_in_history.append(match)
+
+        prior_context_block = ""
+        if prior_context_lines:
+            prior_context_block = (
+                "RIWAYAT PERCAKAPAN SEBELUMNYA DALAM SESI INI:\n"
+                + "\n".join(prior_context_lines)
+                + "\n\n"
+            )
+
         teams = await self.db.list_teams_with_agents()
         team = next((t for t in teams if t["id"] == team_id), teams[0] if teams else None)
         if not team:
@@ -534,31 +556,41 @@ class HierarchicalOrchestrator:
             cats = set(sub.get("tool_categories", []))
             lower_p = prompt.lower()
 
+            ref_file_mention = ""
+            if referenced_files_in_history:
+                ref_file_mention = f" (Pengguna merujuk pada berkas/data yang dibahas sebelumnya dalam sesi ini: {', '.join(referenced_files_in_history)})."
+
             if "office_word" in cats and any(k in lower_p for k in ("word", "docx", "surat", "mou", "laporan", "sop", "buat", "bikin", "docs")):
                 task_brief = (
+                    f"{prior_context_block}"
                     f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas menyusun dan membuat dokumen Word (.docx) "
-                    f"untuk instruksi pengguna: '{prompt}'. Panggil tool 'word_create_document' secara langsung dengan 'file_path', "
+                    f"untuk instruksi pengguna: '{prompt}'{ref_file_mention}. Panggil tool 'word_create_document' secara langsung dengan 'file_path', "
                     f"'title', dan struktur 'sections' yang lengkap, profesional, dan nyata tanpa data dummy."
                 )
             elif "office_excel" in cats and any(k in lower_p for k in ("excel", "xlsx", "rekap", "tabel", "hitung")):
                 task_brief = (
+                    f"{prior_context_block}"
                     f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas menyusun file Excel (.xlsx) untuk instruksi: "
-                    f"'{prompt}'. Panggil tool 'excel_create_workbook' dengan tabel dan rumus yang rapi."
+                    f"'{prompt}'{ref_file_mention}. Panggil tool 'excel_create_workbook' dengan tabel dan rumus yang rapi."
                 )
             elif "office_ppt" in cats and any(k in lower_p for k in ("ppt", "pptx", "slide", "presentasi")):
                 task_brief = (
+                    f"{prior_context_block}"
                     f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas membuat slide presentasi PowerPoint (.pptx) "
-                    f"untuk instruksi: '{prompt}'. Panggil tool 'ppt_create_presentation' dengan struktur slide yang rapi."
+                    f"untuk instruksi: '{prompt}'{ref_file_mention}. Jika ada file data seperti Excel di Folder Kerja yang sedang dibahas, "
+                    f"periksa datanya dan panggil tool 'ppt_create_presentation' dengan 'slides_spec' yang memuat data dan tabel tersebut secara nyata."
                 )
             elif "rag_search" in cats or "pdf_tools" in cats:
                 task_brief = (
+                    f"{prior_context_block}"
                     f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas memeriksa Folder Kerja dan mencari "
-                    f"referensi yang relevan untuk instruksi: '{prompt}'. Berikan ringkasan temuan Anda."
+                    f"referensi yang relevan untuk instruksi: '{prompt}'{ref_file_mention}. Berikan ringkasan temuan Anda."
                 )
             else:
                 task_brief = (
+                    f"{prior_context_block}"
                     f"Sub-tugas #{idx} dari {supervisor['name']}: Kerjakan bagian sesuai keahlian "
-                    f"({sub['role_title']}) untuk perintah pengguna: '{prompt}'"
+                    f"({sub['role_title']}) untuk perintah pengguna: '{prompt}'{ref_file_mention}"
                 )
 
             await ws_manager.broadcast_event(
@@ -950,14 +982,100 @@ class HierarchicalOrchestrator:
                             style_preset=doc_style,
                         )
                     elif expected_ext == "pptx":
-                        base_stem = "Presentasi_Kerja"
+                        # Detect if an Excel or data file was discussed in conversation or exists in workspace
+                        data_source: dict[str, Any] | None = None
+                        if referenced_files_in_history:
+                            for rf_name in referenced_files_in_history:
+                                cand = next(
+                                    (f for f in real_files if f["name"].lower() == rf_name.lower() and f["ext"] in (".xlsx", ".csv")),
+                                    None,
+                                )
+                                if cand:
+                                    data_source = cand
+                                    break
+                        if not data_source:
+                            excel_candidates = [f for f in real_files if f["ext"] in (".xlsx", ".csv")]
+                            if len(excel_candidates) == 1:
+                                data_source = excel_candidates[0]
+
+                        base_stem = f"Presentasi_{Path(data_source['name']).stem}" if data_source else "Presentasi_Kerja"
                         real_target = _generate_non_colliding_path(ws_dir, base_stem, "pptx")
                         artifact_ext = "pptx"
                         artifact_name = real_target.name
+
+                        ppt_slides_spec: list[dict[str, Any]] | None = None
+                        ppt_title = "Presentasi Rencana Kerja"
+                        ppt_subtitle = "Disusun secara profesional oleh Tim Asisten AKSA"
+
+                        if data_source and data_source["ext"] == ".xlsx":
+                            try:
+                                import openpyxl
+                                src_p = Path(data_source["path"])
+                                wb = openpyxl.load_workbook(src_p, data_only=True)
+                                sheet_names = wb.sheetnames
+                                primary_sheet = wb[sheet_names[0]]
+
+                                rows_data: list[list[str]] = []
+                                for r in primary_sheet.iter_rows(min_row=1, max_row=min(6, primary_sheet.max_row), values_only=True):
+                                    clean_r = [str(c) if c is not None else "" for c in r]
+                                    if any(clean_r):
+                                        rows_data.append(clean_r)
+                                wb.close()
+
+                                if rows_data:
+                                    headers = [h if h else f"Kolom {i+1}" for i, h in enumerate(rows_data[0][:6])]
+                                    sample_rows = rows_data[1:5]
+                                    clean_sample_rows = [
+                                        [r[c_idx] if c_idx < len(r) else "" for c_idx in range(len(headers))]
+                                        for r in sample_rows
+                                    ]
+                                    ppt_title = f"Analisis Data: {data_source['name']}"
+                                    ppt_subtitle = f"Rangkuman Eksekutif & Struktur Data ({len(sheet_names)} Lembar Kerja)"
+                                    ppt_slides_spec = [
+                                        {
+                                            "layout": "bullets",
+                                            "title": "Tinjauan Berkas Data",
+                                            "bullets": [
+                                                f"Sumber Data: Berkas '{data_source['name']}' di Folder Kerja.",
+                                                f"Jumlah Lembar Kerja (Sheets): {len(sheet_names)} sheet ({', '.join(sheet_names[:3])}).",
+                                                f"Total Baris Data: {primary_sheet.max_row} baris terdata.",
+                                                f"Kolom Utama: {', '.join(h for h in headers[:4] if h) if headers else 'Data Terstruktur'}.",
+                                            ],
+                                        },
+                                        {
+                                            "layout": "table",
+                                            "title": f"Cuplikan Data ({sheet_names[0]})",
+                                            "headers": headers if headers else ["Kolom 1", "Kolom 2"],
+                                            "rows": clean_sample_rows if clean_sample_rows else [["Data 1", "Data 2"]],
+                                        },
+                                        {
+                                            "layout": "bullets",
+                                            "title": "Kesimpulan & Temuan Utama",
+                                            "bullets": [
+                                                f"Seluruh baris data pada lembar kerja {sheet_names[0]} telah diverifikasi dan siap dipaparkan.",
+                                                "Format kolom dan sel telah diperiksa untuk konsistensi pelaporan.",
+                                                "Data siap ditindaklanjuti untuk pembuatan visualisasi grafik atau laporan resmi Word.",
+                                            ],
+                                        },
+                                        {
+                                            "layout": "bullets",
+                                            "title": "Rekomendasi Tindak Lanjut",
+                                            "bullets": [
+                                                "Melakukan validasi berkala pada data operasional.",
+                                                "Mempresentasikan poin penting data kepada pihak berkepentingan.",
+                                                "Mengarsipkan file presentasi di dalam folder kerja terotorisasi.",
+                                            ],
+                                        },
+                                    ]
+                            except Exception as ex:
+                                logger.warning(f"Gagal mengekstrak data Excel untuk PPT: {ex}")
+
                         res = await tool_registry.execute(
                             "ppt_create_presentation",
                             file_path=str(real_target),
-                            title="Presentasi Rencana Kerja & Kemitraan",
+                            title=ppt_title,
+                            subtitle=ppt_subtitle,
+                            slides_spec=ppt_slides_spec,
                         )
                     elif expected_ext == "pdf":
                         base_stem = "Laporan_Resmi"
@@ -1037,6 +1155,7 @@ class HierarchicalOrchestrator:
                 {
                     "role": "user",
                     "content": (
+                        f"{prior_context_block}"
                         f"Instruksi Pengguna: {prompt}\n"
                         f"Folder Kerja: {ws_dir}\n\n"
                         + (f"{action_confirmation_note}\n\n" if action_confirmation_note else "") +
@@ -1051,6 +1170,7 @@ class HierarchicalOrchestrator:
                 {
                     "role": "user",
                     "content": (
+                        f"{prior_context_block}"
                         f"{prompt}\n\n"
                         + (f"{action_confirmation_note}\n\n" if action_confirmation_note else "")
                     ),

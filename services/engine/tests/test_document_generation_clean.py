@@ -67,3 +67,81 @@ def test_select_relevant_sub_agents_targeted():
     assert "agt_3" not in selected_ids
     assert "agt_4" not in selected_ids
     assert len(selected) == 2
+
+
+@pytest.mark.asyncio
+async def test_ppt_generation_with_excel_context(tmp_path: Path):
+    import openpyxl
+    from pptx import Presentation
+
+    sandbox_manager.register_workspace(
+        WorkspacePolicy(
+            folder_path=str(tmp_path),
+            allow_read=True,
+            allow_write=True,
+            allow_execute=True,
+        )
+    )
+
+    # 1. Create a sample Excel file kk.xlsx in the workspace
+    excel_path = tmp_path / "kk.xlsx"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Rekap_Penjualan"
+    ws.append(["ID", "Nama Produk", "Kategori", "Jumlah Terjual"])
+    ws.append(["P01", "Paket Premium", "Layanan", 150])
+    ws.append(["P02", "Paket Bisnis", "Layanan", 85])
+    wb.save(excel_path)
+    wb.close()
+
+    from app.db.seed import seed_default_indonesian_team
+
+    db = DatabaseManager(tmp_path / "test_aksa_session.db")
+    await db.initialize()
+    await seed_default_indonesian_team(db)
+    await db.upsert_workspace({
+        "id": "ws_test_ppt",
+        "name": "Folder Test",
+        "folder_path": str(tmp_path),
+        "allow_read": 1,
+        "allow_write": 1,
+        "allow_execute": 0,
+    })
+
+    router = UnifiedLLMRouter(db)
+    orchestrator = HierarchicalOrchestrator(db, router)
+
+    # 2. Execute task with prior conversation history mentioning kk.xlsx
+    result = await orchestrator.execute_hierarchical_task(
+        prompt="bisa buatkan jadi presentasi ppt?",
+        workspace_id="ws_test_ppt",
+        workspace_path=str(tmp_path),
+        conversation_history=[
+            {
+                "role": "assistant",
+                "content": "Untuk mengoptimalkan data dalam kk.xlsx, saya dapat membantu menganalisis isi sel dan sheet tersebut.",
+            }
+        ],
+    )
+
+    assert result.get("status") == "success" or len(result.get("artifacts", [])) > 0
+    pptx_artifacts = [a for a in result.get("artifacts", []) if a.get("file_type") == "pptx"]
+    assert len(pptx_artifacts) >= 1
+
+    created_ppt = Path(pptx_artifacts[0]["file_path"])
+    assert created_ppt.exists()
+    prs = Presentation(str(created_ppt))
+    assert len(prs.slides) >= 3
+
+    # Check slide texts contain references to kk.xlsx or the data
+    all_slide_text = ""
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame:
+                all_slide_text += " " + shape.text_frame.text
+            elif shape.has_table:
+                for row in shape.table.rows:
+                    for cell in row.cells:
+                        all_slide_text += " " + cell.text
+
+    assert "kk.xlsx" in all_slide_text or "Rekap_Penjualan" in all_slide_text or "Nama Produk" in all_slide_text

@@ -157,6 +157,7 @@ class ExecuteTaskRequest(BaseModel):
     workspace_id: str | None = None
     workspace_path: str | None = None
     session_id: str | None = None
+    conversation_history: list[dict[str, Any]] | None = None
 
 
 async def _check_ollama_status() -> dict[str, Any]:
@@ -336,6 +337,7 @@ async def execute_hierarchical_task(req: ExecuteTaskRequest, request: Request) -
                     workspace_id=req.workspace_id,
                     workspace_path=resolved_path,
                     session_id=sess_id,
+                    conversation_history=req.conversation_history,
                 )
                 return result
             except asyncio.CancelledError:
