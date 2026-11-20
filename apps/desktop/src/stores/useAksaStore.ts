@@ -206,6 +206,17 @@ interface AksaState {
   mcpServers: MCPServerItem[];
   emergencyStopActive: boolean;
 
+  // Initial application & database hydration tracking
+  isAppReady: boolean;
+  initStepLabel: string;
+  initProgress: number;
+  initStage: {
+    engine: "pending" | "loading" | "done" | "error";
+    database: "pending" | "loading" | "done" | "error";
+    workspace: "pending" | "loading" | "done" | "error";
+  };
+  setAppReady: (ready: boolean) => void;
+
   // Real-time execution tracking
   isExecuting: boolean;
   activeAgentId: string | null;
@@ -322,6 +333,16 @@ export const useAksaStore = create<AksaState>((set, get) => ({
     },
   ],
   emergencyStopActive: false,
+
+  isAppReady: false,
+  initStepLabel: "Menghubungkan ke Mesin & Basis Data AKSA...",
+  initProgress: 15,
+  initStage: {
+    engine: "loading",
+    database: "pending",
+    workspace: "pending",
+  },
+  setAppReady: (ready) => set({ isAppReady: ready }),
 
   setActiveNav: (nav) => {
     if (typeof window !== "undefined") {
@@ -968,133 +989,174 @@ export const useAksaStore = create<AksaState>((set, get) => ({
   },
 
   syncWithBackendEngine: async () => {
-    const [
-      health,
-      remoteTeams,
-      remoteWorkspaces,
-      remoteApprovals,
-      remoteMcp,
-      tokenAnalytics,
-      remoteSettings,
-    ] = await Promise.all([
-      fetchEngineHealth(),
-      fetchAgentTeams(),
-      fetchWorkspaces(),
-      fetchHITLApprovals(),
-      fetchMCPServers(),
-      fetchTokenAnalytics(),
-      fetchSystemSettingsRemote(),
-    ]);
+    const isInitial = !get().isAppReady;
+    if (isInitial) {
+      set({
+        initProgress: 25,
+        initStepLabel: "Menghubungkan ke Mesin Layanan & Autentikasi...",
+        initStage: { engine: "loading", database: "pending", workspace: "pending" },
+      });
+    }
 
-    // Auto-upgrade legacy cramped node positions if detected in remoteTeams
-    const normalizedTeams =
-      remoteTeams && remoteTeams.length > 0
-        ? remoteTeams.map((team) => {
-            const tier1 = team.agents.filter((a) => a.parent_id !== null);
-            const isLegacyCramped =
-              tier1.length >= 2 &&
-              tier1.every((a) => a.position_y >= 240 && a.position_y <= 285);
-            if (!isLegacyCramped) return team;
-            const layoutMap = computeAutoHierarchyLayout(team.agents);
-            return {
-              ...team,
-              agents: team.agents.map((agt) => {
-                const l = layoutMap[agt.id];
-                if (!l) return agt;
-                void saveAgentUpdate(agt.id, {
-                  position_x: l.position_x,
-                  position_y: l.position_y,
-                  tier_level: l.tier_level,
-                });
-                return {
-                  ...agt,
-                  position_x: l.position_x,
-                  position_y: l.position_y,
-                  tier_level: l.tier_level,
-                };
-              }),
-            };
-          })
-        : null;
+    const minDelay = isInitial
+      ? new Promise((resolve) => setTimeout(resolve, 650))
+      : Promise.resolve();
 
-    set((state) => {
-      const mergedWorkspaces =
-        remoteWorkspaces && remoteWorkspaces.length > 0 ? remoteWorkspaces : state.workspaces;
-      const dbWsId =
-        typeof remoteSettings?.active_workspace_id === "string"
-          ? remoteSettings.active_workspace_id
-          : "";
-      const savedWsId = dbWsId || getSavedStorage("aksa_active_workspace_id", "");
-      const resolvedWsId =
-        savedWsId && mergedWorkspaces.some((w) => w.id === savedWsId)
-          ? savedWsId
-          : mergedWorkspaces.some((w) => w.id === state.activeWorkspaceId)
-          ? state.activeWorkspaceId
-          : (mergedWorkspaces[0]?.id ?? state.activeWorkspaceId);
+    try {
+      const [health, remoteSettings] = await Promise.all([
+        fetchEngineHealth(),
+        fetchSystemSettingsRemote(),
+      ]);
 
-      const nextThemeMode: ThemeMode =
-        remoteSettings?.theme_mode === "light" ||
-        remoteSettings?.theme_mode === "dark" ||
-        remoteSettings?.theme_mode === "system"
-          ? remoteSettings.theme_mode
-          : state.themeMode;
-      const nextResolvedTheme = resolveEffectiveTheme(nextThemeMode, getSystemPrefersDark());
-      const nextUiDensity: UIDensityMode =
-        remoteSettings?.ui_density === "compact" || remoteSettings?.ui_density === "comfortable"
-          ? remoteSettings.ui_density
-          : state.uiDensity;
-      const nextReducedMotion: boolean =
-        typeof remoteSettings?.reduced_motion === "boolean"
-          ? remoteSettings.reduced_motion
-          : state.reducedMotion;
-
-      if (typeof document !== "undefined") {
-        document.documentElement.setAttribute("data-theme", nextResolvedTheme);
-        document.documentElement.setAttribute("data-density", nextUiDensity);
-        document.documentElement.setAttribute("data-reduce-motion", String(nextReducedMotion));
+      if (isInitial) {
+        set({
+          initProgress: 60,
+          initStepLabel: "Menyiapkan basis data SQLite (aksa.db) & brankas kunci...",
+          initStage: { engine: "done", database: "loading", workspace: "pending" },
+        });
       }
 
-      const persistedChat = remoteSettings?.workspace_chat_state;
-      const restoredMessages =
-        state.messages.length === 0 &&
-        persistedChat &&
-        Array.isArray(persistedChat.messages) &&
-        persistedChat.messages.length > 0
-          ? (persistedChat.messages as ChatMessage[])
-          : state.messages;
-      const restoredArtifacts =
-        state.artifacts.length === 0 &&
-        persistedChat &&
-        Array.isArray(persistedChat.artifacts) &&
-        persistedChat.artifacts.length > 0
-          ? (persistedChat.artifacts as FileArtifact[])
-          : state.artifacts;
+      const [remoteTeams, remoteWorkspaces, remoteApprovals, remoteMcp, tokenAnalytics] =
+        await Promise.all([
+          fetchAgentTeams(),
+          fetchWorkspaces(),
+          fetchHITLApprovals(),
+          fetchMCPServers(),
+          fetchTokenAnalytics(),
+        ]);
 
-      return {
-        engineHealth: health,
-        themeMode: nextThemeMode,
-        resolvedTheme: nextResolvedTheme,
-        uiDensity: nextUiDensity,
-        reducedMotion: nextReducedMotion,
-        teams: normalizedTeams ?? state.teams,
-        workspaces: mergedWorkspaces,
-        activeWorkspaceId: resolvedWsId,
-        messages: restoredMessages,
-        artifacts: restoredArtifacts,
-        pendingApprovals: remoteApprovals
-          ? remoteApprovals.filter((a) => a.status === "pending")
-          : state.pendingApprovals,
-        mcpServers: remoteMcp && remoteMcp.length > 0 ? remoteMcp : state.mcpServers,
-        totalTokensUsed:
-          tokenAnalytics && tokenAnalytics.total_tokens_used !== undefined
-            ? tokenAnalytics.total_tokens_used
-            : state.totalTokensUsed,
-        totalTokensSaved:
-          tokenAnalytics && tokenAnalytics.total_tokens_saved !== undefined
-            ? tokenAnalytics.total_tokens_saved
-            : state.totalTokensSaved,
-      };
-    });
+      if (isInitial) {
+        set({
+          initProgress: 90,
+          initStepLabel: "Memuat struktur agen dan ruang kerja...",
+          initStage: { engine: "done", database: "done", workspace: "loading" },
+        });
+      }
+
+      // Auto-upgrade legacy cramped node positions if detected in remoteTeams
+      const normalizedTeams =
+        remoteTeams && remoteTeams.length > 0
+          ? remoteTeams.map((team) => {
+              const tier1 = team.agents.filter((a) => a.parent_id !== null);
+              const isLegacyCramped =
+                tier1.length >= 2 &&
+                tier1.every((a) => a.position_y >= 240 && a.position_y <= 285);
+              if (!isLegacyCramped) return team;
+              const layoutMap = computeAutoHierarchyLayout(team.agents);
+              return {
+                ...team,
+                agents: team.agents.map((agt) => {
+                  const l = layoutMap[agt.id];
+                  if (!l) return agt;
+                  void saveAgentUpdate(agt.id, {
+                    position_x: l.position_x,
+                    position_y: l.position_y,
+                    tier_level: l.tier_level,
+                  });
+                  return {
+                    ...agt,
+                    position_x: l.position_x,
+                    position_y: l.position_y,
+                    tier_level: l.tier_level,
+                  };
+                }),
+              };
+            })
+          : null;
+
+      await minDelay;
+
+      set((state) => {
+        const mergedWorkspaces =
+          remoteWorkspaces && remoteWorkspaces.length > 0 ? remoteWorkspaces : state.workspaces;
+        const dbWsId =
+          typeof remoteSettings?.active_workspace_id === "string"
+            ? remoteSettings.active_workspace_id
+            : "";
+        const savedWsId = dbWsId || getSavedStorage("aksa_active_workspace_id", "");
+        const resolvedWsId =
+          savedWsId && mergedWorkspaces.some((w) => w.id === savedWsId)
+            ? savedWsId
+            : mergedWorkspaces.some((w) => w.id === state.activeWorkspaceId)
+            ? state.activeWorkspaceId
+            : (mergedWorkspaces[0]?.id ?? state.activeWorkspaceId);
+
+        const nextThemeMode: ThemeMode =
+          remoteSettings?.theme_mode === "light" ||
+          remoteSettings?.theme_mode === "dark" ||
+          remoteSettings?.theme_mode === "system"
+            ? remoteSettings.theme_mode
+            : state.themeMode;
+        const nextResolvedTheme = resolveEffectiveTheme(nextThemeMode, getSystemPrefersDark());
+        const nextUiDensity: UIDensityMode =
+          remoteSettings?.ui_density === "compact" || remoteSettings?.ui_density === "comfortable"
+            ? remoteSettings.ui_density
+            : state.uiDensity;
+        const nextReducedMotion: boolean =
+          typeof remoteSettings?.reduced_motion === "boolean"
+            ? remoteSettings.reduced_motion
+            : state.reducedMotion;
+
+        if (typeof document !== "undefined") {
+          document.documentElement.setAttribute("data-theme", nextResolvedTheme);
+          document.documentElement.setAttribute("data-density", nextUiDensity);
+          document.documentElement.setAttribute("data-reduce-motion", String(nextReducedMotion));
+        }
+
+        const persistedChat = remoteSettings?.workspace_chat_state;
+        const restoredMessages =
+          state.messages.length === 0 &&
+          persistedChat &&
+          Array.isArray(persistedChat.messages) &&
+          persistedChat.messages.length > 0
+            ? (persistedChat.messages as ChatMessage[])
+            : state.messages;
+        const restoredArtifacts =
+          state.artifacts.length === 0 &&
+          persistedChat &&
+          Array.isArray(persistedChat.artifacts) &&
+          persistedChat.artifacts.length > 0
+            ? (persistedChat.artifacts as FileArtifact[])
+            : state.artifacts;
+
+        return {
+          isAppReady: true,
+          initProgress: 100,
+          initStepLabel: "Aplikasi dan basis data siap digunakan.",
+          initStage: { engine: "done", database: "done", workspace: "done" },
+          engineHealth: health,
+          themeMode: nextThemeMode,
+          resolvedTheme: nextResolvedTheme,
+          uiDensity: nextUiDensity,
+          reducedMotion: nextReducedMotion,
+          teams: normalizedTeams ?? state.teams,
+          workspaces: mergedWorkspaces,
+          activeWorkspaceId: resolvedWsId,
+          messages: restoredMessages,
+          artifacts: restoredArtifacts,
+          pendingApprovals: remoteApprovals
+            ? remoteApprovals.filter((a) => a.status === "pending")
+            : state.pendingApprovals,
+          mcpServers: remoteMcp && remoteMcp.length > 0 ? remoteMcp : state.mcpServers,
+          totalTokensUsed:
+            tokenAnalytics && tokenAnalytics.total_tokens_used !== undefined
+              ? tokenAnalytics.total_tokens_used
+              : state.totalTokensUsed,
+          totalTokensSaved:
+            tokenAnalytics && tokenAnalytics.total_tokens_saved !== undefined
+              ? tokenAnalytics.total_tokens_saved
+              : state.totalTokensSaved,
+        };
+      });
+    } catch (err) {
+      console.warn("[AKSA] Gagal sinkronisasi awal dengan mesin backend:", err);
+      set({
+        isAppReady: true,
+        initProgress: 100,
+        initStepLabel: "Masuk dalam mode mandiri.",
+        initStage: { engine: "error", database: "done", workspace: "done" },
+      });
+    }
   },
 
   requestSampleApproval: async () => {

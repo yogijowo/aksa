@@ -252,4 +252,19 @@ describe("useAksaStore & Siklus 16 UX/UI state management tests", () => {
     );
     expect(extractFolderDisplayName("C:\\Users\\Sari\\Proyek Dokumen\\Arsip")).toBe("Arsip");
   });
+
+  it("manages initial application loading and database hydration state", async () => {
+    useAksaStore.setState({ isAppReady: false });
+    const { isAppReady, setAppReady, syncWithBackendEngine } = useAksaStore.getState();
+
+    expect(isAppReady).toBe(false);
+    setAppReady(true);
+    expect(useAksaStore.getState().isAppReady).toBe(true);
+
+    useAksaStore.setState({ isAppReady: false });
+    await syncWithBackendEngine();
+    expect(useAksaStore.getState().isAppReady).toBe(true);
+    expect(useAksaStore.getState().initProgress).toBe(100);
+    expect(useAksaStore.getState().initStage.database).toBe("done");
+  });
 });

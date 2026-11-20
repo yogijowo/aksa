@@ -4,6 +4,7 @@ import { TopHeader } from "@/components/layout/TopHeader";
 import { ArtifactDrawer } from "@/components/layout/ArtifactDrawer";
 import { WorkspaceChatView } from "@/components/workspace/WorkspaceChatView";
 import { HITLApprovalModal } from "@/components/workspace/HITLApprovalModal";
+import { AppLoadingScreen } from "@/components/layout/AppLoadingScreen";
 import { useAksaStore } from "@/stores/useAksaStore";
 
 // Code splitting (P3-2): lazy load large modules (React Flow canvas & Feature panels)
@@ -16,6 +17,11 @@ const FeatureSectionsView = React.lazy(() =>
 
 export const App: React.FC = () => {
   const {
+    isAppReady,
+    initStepLabel,
+    initProgress,
+    initStage,
+    setAppReady,
     activeNav,
     resolvedTheme,
     themeMode,
@@ -64,12 +70,24 @@ export const App: React.FC = () => {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [toggleEmergencyStop]);
 
+  // Startup Database & Backend Hydration Loading Screen
+  if (!isAppReady) {
+    return (
+      <AppLoadingScreen
+        stepLabel={initStepLabel}
+        progress={initProgress}
+        stages={initStage}
+        onBypass={() => setAppReady(true)}
+      />
+    );
+  }
+
   return (
     <div
       data-theme={resolvedTheme}
       data-density={uiDensity}
       data-reduce-motion={String(reducedMotion)}
-      className="flex h-screen w-screen overflow-hidden bg-[#191918] text-[#ECECEB]"
+      className="flex h-screen w-screen overflow-hidden bg-[#191918] text-[#ECECEB] animate-in fade-in duration-300"
     >
       {/* Global Human-in-the-Loop Confirmation Modal */}
       <HITLApprovalModal />
