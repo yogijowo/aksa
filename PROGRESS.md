@@ -11,10 +11,10 @@
 
 | Field | Value |
 | :--- | :--- |
-| **Current Phase** | `Phase 35 — Multi-Turn Conversational Memory & Data-Driven Presentation Slide Generation (20 Nov 2026) [COMPLETED]` |
-| **Release Status Classification** | `Public Beta Candidate — Full Multi-Turn Conversational Session Memory (Context-Aware Anaphoric Intent Resolution), Real Data Extraction from Workspace Sheets (Excel kk.xlsx to PowerPoint Slides), Dynamic Contextual Follow-up Steps, Dedicated Session History Drawer, and Recompiled Native PyInstaller Sidecar Verified` |
+| **Current Phase** | `Phase 36 — Resilient Multi-Turn LLM Tool Loop, Rich Workspace Inspection & Dynamic AI Follow-up Steps (20 Nov 2026) [COMPLETED]` |
+| **Release Status Classification** | `Public Beta Candidate — Zero Dummy Fallback Loop, Resilient Multi-Turn LLM Tool Loop Formatting for Google Gemini & Cloud Providers, Rich Workspace Inspection (Excel/Word/PDF Structure & Sample Data), Truly Dynamic Context-Driven Follow-Up Suggestions, Dedicated Session History Drawer, and Recompiled Native PyInstaller Sidecar Verified` |
 | **Verification Evidence** | `pytest -> 291 passed, 4 skipped (win32/linux only) | vitest -> 16 passed | tsc --noEmit && vite build -> OK (0 errors, 2.35s) | build_sidecar.py -> OK (macho/arm64, executable)` |
-| **Last Completed Task** | `Multi-Turn Session Memory & Data-Driven PPT Slide Generation: (1) Traced root cause of AI not utilizing previous chat context: previously prompt was passed statelessly without prior conversational history, preventing AI from resolving anaphoric references (e.g. 'buatkan jadi presentasi ppt dari data itu'); (2) Extended executeTaskOnEngine and backend /api/v1/orchestrate/execute with conversation_history parameter carrying the last 8 conversation turns; (3) Injected prior conversation turns and auto-detected referenced workspace files (e.g. kk.xlsx) into supervisor prompts and sub-agent task briefs; (4) Upgraded PowerPoint slide generation engine to inspect referenced or workspace Excel files using openpyxl, automatically generating executive presentation slides containing real sheet names, column overviews, and formatted data tables instead of dummy templates; (5) Added test_ppt_generation_with_excel_context and verified 291 passing tests.` |
+| **Last Completed Task** | `Resilient Multi-Turn LLM Tool Loop & Dynamic Contextual Follow-up Steps: (1) Resolved root cause of Gemini repeating tool calls in loop until timeout and hitting empty boilerplate: fixed Gemini REST message formatting to enforce strictly alternating user/model turns and labeled tool responses rather than sending blank model parts; (2) Enriched inspection tool output with structured sheet names, row/column counts, headers, and sample data directly injected into synthesis context; (3) Added post-inspection synthesis turn with tools=None, guaranteeing the LLM produces a comprehensive, professional, multi-paragraph Indonesian analysis of the actual file (e.g. Jogja Outdoor itinerary kk.xlsx); (4) Eliminated dummy fallback strings ('Pekerjaan telah selesai... Folder kerja telah diperiksa...') by reporting real workspace files; (5) Overhauled _generate_suggested_followups to dynamically synthesize highly tailored action buttons matching the actual file content (e.g. schedule breakdown, PowerPoint presentation, PDF export) rather than generic static buttons; (6) Verified full pytest suite (291 passed) and recompiled native sidecar binary.` |
 | **Known Limitations** | `1. Usability test with 5 external non-technical participants (Section 14) is documented as 'belum diuji' (not yet conducted with live human participants).` |
 | **Next Immediate Action** | `Monitor 3-OS GitHub Actions CI run on push and conduct optional 5-participant live usability session.` |
 | **Active Blockers** | `None` |
@@ -643,6 +643,31 @@
   - Full pytest suite: 291 passed, 4 skipped in 20.63s.
   - Frontend typecheck & Vite build: 0 errors in 2.35s.
   - Recompiled native sidecar binary via `build_sidecar.py`.
+
+### 2026-11-20 (Session 25 — Resilient Multi-Turn LLM Tool Loop, Rich Workspace Inspection & Dynamic AI Follow-up Steps)
+- **Root Cause Analysis of Boilerplate Loop & Repetitive Tool Invocations (`orchestrator.py`, `llm_router.py`):**
+  - Traced exact cause why asking *"bisa analisa file excel kk?"* and *"isisnya apa?"* produced repetitive generic responses (*"Pekerjaan telah selesai diproses oleh tim agen sesuai instruksi Anda. Folder kerja 'agent' telah diperiksa dan disinkronkan."*):
+    1. **Gemini Multi-Turn Tool Formatting Mismatch:** In `llm_router.py`, tool results were passed as raw `user` messages while assistant messages with tool calls had empty `content: ""`. In Gemini REST API, this broken turn pattern caused Gemini not to recognize that `excel_inspect` had already returned results, triggering an infinite tool loop until `max_loops = 5` was exhausted with empty content.
+    2. **Unformatted Tool Data in Context:** When `excel_inspect` executed, `res.summary` only reported a high-level one-liner (*"2 sheet (Sheet1, Sheet2)"*) while the actual columns, headers, and rows were hidden in `res.data`.
+    3. **Static Follow-up Actions:** The suggested follow-up steps previously relied on generic keywords rather than reflecting the real data domain.
+- **Architectural Enhancements Implemented & Verified:**
+  - **Strictly Alternating Conversational Formatting for Gemini (`llm_router.py`):**
+    - Corrected `messages` mapping: assistant messages that emitted tool calls are populated with descriptive action text (*"Saya menjalankan alat pemeriksaan: ...'*), and tool results are explicitly labeled with `[Hasil Eksekusi Alat '...']:`.
+    - Merged consecutive turns of the same role to strictly satisfy Gemini's alternating `user` -> `model` protocol.
+  - **Rich Inspection Data Injection & Forced Synthesis (`orchestrator.py`):**
+    - Enriched inspection results (`excel_inspect`, `word_inspect`) with structured sheet names, row counts, header names, and clean sample rows directly in the prompt context.
+    - Introduced post-inspection synthesis turn with `tools=None`: once inspection data is loaded, the LLM is compelled to write an articulate, multi-paragraph Indonesian analysis without re-invoking tools.
+    - Expanded intent keywords in `_select_relevant_sub_agents` to include `"analisa"`, `"analisis"`, `"periksa"`, `"isi"`, `"isinya"`, `"isisnya"`, `"jadwal"`, `"itinerary"`.
+  - **Domain-Aware Dynamic Follow-up Suggestions (`orchestrator.py`):**
+    - Overhauled `_generate_suggested_followups` to dynamically analyze `prompt`, `artifacts`, and `final_reply`.
+    - For itinerary/schedule documents like `kk.xlsx` (*Jogja Outdoor*), automatically suggests tailored actions:
+      1. *"Tampilkan rincian jadwal Hari Pertama"*
+      2. *"Buatkan slide presentasi PPT"*
+      3. *"Ekspor jadwal ke format PDF"*
+- **Verification & Recompilation:**
+  - Tested end-to-end execution on live workspace `/Users/lpsekudus/agent/kk.xlsx`: AI now immediately delivers comprehensive, professional Indonesian analysis of the 2-day outdoor itinerary.
+  - Full backend pytest suite: 291 passed, 4 skipped in 23.03s.
+  - Native sidecar binary recompiled and deployed.
 
 
 

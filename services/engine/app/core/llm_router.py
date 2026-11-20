@@ -612,14 +612,40 @@ class UnifiedLLMRouter:
                     "Content-Type": "application/json",
                 }
                 system_text = "\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "system")
-                user_contents = []
+                user_contents: list[dict[str, Any]] = []
                 for m in messages:
-                    if m.get("role") == "system":
+                    m_role = m.get("role")
+                    if m_role == "system":
                         continue
-                    role = "user" if m.get("role") in ("user", "tool") else "model"
-                    user_contents.append({"role": role, "parts": [{"text": str(m.get("content") or "")}]})
+                    m_text = str(m.get("content") or "").strip()
+
+                    if m_role in ("assistant", "model"):
+                        gemini_role = "model"
+                        if not m_text and m.get("tool_calls"):
+                            tc_names = [tc.get("function", {}).get("name", "alat") for tc in m.get("tool_calls", [])]
+                            m_text = f"Saya menjalankan alat pemeriksaan: {', '.join(tc_names)}."
+                        elif not m_text:
+                            m_text = "Memproses permintaan..."
+                    elif m_role == "tool":
+                        gemini_role = "user"
+                        tool_name = m.get("name") or "alat"
+                        m_text = f"[Hasil Eksekusi Alat '{tool_name}']:\n{m_text}"
+                    else:
+                        gemini_role = "user"
+                        if not m_text:
+                            m_text = "Halo"
+
+                    # Ensure strictly alternating roles: if same role as previous, merge text
+                    if user_contents and user_contents[-1]["role"] == gemini_role:
+                        user_contents[-1]["parts"][0]["text"] += f"\n\n{m_text}"
+                    else:
+                        user_contents.append({"role": gemini_role, "parts": [{"text": m_text}]})
+
                 if not user_contents:
                     user_contents.append({"role": "user", "parts": [{"text": "Halo"}]})
+                # Ensure the conversation starts with user turn
+                if user_contents and user_contents[0]["role"] != "user":
+                    user_contents.insert(0, {"role": "user", "parts": [{"text": "Mulai instruksi."}]})
 
                 if attachments and user_consent_granted:
                     for att in attachments:

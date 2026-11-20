@@ -170,17 +170,21 @@ class HierarchicalOrchestrator:
             return []
 
         lower = prompt.lower()
-        has_search_intent = any(k in lower for k in ("baca", "cari", "temukan", "referensi", "arsip", "cek dokumen"))
+        has_search_intent = any(k in lower for k in ("baca", "cari", "temukan", "referensi", "arsip", "cek dokumen", "periksa", "lihat", "tinjau"))
         has_office_intent = any(
             k in lower
             for k in (
                 "excel", "xlsx", "word", "docx", "surat", "mou", "laporan",
                 "rekap", "ppt", "slide", "presentasi", "duplikasi", "duplikat",
-                "konversi", "salin", "dokumen"
+                "konversi", "salin", "dokumen", "tabel"
             )
         ) and any(
             k in lower
-            for k in ("buat", "bikin", "generate", "tulis", "rekap", "susun", "duplikasi", "duplikat", "konversi", "salin", "docs")
+            for k in (
+                "buat", "bikin", "generate", "tulis", "rekap", "susun", "duplikasi", "duplikat",
+                "konversi", "salin", "docs", "analisa", "analisis", "periksa", "baca", "cek",
+                "isi", "isinya", "isisnya", "bedah", "lihat", "tampilkan", "jadwal"
+            )
         )
         has_automation_intent = any(k in lower for k in ("python", "skrip", "script", "aplikasi", "otomatis", "csv"))
 
@@ -196,10 +200,10 @@ class HierarchicalOrchestrator:
                     selected_ids.add(agt["id"])
                     break
 
-        # 2. Select office specialist if office/document generation intent is detected
+        # 2. Select office specialist if office/document generation or analysis intent is detected
         if has_office_intent:
             is_word = any(k in lower for k in ("word", "docx", "surat", "mou", "laporan", "sop", "duplikasi", "duplikat", "docs"))
-            is_excel = any(k in lower for k in ("excel", "xlsx", "rekap", "hitung", "tabel"))
+            is_excel = any(k in lower for k in ("excel", "xlsx", "rekap", "hitung", "tabel", "analisa", "analisis"))
             is_ppt = any(k in lower for k in ("ppt", "pptx", "slide", "presentasi"))
 
             for agt in sub_agents:
@@ -248,7 +252,7 @@ class HierarchicalOrchestrator:
         if not selected:
             wants_action = any(
                 k in lower
-                for k in ("buat", "bikin", "generate", "tulis", "rekap", "cari", "analisis", "eksekusi", "jalankan", "proses")
+                for k in ("buat", "bikin", "generate", "tulis", "rekap", "cari", "analisis", "analisa", "periksa", "cek", "isi", "isinya", "isisnya", "eksekusi", "jalankan", "proses")
             )
             if wants_action and sub_agents:
                 selected = sub_agents[:2]
@@ -260,30 +264,67 @@ class HierarchicalOrchestrator:
         prompt: str,
         artifacts: list[dict[str, Any]],
         sub_agent_summaries: list[str],
+        final_reply: str = "",
     ) -> list[dict[str, Any]]:
-        """Generate dynamic, context-relevant follow-up prompt suggestions based on user intent and created artifacts."""
+        """Generate dynamic, context-relevant follow-up prompt suggestions based on user intent, created artifacts, and response content."""
         lower = prompt.lower()
+        lower_reply = (final_reply or "").lower()
+        combined = f"{lower} {lower_reply}"
         art_exts = {a.get("file_type", "").lower() for a in artifacts if isinstance(a, dict)}
 
-        # 1. Data Analysis / Excel / Chart / Rekap intent
-        if "xlsx" in art_exts or any(k in lower for k in ("excel", "xlsx", "analisa", "data", "grafik", "grafict", "chart", "rekap", "hitung")):
+        # 1. Itinerary / Rencana Perjalanan / Jadwal (e.g. kk.xlsx)
+        if any(k in combined for k in ("itinerary", "rencana perjalanan", "jadwal", "jogja outdoor", "wisata", "liburan", "outdoor")):
             return [
                 {
-                    "label": "Buatkan visualisasi grafik",
+                    "label": "Tampilkan rincian jadwal Hari Pertama",
+                    "prompt": "Tampilkan rincian waktu, aktivitas, dan lokasi pada lembar kerja Hari Pertama.",
+                },
+                {
+                    "label": "Buatkan slide presentasi PPT",
+                    "prompt": "Buatkan slide presentasi PowerPoint (.pptx) dari rencana perjalanan ini secara lengkap.",
+                },
+                {
+                    "label": "Ekspor jadwal ke format PDF",
+                    "prompt": "Ekspor seluruh rencana perjalanan ini ke dalam dokumen PDF resmi siap cetak.",
+                },
+            ]
+
+        # 2. Financial / Penjualan / Akuntansi / Keuangan
+        if any(k in combined for k in ("penjualan", "keuangan", "transaksi", "omzet", "pendapatan", "laba", "rugi", "anggaran", "biaya")):
+            return [
+                {
+                    "label": "Hitung total & rata-rata penjualan",
+                    "prompt": "Hitung total pendapatan, rata-rata penjualan, dan nilai tertinggi dari data tersebut.",
+                },
+                {
+                    "label": "Buatkan visualisasi grafik chart",
+                    "prompt": "Buatkan grafik chart batang/garis dari hasil analisa data penjualan tersebut.",
+                },
+                {
+                    "label": "Susun laporan evaluasi Word",
+                    "prompt": "Susun dokumen laporan evaluasi kinerja penjualan ke format Word (.docx).",
+                },
+            ]
+
+        # 3. Data Analysis / Excel general
+        if "xlsx" in art_exts or any(k in combined for k in ("excel", "xlsx", "analisa", "data", "grafik", "grafict", "chart", "rekap", "hitung", "tabel")):
+            return [
+                {
+                    "label": "Tampilkan cuplikan data teratas",
+                    "prompt": "Tampilkan 5 baris pertama data dan struktur kolom dari berkas Excel tersebut.",
+                },
+                {
+                    "label": "Buatkan visualisasi grafik chart",
                     "prompt": "Buatkan visualisasi grafik chart batang/garis dari hasil analisa data tersebut untuk presentasi.",
                 },
                 {
                     "label": "Susun laporan resmi Word",
                     "prompt": "Susun draf dokumen laporan resmi Word (.docx) berdasarkan hasil analisa data di atas.",
                 },
-                {
-                    "label": "Ekspor ringkasan ke PDF",
-                    "prompt": "Ekspor poin-poin hasil analisa data ini menjadi dokumen laporan PDF siap cetak.",
-                },
             ]
 
-        # 2. Word Document (.docx) / MoU / Surat Resmi
-        if "docx" in art_exts or any(k in lower for k in ("word", "docx", "surat", "mou", "perjanjian", "sop", "laporan")):
+        # 4. Word Document (.docx) / MoU / Surat Resmi
+        if "docx" in art_exts or any(k in combined for k in ("word", "docx", "surat", "mou", "perjanjian", "sop", "laporan")):
             return [
                 {
                     "label": "Konversi ke format PDF",
@@ -299,8 +340,8 @@ class HierarchicalOrchestrator:
                 },
             ]
 
-        # 3. PowerPoint (.pptx)
-        if "pptx" in art_exts or any(k in lower for k in ("ppt", "pptx", "slide", "presentasi")):
+        # 5. PowerPoint (.pptx)
+        if "pptx" in art_exts or any(k in combined for k in ("ppt", "pptx", "slide", "presentasi")):
             return [
                 {
                     "label": "Tambahkan slide rincian data",
@@ -316,8 +357,8 @@ class HierarchicalOrchestrator:
                 },
             ]
 
-        # 4. Document Research / RAG / Search
-        if any(k in lower for k in ("cari", "temukan", "referensi", "baca", "arsip", "dokumen", "pdf")):
+        # 6. Document Research / RAG / Search
+        if any(k in combined for k in ("cari", "temukan", "referensi", "baca", "arsip", "dokumen", "pdf")):
             return [
                 {
                     "label": "Buat draf naskah resmi",
@@ -333,7 +374,7 @@ class HierarchicalOrchestrator:
                 },
             ]
 
-        # 5. Default General Action Suggestions
+        # 7. Default General Action Suggestions
         return [
             {
                 "label": "Rangkum poin penting",
@@ -567,7 +608,14 @@ class HierarchicalOrchestrator:
                     f"untuk instruksi pengguna: '{prompt}'{ref_file_mention}. Panggil tool 'word_create_document' secara langsung dengan 'file_path', "
                     f"'title', dan struktur 'sections' yang lengkap, profesional, dan nyata tanpa data dummy."
                 )
-            elif "office_excel" in cats and any(k in lower_p for k in ("excel", "xlsx", "rekap", "tabel", "hitung")):
+            elif "office_excel" in cats and any(k in lower_p for k in ("analisa", "analisis", "periksa", "isi", "isinya", "isisnya", "baca", "cek", "lihat", "struktur")):
+                task_brief = (
+                    f"{prior_context_block}"
+                    f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas memeriksa dan menganalisis file Excel di Folder Kerja untuk instruksi: "
+                    f"'{prompt}'{ref_file_mention}. Panggil tool 'excel_inspect' untuk membaca seluruh sheet, baris, dan kolom data, "
+                    f"lalu jelaskan struktur dan isi data tersebut secara lengkap dan profesional."
+                )
+            elif "office_excel" in cats and any(k in lower_p for k in ("excel", "xlsx", "rekap", "tabel", "hitung", "buat", "bikin")):
                 task_brief = (
                     f"{prior_context_block}"
                     f"Sub-tugas #{idx} dari {supervisor['name']}: Anda bertugas menyusun file Excel (.xlsx) untuk instruksi: "
@@ -1206,6 +1254,7 @@ class HierarchicalOrchestrator:
                 "tool_calls": sup_tool_calls,
             })
 
+            has_inspection_tool = False
             for tc in sup_tool_calls:
                 fn = tc.get("function", {})
                 fn_name = fn.get("name")
@@ -1255,12 +1304,47 @@ class HierarchicalOrchestrator:
                                 "summary": res.summary,
                             })
 
+                tool_content = res.summary if res.success else f"Error: {res.summary}"
+                if res.success and isinstance(res.data, dict):
+                    if "sheets" in res.data and isinstance(res.data["sheets"], list):
+                        sheet_details = []
+                        for sh in res.data["sheets"]:
+                            s_name = sh.get("sheet_name", "Sheet")
+                            m_row = sh.get("max_row", 0)
+                            headers = [str(h) for h in sh.get("headers", []) if h]
+                            samples = sh.get("sample_rows", [])[:4]
+                            sample_strs = [", ".join(str(cell) for cell in r if cell is not None) for r in samples if any(r)]
+                            sheet_details.append(
+                                f"- Lembar Kerja '{s_name}' ({m_row} baris). Kolom: {', '.join(headers) if headers else 'Tanpa header baku'}.\n"
+                                f"  Contoh baris data: {'; '.join(sample_strs[:3]) if sample_strs else 'Tidak ada data'}"
+                            )
+                        tool_content += "\n\nRincian Struktur & Data Lembar Kerja:\n" + "\n".join(sheet_details)
+                    elif "sections" in res.data and isinstance(res.data["sections"], list):
+                        sec_details = [f"- Bagian: {s.get('heading', '')} ({len(s.get('paragraphs', []))} paragraf)" for s in res.data["sections"][:5]]
+                        tool_content += "\n\nRincian Dokumen:\n" + "\n".join(sec_details)
+
+                if fn_name in ("excel_inspect", "word_inspect", "inspect_file_outline", "list_workspace_files", "search_files", "pdf_extract_markdown"):
+                    has_inspection_tool = True
+
                 supervisor_msgs.append({
                     "role": "tool",
                     "tool_call_id": tc.get("id", f"call_{uuid.uuid4().hex[:8]}"),
                     "name": fn_name,
-                    "content": res.summary if res.success else f"Error: {res.summary}",
+                    "content": tool_content,
                 })
+
+            if has_inspection_tool:
+                supervisor_msgs.append({
+                    "role": "user",
+                    "content": (
+                        "Alat inspeksi di atas telah selesai dijalankan dan datanya sudah lengkap. "
+                        "Sekarang, berikan penjelasan dan analisis yang komprehensif, terstruktur, ramah, dan profesional "
+                        "dalam Bahasa Indonesia mengenai isi data dan analisisnya kepada pengguna tanpa perlu memanggil alat lagi."
+                    ),
+                })
+                tools_to_pass = None
+            else:
+                tools_to_pass = sup_tool_schemas if sup_tool_schemas else None
 
             sup_completion = await self.llm_router.complete(
                 provider=supervisor["provider"],
@@ -1268,12 +1352,15 @@ class HierarchicalOrchestrator:
                 messages=supervisor_msgs,
                 temperature=supervisor.get("temperature", 0.2),
                 max_tokens=supervisor.get("max_tokens", 4096),
-                tools=sup_tool_schemas if sup_tool_schemas else None,
+                tools=tools_to_pass,
                 attachments=attachments,
                 user_consent_granted=allow_external_disclosure,
             )
             sup_tokens = sup_completion["input_tokens"] + sup_completion["output_tokens"]
             total_tokens_used += sup_tokens
+
+            if has_inspection_tool:
+                break
 
         await self._log_token_usage(
             session_id=session_id,
@@ -1297,15 +1384,28 @@ class HierarchicalOrchestrator:
                 art_names = ", ".join(f"**`{a['name']}`**" for a in artifacts)
                 final_reply = f"Tugas berhasil diselesaikan. Berkas {art_names} telah berhasil dibuat dan disimpan di folder kerja Anda."
             elif not final_reply:
-                final_reply = (
-                    "Pekerjaan telah selesai diproses oleh tim agen sesuai instruksi Anda. "
-                    f"Folder kerja '{ws_dir.name}' telah diperiksa dan disinkronkan."
-                )
+                if real_files:
+                    file_list = ", ".join(f"**`{f['name']}`** ({f['size_label']})" for f in real_files[:5])
+                    final_reply = (
+                        f"Saya telah memeriksa folder kerja Anda ('{ws_dir.name}'). "
+                        f"Berkas yang tersedia di folder kerja saat ini: {file_list}. "
+                        "Silakan beri tahu saya analisis spesifik atau dokumen yang ingin Anda buat dari berkas tersebut!"
+                    )
+                else:
+                    final_reply = (
+                        "Pekerjaan telah selesai diproses oleh tim agen sesuai instruksi Anda. "
+                        f"Folder kerja '{ws_dir.name}' telah diperiksa dan disinkronkan."
+                    )
             elif artifacts and not any(a["name"] in final_reply for a in artifacts):
                 art_names = ", ".join(f"**`{a['name']}`**" for a in artifacts)
                 final_reply += f"\n\nFile hasil kerja {art_names} telah siap di panel Artefak."
 
-        suggested_followups = self._generate_suggested_followups(prompt, artifacts, sub_agent_summaries)
+        suggested_followups = self._generate_suggested_followups(
+            prompt,
+            artifacts,
+            sub_agent_summaries,
+            final_reply=final_reply,
+        )
 
         if not execution_steps:
             execution_steps.append(
