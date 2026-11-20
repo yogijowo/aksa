@@ -1525,9 +1525,8 @@ async def set_system_root_dir(req: SetRootDirRequest) -> dict[str, Any]:
 
 @api_router.get("/models/discovered")
 async def get_discovered_models() -> dict[str, Any]:
-    """Return live or cached models discovered across active providers."""
-    keys = await llm_router.get_saved_api_keys()
-    discovered = await model_discovery_service.discover_all_active_providers(keys)
+    """Return cached or baseline models across providers without eagerly unlocking the OS Keychain on page load."""
+    discovered = await model_discovery_service.discover_all_active_providers({})
     serialized = {prov: [m.model_dump() for m in m_list] for prov, m_list in discovered.items()}
     return {"providers": serialized}
 

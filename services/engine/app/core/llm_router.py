@@ -212,8 +212,9 @@ class UnifiedLLMRouter:
             await self.db.delete_credential_metadata(provider)
             self._connection_test_results.pop(provider, None)
 
-        keys = await self.get_saved_api_keys()
-        return {p["id"]: bool(keys.get(p["id"])) for p in SUPPORTED_PROVIDERS if not p["is_local"]}
+        meta_rows = await self.db.list_credentials_metadata()
+        configured_set = {r.get("provider") for r in meta_rows if r.get("provider")}
+        return {p["id"]: (p["id"] in configured_set) for p in SUPPORTED_PROVIDERS if not p["is_local"]}
 
     async def revoke_api_key(self, provider: str) -> bool:
         """Revoke and delete a provider API key from OS Credential Vault and SQLite metadata."""

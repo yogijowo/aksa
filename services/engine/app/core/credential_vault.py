@@ -486,25 +486,30 @@ class CredentialVault:
         if credential_ref in self._memory_cache:
             return self._memory_cache[credential_ref]
 
-        # 1. Check OS Keyring
-        val = self._get_from_keyring(credential_ref)
-        if val is not None:
-            self._memory_cache[credential_ref] = val
-            return val
-
-        # 2. Check secure CSPRNG OS vault if key exists
-        if self.fallback_vault_file.exists():
+        # 1. If entry is stored in local encrypted CSPRNG OS vault (os_secure_file_vault),
+        # decrypt it directly without triggering an unnecessary OS Keychain modal prompt.
+        if self.fallback_vault_file.exists() and (
+            self.os_key_file.exists()
+            or self.dpapi_key_file.exists()
+            or self._get_active_master_key() is not None
+        ):
             try:
-                key = self._get_or_create_os_vault_key()
                 entries = self._load_fallback_entries()
                 entry = entries.get(credential_ref)
                 if entry:
+                    key = self._get_or_create_os_vault_key()
                     decrypted = self._aesgcm_decrypt(entry, key)
                     if decrypted is not None:
                         self._memory_cache[credential_ref] = decrypted
                         return decrypted
             except Exception:
                 pass
+
+        # 2. Check OS Keyring (for entries stored in native OS Keychain / Credential Manager)
+        val = self._get_from_keyring(credential_ref)
+        if val is not None:
+            self._memory_cache[credential_ref] = val
+            return val
 
         # 3. Check legacy metadata fallback exclusively for reading un-migrated secrets
         if self.fallback_vault_file.exists():

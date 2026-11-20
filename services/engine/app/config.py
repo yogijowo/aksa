@@ -33,6 +33,11 @@ def get_default_appdata_dir() -> Path:
     if env_override:
         return Path(env_override).expanduser().resolve()
 
+    if "pytest" in sys.modules or os.environ.get("AKSA_TESTING") == "1":
+        import tempfile
+
+        return (Path(tempfile.gettempdir()) / "aksa_pytest_appdata").resolve()
+
     if sys.platform == "win32":
         base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
         return base / "com.aksa.desktop"
