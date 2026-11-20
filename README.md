@@ -6,7 +6,7 @@
 
 # AKSA
 ### Asisten Kerja &amp; Sistem Automasi — AI Desktop Operating System &amp; Digital Headquarters
-*(Hierarchical Multi-Agent Team, Cross-Platform Desktop GUI &amp; Linux Headless CLI, Office Engine, Autonomous Scheduler &amp; Enterprise Security Baseline)*
+*(Hierarchical Multi-Agent Team, Distributed Server-Client Topology, Office Engine, Autonomous Scheduler &amp; Enterprise Security Baseline)*
 
 <p align="center">
   <a href="./README.en.md"><img src="https://img.shields.io/badge/Read_in-English-D97757?style=for-the-badge" alt="English Documentation"></a>
@@ -15,15 +15,16 @@
   <img src="https://img.shields.io/badge/Audit_Keamanan-Siklus_14_Lolos_100%25-10B981?style=for-the-badge" alt="Security Audit Cycle 14">
   <img src="https://img.shields.io/badge/GUI-Windows_%7C_macOS_%7C_Linux-21211F?style=for-the-badge" alt="Desktop GUI">
   <img src="https://img.shields.io/badge/CLI_&_Server-Linux_Headless_Daemon-21211F?style=for-the-badge" alt="Linux CLI Headless">
+  <img src="https://img.shields.io/badge/Klien_Mobile-Roadmap_Android_&_iOS-21211F?style=for-the-badge" alt="Mobile Client Roadmap">
   <img src="https://img.shields.io/badge/Pengujian-325_Passed-10B981?style=for-the-badge" alt="325 Tests Passed">
 </p>
 
 <p align="center">
-  <b>Sistem operasi kerja AI lokal yang beroperasi langsung di komputer Anda — mendukung antarmuka Desktop GUI (Windows, macOS, Linux) dan mode Headless Server / CLI di Linux — dengan tim agen otonom bertingkat, otomatisasi dokumen Office nyata, kendali jarak jauh Telegram, dan isolasi privasi lokal 100%.</b><br>
+  <b>Sistem operasi kerja AI lokal yang beroperasi langsung di komputer Anda — mendukung arsitektur Server-Client terdistribusi (Desktop GUI Windows/macOS/Linux, Server Headless CLI Linux 24/7, dan Klien Mobile Android/iOS mendatang) — dengan tim agen otonom bertingkat, otomatisasi dokumen Office nyata, gateway kendali jarak jauh multi-kanal, dan isolasi privasi lokal 100%.</b><br>
   AKSA menghubungkan model AI tercanggih (cloud maupun 100% offline lokal) dengan file kerja, spreadsheet, jadwal rutin, dan aplikasi harian Anda tanpa pernah membocorkan data pribadi atau melakukan tindakan berisiko tanpa izin eksplisit Anda.
 </p>
 
-[Visi & Arah Masa Depan](#-visi-aksa-akan-menjadi-apa-ke-depan) • [Posisi & Skor Kematangan Saat Ini](#-posisi-status--skor-kematangan-saat-ini-v002) • [Fitur Super Power Masa Depan](#-fitur-super-power-aksa-ekspansi-strategis) • [Fitur Utama](#-fitur-utama) • [Dukungan Multi-Platform](#-dukungan-multi-platform-gui--linux-headless-cli) • [Arsitektur Sistem](#-arsitektur-sistem-aksa) • [Peta Jalan Pengembangan](#-peta-jalan-pengembangan-roadmap) • [Panduan Memulai](#-panduan-memulai-cepat-quickstart) • [Dokumentasi Lengkap](#-dokumentasi-lengkap--spesifikasi-domain)
+[Visi & Arah Masa Depan](#-visi-aksa-akan-menjadi-apa-ke-depan) • [Posisi & Skor Kematangan Saat Ini](#-posisi-status--skor-kematangan-saat-ini-v002) • [Topologi Server & Klien](#-topologi-arsitektur-aksa-server--dedicated-clients) • [Pusat Akses Jarak Jauh Multi-Kanal](#-pusat-akses-jarak-jauh-multi-kanal-omni-channel-gateway) • [Inovasi Arsitektur & Kapabilitas Inti](#-inovasi-arsitektur--kapabilitas-inti-aksa) • [Fitur Utama Saat Ini](#-fitur-utama-saat-ini) • [Peta Jalan Pengembangan (Roadmap)](#-peta-jalan-pengembangan-roadmap) • [Panduan Memulai Cepat](#-panduan-memulai-cepat-quickstart) • [Dokumentasi Lengkap](#-dokumentasi-lengkap--spesifikasi-domain)
 
 <br>
 
@@ -33,7 +34,7 @@
 
 ---
 
-## Visi: AKSA Akan Menjadi Apa ke Depan?
+## 🏛️ Visi: AKSA Akan Menjadi Apa ke Depan?
 
 Mayoritas asisten AI saat ini hanya berbentuk jendela *chat* pasif di browser web yang terpisah dari struktur berkas di komputer Anda dan melupakan konteks pekerjaan segera setelah jendela ditutup. Sebaliknya, agen otomasi yang diberi kebebasan tanpa pagar pembatas berisiko merusak sistem operasi atau membocorkan dokumen rahasia.
 
@@ -49,12 +50,12 @@ Mayoritas asisten AI saat ini hanya berbentuk jendela *chat* pasif di browser we
 │ Denah kantor 2.5D visual│ Menjalankan tugas rutin │ Terhubung langsung ke   │
 │ interaktif; agen tampak │ berkala (Cron & bahasa  │ Google Workspace (Drive,│
 │ bekerja di meja, rapat, │ alami) dengan konfirmasi│ Sheets, Docs, Calendar, │
-│ santai, atau butuh izin │ multi-channel (Desktop  │ Gmail) & publikasi medsos│
-│ pengguna secara nyata.  │ & Telegram).            │ (LinkedIn, X, Meta).    │
+│ santai, atau butuh izin │ multi-channel (Desktop, │ Gmail) & publikasi medsos│
+│ pengguna secara nyata.  │ Mobile, & Chat Gateway).│ (LinkedIn, X, Meta).    │
 ├─────────────────────────┴─────────────────────────┴─────────────────────────┤
 │                          MESIN EKSEKUSI LOKAL                               │
 │  • Automasi Office Nyata (Excel rumus & grafik, Word naskah dinas, PPT, PDF)│
-│  • Beroperasi Lintas Platform: GUI (Windows, macOS, Linux) & CLI Linux      │
+│  • Topologi Server-Client: GUI Desktop, Server Headless CLI, & Klien Mobile │
 │  • Perlindungan Sandbox Path Jail & Pencadangan Otomatis (.aksa_backup/)    │
 │  • Multi-Model Router (Gemini, Claude, GPT, DeepSeek, Ollama, LM Studio)    │
 │  • Kerahasiaan 100% Lokal (Zero Silent Cloud Fallback & Enkripsi DPAPI/Keyring)│
@@ -62,20 +63,20 @@ Mayoritas asisten AI saat ini hanya berbentuk jendela *chat* pasif di browser we
 ```
 
 1. **Rekan Kerja Visual, Bukan Sekadar Chatbot:** Pengguna dapat melihat representasi visual interaktif tempat agen-agen AI bekerja, mengetahui secara instan siapa yang sedang menganalisis data, siapa yang menyusun laporan, dan siapa yang membutuhkan persetujuan Anda.
-2. **Bekerja Proaktif Secara Mandiri:** Berikan tugas rutin satu kali (*"Setiap hari Senin jam 08:00, rekap data penjualan mingguan dari folder laporan, buatkan presentasi PPT, dan siapkan draf emailnya"*), dan AKSA akan mengeksekusinya tepat waktu.
-3. **Fleksibilitas Tanpa Batas: GUI Desktop & Linux Server CLI:** Dapat dijalankan sebagai aplikasi desktop visual yang elegan di laptop/PC kerja Anda, maupun sebagai *daemon headless* di server Linux / VPS yang beroperasi 24/7 dan dikendalikan sepenuhnya melalui Telegram.
+2. **Bekerja Proaktif Secara Mandiri:** Berikan tugas rutin satu kali (*"Setiap hari Senin jam 08:00, rekap data penjualan mingguan dari folder laporan, buatkan presentasi PPT, dan siapkan draf emailnya"*), dan AKSA akan mengeksekusinya tepat waktu dengan gerbang persetujuan aman.
+3. **Topologi Fleksibel: Server Mandiri & Klien Dedicated:** AKSA Core Server dapat beroperasi lokal di PC kerja maupun 24/7 di Linux Server / VPS, dan dapat diakses melalui Desktop GUI native, aplikasi Mobile native (Android/iOS), maupun gateway perpesanan aman.
 4. **Kedaulatan Privasi 100%:** Beroperasi lokal (*local-first*). Data Anda tidak pernah dikirim diam-diam ke cloud, dan penggunaan model AI lokal (Ollama / LM Studio) menjamin pemrosesan 100% tanpa internet.
 
 ---
 
-## Posisi, Status & Skor Kematangan Saat Ini (v0.0.2)
+## 📊 Posisi, Status & Skor Kematangan Saat Ini (v0.0.2)
 
 ### Laporan Status Jujur & Transparan (Honest Status Disclosure)
 * **Fase Saat Ini:** **Fase 37 — Pre-Beta Alpha (Versi 0.0.2)**.
 * **Status Kematangan:** Fondasi sistem inti, pengujian otomatis, dan audit keamanan telah selesai 100%. Namun, aplikasi ini **belum dirilis sebagai versi produksi umum (belum v1.0.0)** karena masih dalam tahap pengujian privat internal sebelum memasuki *Public Beta (v0.1.0)*.
 * **Keterbatasan Saat Ini yang Perlu Diketahui:**
   1. *Pengujian Kegunaan Eksternal:* Pengujian langsung dengan 5 partisipan non-teknis (Usability Testing Section 14) masih berstatus *"belum diuji secara langsung dengan manusia"*.
-  2. *Status Fitur Baru:* Fitur Kantor Virtual (Pilar 1), Scheduler (Pilar 2), dan Konektor Ekosistem (Pilar 3) saat ini telah selesai pada tahap spesifikasi arsitektur teknis lengkap ([`docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md`](./docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md)) dan sedang dijadwalkan untuk implementasi kode bertahap di Fase 38–41.
+  2. *Status Fitur Baru:* Fitur Kantor Virtual (Pilar 1), Scheduler (Pilar 2), Konektor Ekosistem (Pilar 3), dan Klien Mobile saat ini telah selesai pada tahap spesifikasi arsitektur teknis lengkap ([`docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md`](./docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md) dan [`ROADMAP.md`](./ROADMAP.md)) dan sedang dijadwalkan untuk implementasi bertahap di Fase 38+.
 
 ### Tabel Skor & Metrik Verifikasi Nyata
 
@@ -91,13 +92,77 @@ Mayoritas asisten AI saat ini hanya berbentuk jendela *chat* pasif di browser we
 
 ---
 
-## Fitur Super Power AKSA (Ekspansi Strategis)
+## 🌐 Topologi Arsitektur: AKSA Server & Dedicated Clients
 
-Selain fitur dasar otomasi kantor, AKSA dirancang dengan serangkaian kapabilitas *Super Power* yang menjadikannya sistem operasi kerja mandiri paling komprehensif:
+AKSA mengadopsi pemisahan arsitektur modern antara **Mesin Host (AKSA Core Server)** dan **Aplikasi Klien Dedicated**:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                       AKSA SUPER POWER SUITE                                │
+│                      TOPOLOGI SERVER & KLIEN TERDISTRIBUSI                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                             │
+│    ┌───────────────────────────┐             ┌─────────────────────────┐    │
+│    │    AKSA DESKTOP CLIENT    │             │   AKSA MOBILE CLIENT    │    │
+│    │ (Tauri v2 + React 19 GUI) │             │  (Roadmap: iOS/Android) │    │
+│    │ • Windows, macOS, Linux   │             │ • Biometric One-Tap HITL│    │
+│    │ • Visual Office Canvas    │             │ • Real-time Monitoring  │    │
+│    └─────────────┬─────────────┘             └────────────┬────────────┘    │
+│                  │                                        │                 │
+│                  │       TLS Terenkripsi / E2EE Lokal     │                 │
+│                  └───────────────────┬────────────────────┘                 │
+│                                      │                                      │
+│                                      ▼                                      │
+│               ┌──────────────────────────────────────────────┐              │
+│               │               AKSA CORE SERVER               │              │
+│               │ (Python FastAPI + SQLite + LLM Router + OS)  │              │
+│               │ • Mesin Utama: Office, RAG, Sandbox, Rules   │              │
+│               │ • Berjalan di PC Lokal, Homelab, atau VPS    │              │
+│               │ • Mode Headless CLI Linux 24/7               │              │
+│               └──────────────────────┬───────────────────────┘              │
+│                                      │                                      │
+│                   ┌──────────────────┴──────────────────┐                   │
+│                   ▼                                     ▼                   │
+│     ┌───────────────────────────┐         ┌───────────────────────────┐     │
+│     │   OMNI-CHANNEL GATEWAY    │         │    KONEKTOR EKOSISTEM     │     │
+│     │ (Perpesanan Jarak Jauh)   │         │ (Google Workspace, Medsos)│     │
+│     └───────────────────────────┘         └───────────────────────────┘     │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+1. **AKSA Core Server (Mesin Server Otonom):**
+   * Mesin komputasi utama berbasis Python FastAPI, SQLite, dan sandbox terisolasi yang mengelola eksekusi orkestrasi agen, pembuatan dokumen Office, RAG semantik, scheduler, dan audit ledger.
+   * Dapat dijalankan langsung di workstation pengguna (Windows, macOS, Linux) atau beroperasi 24/7 sebagai *headless daemon / service* di Linux Server, homelab, VPS, atau container Docker tanpa display grafis.
+2. **AKSA Desktop Client (Windows, macOS, Linux):**
+   * Antarmuka visual native berbasis Tauri v2 dan React 19 yang terhubung secara aman ke AKSA Core Server (baik lokal pada mesin yang sama maupun server terdistribusi).
+   * Menyajikan kanvas Kantor Virtual 2.5D, diagram hierarki agen (@xyflow/react), panel inspektur berkas, dan dialog izin desktop.
+3. **AKSA Mobile Client (Tahap Pengembangan Mendatang: Android & iOS):**
+   * Aplikasi mobile native terenkripsi *end-to-end* yang berfungsi sebagai pusat kendali bergerak (*mobile command center*):
+     * Memantau aktivitas kerja tim agen di kantor virtual secara *real-time*.
+     * Memberikan konfirmasi persetujuan izin Human-in-the-Loop (HITL) satu sentuhan via sensor biometrik perangkat (*fingerprint* / FaceID).
+     * Menerima notifikasi tugas berkala dan mendiktekan instruksi kerja via teks/suara saat bepergian.
+
+---
+
+## 📡 Pusat Akses Jarak Jauh Multi-Kanal (Omni-Channel Gateway)
+
+AKSA tidak membatasi pengguna pada satu aplikasi atau satu platform tertentu. Sistem dilengkapi dengan arsitektur **Omni-Channel Remote Command Gateway** yang modular dan agnostik terhadap platform perpesanan:
+
+1. **Arsitektur Gateway Modular:**
+   * Gateway dirancang dengan lapisan abstraksi adaptor (*adapter layer*). Sistem dapat dihubungkan ke berbagai platform perpesanan modern yang aman, seperti Telegram, WhatsApp (Business API / protocol bridging), Discord Webhooks, Slack, Matrix, maupun sistem Webhook internal perusahaan.
+2. **Telegram sebagai Adaptor Referensi Siap Pakai:**
+   * Saat ini, Telegram difungsikan sebagai salah satu adaptor referensi utama yang sudah terpasang dan siap digunakan (*out-of-the-box*) dengan mekanisme keamanan kode pairing 6-digit dan whitelist akun numerik terverifikasi.
+3. **Kendali Penuh dari Jarak Jauh:**
+   * Pengguna dapat mengirim instruksi kerja, mengunggah dokumen dari smartphone ke folder PC, menerima dokumen hasil kerja (.xlsx, .docx, .pptx, .pdf), serta menyetujui tindakan berisiko (HITL) langsung melalui tombol interaktif di aplikasi chat pilihan pengguna.
+
+---
+
+## ⚡ Inovasi Arsitektur & Kapabilitas Inti AKSA
+
+Untuk menghadirkan sistem operasi kerja cerdas yang berdaulat, aman, dan efisien, AKSA mengintegrasikan pilar kapabilitas tingkat lanjut:
+
+```text
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                 KAPABILITAS INTI & INOVASI ARSITEKTUR MASA DEPAN            │
 ├─────────────────────────┬─────────────────────────┬─────────────────────────┤
 │   1. VOICE-TO-ACTION    │   2. DATA & DOC DOCTOR  │   3. SMART SCANNER OCR  │
 │  Ambient Audio Briefing │  Self-Healing Documents │ Scan Kwitansi -> Excel  │
@@ -105,63 +170,48 @@ Selain fitur dasar otomasi kantor, AKSA dirancang dengan serangkaian kapabilitas
 │ Dikte suara lokal via   │ Mendeteksi & memperbaiki│ Membaca foto struk/nota/│
 │ Whisper; AKSA membacakan│ otomatis formula Excel  │ PDF scan fisik, otomatis│
 │ ringkasan kerja harian  │ error (#REF!, #DIV/0!)  │ diubah menjadi tabel data│
-│ secara hands-free.      │ dan tabel korup.        │ dan draf pembukuan rapi.│
+│ secara hands-free.      │ dan data tabel korup.   │ dan draf pembukuan rapi.│
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
 │   4. DEEP WORK SHIELD   │   5. P2P MESH SYNC      │  6. AUDIT COMPLIANCE    │
 │ Focus Guard Throttling  │ Sinkronisasi Tanpa Cloud│ Tamper-Proof Hash Chain │
 ├─────────────────────────┼─────────────────────────┼─────────────────────────┤
 │ Menahan interupsi saat  │ Sinkronisasi memori tim │ Mencatat seluruh mutasi │
-│ pengguna sedang fokus,  │ antar-laptop kantor,    │ berkas & persetujuan izin│
-│ menyajikan ringkasan    │ Mac rumah, & Linux server│ ke ledger kriptografis  │
-│ berkala saat senggang.  │ via P2P lokal terenkripsi│ untuk audit kepatuhan.  │
+│ pengguna sedang fokus,  │ antar-node PC & server  │ berkas & persetujuan izin│
+│ menyajikan ringkasan    │ via P2P lokal terenkripsi│ ke ledger kriptografis  │
+│ berkala saat senggang.  │ tanpa perantara cloud.  │ untuk audit kepatuhan.  │
+├─────────────────────────┼─────────────────────────┼─────────────────────────┤
+│    7. KANTOR VIRTUAL    │  8. SCHEDULER OTONOM    │  9. DYNAMIC MCP PLUGINS │
+│ 2.5D Visual Agent Floor │ Cron & Rutinitas Proaktif│ Hot-Reloading MCP Tools│
+├─────────────────────────┼─────────────────────────┼─────────────────────────┤
+│ Agen tampak beraktivitas│ Menjalankan tugas rutin │ Memperluas alat kerja   │
+│ di meja, ruang rapat, & │ berkala berpagar izin   │ agen secara dinamis     │
+│ gestur interaksi nyata. │ multi-channel aman.     │ tanpa restart server.   │
 └─────────────────────────┴─────────────────────────┴─────────────────────────┘
 ```
 
-1. **Voice-to-Action & Ambient Audio Briefing (Whisper & Piper TTS Lokal):**
+1. **Voice-to-Action & Ambient Executive Audio Briefing (Whisper & Piper TTS Lokal):**
    * Perintahkan agen cukup dengan berbicara langsung melalui mikrofon komputer menggunakan model Whisper lokal (100% offline tanpa cloud).
    * Agen dapat membacakan ringkasan eksekutif pagi hari (*audio executive briefing*) secara *hands-free* saat Anda sedang mempersiapkan pekerjaan.
 2. **Self-Healing Document & Data Doctor (Pemulihan Berkas Otomatis):**
-   * Saat membaca file Excel atau data tabel yang berantakan, formula rusak (`#REF!`, `#VALUE!`), atau sel kosong yang tidak konsisten, AKSA tidak berhenti bekerja. Agen *Data Doctor* secara cerdas mendeteksi anomali, membersihkan data kotor, menyambung kembali rumus yang putus, dan menyajikan audit perbaikan untuk disetujui.
-3. **Visual Smart Scanner & OCR Multimodal:**
+   * Saat membaca file Excel atau data tabel yang berantakan, formula rusak (`#REF!`, `#DIV/0!`), atau sel kosong yang tidak konsisten, AKSA tidak berhenti bekerja. Agen *Data Doctor* secara cerdas mendeteksi anomali, membersihkan data kotor, menyambung kembali rumus yang putus, dan menyajikan audit perbaikan untuk disetujui.
+3. **Multimodal Smart Scanner & OCR (Kwitansi & Faktur Pajak):**
    * Cukup letakkan berkas foto struk belanja, invoice faktur pajak, atau pindaian dokumen fisik PDF di folder kerja. AKSA otomatis mengekstraksi data angka, tanggal, dan nama entitas menjadi rekap tabel Excel terstruktur dan siap dilaporkan.
 4. **Deep Work & Focus Guard (Perlindungan Konsentrasi Kerja):**
    * Ketika mendeteksi pengguna sedang fokus mengetik atau memprogram, AKSA menahan notifikasi interupsi non-kritis di latar belakang dan merangkumnya menjadi laporan ringkas saat pengguna selesai.
-5. **Cross-Machine P2P Mesh Sync (Sinkronisasi Antar-Perangkat Tanpa Cloud):**
+5. **Distributed Multi-Node Agent Mesh & P2P Local Sync:**
    * Sinkronisasi memori kerja agen dan profil tim antar-komputer pengguna (misal: laptop Windows di kantor, MacBook di rumah, dan homelab Linux server) secara terenkripsi *peer-to-peer* (E2EE) tanpa server perantara pihak ketiga.
 6. **Corporate Audit & Cryptographic Compliance Ledger:**
    * Setiap mutasi berkas, pembacaan data, dan persetujuan izin dicatat dalam rantai hash kriptografis yang tahan manipulasi (*tamper-proof*), siap diekspor sewaktu-waktu untuk kepatuhan audit perusahaan (ISO 27001, UU PDP Indonesia, SOX).
+7. **Kantor Virtual 2.5D (Visual Agent Canvas & Spatial Workspace):**
+   * Representasi visual interaktif di mana agen digambarkan bekerja di meja masing-masing, berkumpul di ruang rapat saat berkolaborasi, santai saat *idle*, dan melambaikan tangan saat memerlukan izin persetujuan pengguna.
+8. **Mesin Penjadwalan Otonom & Rutinitas Proaktif:**
+   * Eksekusi jadwal rutin otonom menggunakan instruksi bahasa alami atau ekspresi Cron standar yang diproteksi kartu persetujuan multi-kanal (Desktop, Mobile, Chat).
+9. **Arsitektur Dynamic Plugin & Hot-Reloading MCP Tools Engine:**
+   * Memungkinkan sistem memperluas keahlian dan alat kerja agen secara modular melalui ekosistem standar Model Context Protocol (MCP) dan plugin lokal tanpa perlu mematikan atau me-restart server.
 
 ---
 
-## Dukungan Multi-Platform: GUI & Linux Headless CLI
-
-AKSA dibangun dengan arsitektur modular yang dapat berjalan di berbagai lingkungan kerja:
-
-```text
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     FLEKSIBILITAS LINTAS PLATFORM                           │
-├───────────────────────────────────────────┬─────────────────────────────────┤
-│      1. MODE DESKTOP GUI LENGKAP          │   2. MODE LINUX SERVER / CLI    │
-├───────────────────────────────────────────┼─────────────────────────────────┤
-│ • Windows 10/11 (x64)                     │ • Headless Daemon (Ubuntu/Debian│
-│ • macOS (Apple Silicon M1/M2/M3 & Intel)  │   Arch / RHEL / Docker)         │
-│ • Linux Desktop (Ubuntu, Fedora, Mint)    │ • Tanpa X11 / Wayland / Layar   │
-│ • Antarmuka grafis kaya, Kanvas Kantor    │ • Berjalan 24/7 di Server / VPS │
-│   Virtual, & Slider Drawer Inspector      │ • Dikendalikan via Telegram Bot │
-│ • System Tray & Notifikasi Native OS      │   dan REST / WebSocket API      │
-└───────────────────────────────────────────┴─────────────────────────────────┘
-```
-
-1. **Aplikasi Desktop GUI (Windows, macOS, Linux):**
-   * Memberikan pengalaman visual terlengkap menggunakan Tauri v2 dan React 19.
-   * Dilengkapi Kanvas Hirarki Agen, simulasi Kantor Virtual, laci inspektur dokumen Office, dan dialog persetujuan native.
-2. **Mode Headless Server & CLI di Linux:**
-   * Menjalankan mesin engine AKSA (`services/engine`) sebagai *daemon background process* di server Linux lokal, VPS, atau container Docker tanpa memerlukan server tampilan grafis (X11/Wayland).
-   * Tim agen tetap dapat bekerja 24 jam penuh mengeksekusi tugas rutin terjadwal dan menerima perintah dari ponsel pengguna secara aman melalui **Pusat Kendali Telegram** dan Web API lokal.
-
----
-
-## Fitur Utama Saat Ini
+## 🛠️ Fitur Utama Saat Ini
 
 ### 1. Orkestrasi Tim Multi-Agen Bertingkat & Efisiensi Token
 * **Hirarki Supervisor & Sub-Agen:** Manajer Eksekutif mengurai instruksi rumit, mendelegasikan tugas ke sub-agen spesialis (Analis Data, Penyusun Dokumen, Peneliti Berkas), dan mengonsolidasikan hasil akhir.
@@ -176,7 +226,7 @@ AKSA dibangun dengan arsitektur modular yang dapat berjalan di berbagai lingkung
 
 ### 3. Keamanan Sandboxing & Persetujuan Berjenjang (HITL Gate)
 * **Path Jail & Pencadangan Otomatis:** Agen hanya diizinkan membaca dan menulis di dalam folder kerja yang telah dipilih pengguna (`allowed_paths`). Sebelum berkas kerja yang sudah ada diubah, sistem otomatis membuat salinan cadangan di `.aksa_backup/`.
-* **Human-in-the-Loop (HITL) Approval:** Tindakan berisiko tinggi otomatis memunculkan dialog persetujuan (*approval card*) di desktop atau Telegram. Tanpa persetujuan eksplisit, tindakan akan dibatalkan (*fail-closed*).
+* **Human-in-the-Loop (HITL) Approval:** Tindakan berisiko tinggi otomatis memunculkan dialog persetujuan (*approval card*) di desktop atau saluran remote. Tanpa persetujuan eksplisit, tindakan akan dibatalkan (*fail-closed*).
 * **Penyaring Privasi Otomatis:** Menyensor informasi sensitif (kunci API, Bearer token, NIK 16 digit, NPWP, nomor rekening, nomor telepon) sebelum data disimpan ke memori lokal atau dikirim ke LLM.
 
 ### 4. Router Multi-Model Fleksibel (Cloud & 100% Offline Lokal)
@@ -184,121 +234,37 @@ AKSA dibangun dengan arsitektur modular yang dapat berjalan di berbagai lingkung
 * **Model AI Lokal Gratis (Ollama & LM Studio):** Jalankan model canggih seperti `qwen2.5:7b`, `deepseek-r1:8b`, atau `llama3.1:8b` langsung di komputer Anda tanpa biaya langganan API dan 100% beroperasi tanpa internet.
 * **Zero Silent Cloud Fallback:** Saat memilih model lokal atau mengaktifkan mode `local_only`, sistem menjamin data Anda tidak akan dialihkan ke cloud dalam kondisi apa pun.
 
-### 5. Basis Pengetahuan RAG Hibrida & Remote Telegram
+### 5. Basis Pengetahuan RAG Hibrida Lokal
 * **Pencarian Semantik Hibrida (LanceDB + SQLite FTS5):** Menemukan informasi di ribuan berkas kerja lokal dengan memadukan pencarian vektor semantik dan pencarian kata kunci eksak (BM25) dengan pemantau perubahan folder *real-time*.
-* **Pusat Kendali Jarak Jauh via Telegram:** Perintahkan tim agen dari ponsel cerdas Anda melalui pesan teks, pengiriman file, atau rekaman suara (*Voice Note*) Bahasa Indonesia yang dilindungi kode pairing 6-digit dan whitelist akun.
 
 ---
 
-## Arsitektur Sistem AKSA
+## 🗺️ Peta Jalan Pengembangan (Roadmap)
 
-```mermaid
-flowchart TD
-    subgraph ClientLayers ["Lapisan Antarmuka Pengguna"]
-        DESKTOP_GUI["Desktop GUI (Tauri v2 + React 19) — Windows | macOS | Linux"]
-        LINUX_CLI["Linux Server CLI / Headless Daemon — VPS / Docker"]
-        TELEGRAM["Remote Client (Telegram Smartphone / Voice Note)"]
-    end
+Rencana pengembangan menyeluruh AKSA terbagi dalam tahapan rekayasa terstruktur dari awal hingga rilis produksi jangka panjang. Cetak biru lengkap dapat dilihat pada [**`ROADMAP.md`**](./ROADMAP.md) dan [`docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md`](./docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md):
 
-    subgraph NativeCore ["Keamanan & IPC Host"]
-        RUST_SHELL["Tauri Native Shell / Background Daemon"]
-        AUTH_NONCE["Otentikasi 256-bit Challenge-Response"]
-        VAULT["OS Credential Vault (DPAPI / Keychain)"]
-    end
-
-    subgraph BackendEngine ["Mesin Sidecar Python FastAPI (127.0.0.1)"]
-        API_GATEWAY["REST & WebSocket API Gateway"]
-        ORCH["Hierarchical Orchestrator (Supervisor)"]
-        ROUTER["Unified LLM Router (LiteLLM + Ollama)"]
-        TOKEN_GUARD["Token Optimizer & Budget Guard"]
-        
-        API_GATEWAY <--> ORCH
-        ORCH <--> ROUTER
-        ORCH <--> TOKEN_GUARD
-
-        subgraph SpecialistAgents ["Tim Agen Spesialis Terisolasi"]
-            AG_OFFICE["Spesialis Administrasi & Office"]
-            AG_DATA["Analis Data Spreadsheet"]
-            AG_RAG["Peneliti Dokumen & RAG"]
-            AG_SOCIAL["Spesialis Medsos & Komunikasi"]
-        end
-        ORCH --> SpecialistAgents
-
-        subgraph ExecutionTools ["Mesin Eksekusi Sandboxed"]
-            SANDBOX["Sandbox Path Jail & Backup (.aksa_backup/)"]
-            OFFICE_ENG["Office Engine (openpyxl, docx, pptx, pymupdf)"]
-            RAG_STORE["Hybrid RAG (LanceDB + SQLite FTS5)"]
-            SCHEDULER_ENG["Autonomous Scheduler (APScheduler)"]
-            HITL_GATE["Human-in-the-Loop Approval Gate"]
-        end
-        SpecialistAgents --> ExecutionTools
-    end
-
-    ClientLayers <== "WebSocket / Telegram API" ==> BackendEngine
-```
+* **Fase 0 – 37 (Fondasi Inti Rampung — Status: v0.0.2 Pre-Beta Alpha):**
+  * Multi-agent hierarchy, sandbox path jail, pemulihan cadangan otomatis (`.aksa_backup/`), Office engine nyata (Excel rumus & grafik, Word naskah dinas, PPT data-driven, PDF), RAG hibrida, remote command gateway, dan 14 siklus audit keamanan enterprise.
+* **Fase 38: Autonomous Scheduler Engine & Multi-Channel HITL Gate:**
+  * Penjadwalan berkala otomatis berbasis Cron dan bahasa alami dengan kartu persetujuan interaktif (Desktop & Remote Chat).
+* **Fase 39: Google Workspace Ecosystem Connector:**
+  * Integrasi Google Drive, Docs, Sheets sinkronisasi dua arah, Google Calendar, dan draf Gmail berpagar HITL.
+* **Fase 40: Hub Media Sosial & Spesialis Komunikasi:**
+  * Konektor LinkedIn, X, Meta Graph dengan kartu pratinjau konten dan aturan *Zero Unapproved Post*.
+* **Fase 41: AKSA Virtual Office Experience:**
+  * Denah kantor isometrik visual 2.5D dengan animasi status aktivitas agen *real-time* (mengetik, santai, rapat, minta izin).
+* **Fase 42: Topologi Terdistribusi & Klien Mobile AKSA:**
+  * Pemisahan arsitektur AKSA Core Server dan pengembangan Klien Mobile native (Android & iOS) dengan persetujuan biometrik satu sentuhan.
+* **Fase 43: Inovasi Kapabilitas Tingkat Lanjut:**
+  * Voice-to-Action lokal (Whisper), Self-Healing Data Doctor, Smart OCR Scanner kwitansi, dan P2P Mesh sync.
+* **Fase 44: Usability Testing Partisipan Nyata & Sertifikasi Kepatuhan Final:**
+  * Pengujian kegunaan terstruktur dengan 5 pengguna non-teknis nyata.
+* **Fase 45: Peluncuran Publik Resmi:**
+  * Peluncuran **v0.1.0 Public Beta** $\rightarrow$ rilis stabil **v1.0.0 Production LTS**.
 
 ---
 
-## Peta Jalan Pengembangan (Roadmap)
-
-### Fase yang Telah Selesai (Fase 0 – 37) — Status: v0.0.2 Pre-Beta Alpha
-- [x] **Fondasi & Desain Antarmuka:** Tauri v2, React 19, Tailwind CSS v4, tema Obsidian Slate & Warm Paper, dan glosarium Bahasa Indonesia terstandarisasi.
-- [x] **Mesin Orkestrasi Hierarkis:** Pemisahan Supervisor dan Sub-Agen, isolasi scratchpad sub-agen, dan penghematan token hingga 80%.
-- [x] **Pembuatan Dokumen Office Nyata:** Pembuatan dan modifikasi berkas `.xlsx`, `.docx`, `.pptx`, dan `.pdf` dengan data riil dari workspace.
-- [x] **Memori Percakapan Multi-Turn:** Kemampuan merujuk data dari turn sebelumnya tanpa kehilangan konteks file sumber.
-- [x] **Sistem Keamanan & Kepatuhan:** Path traversal jail, pencadangan otomatis, sandbox verifier worker, DPAPI/Keychain vault, dan 14 siklus re-audit independen.
-- [x] **Dukungan Multi-Platform:** Menyiapkan landasan GUI (Windows, macOS, Linux) dan headless CLI di Linux.
-
----
-
-### Fase Mendatang (Fase 38 – 43) — Menuju v0.1.0 Public Beta & v1.0.0 Production LTS
-*Rincian spesifikasi lengkap tersedia di [`docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md`](./docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md).*
-
-```text
-Fase 38: Autonomous Scheduler Engine & Multi-Channel HITL Gate
-├── Integrasi mesin scheduler asinkron (APScheduler) di sidecar engine
-├── Skema database scheduled_jobs & scheduled_job_logs
-├── Parser jadwal berbasis bahasa alami ("Setiap Senin jam 8 pagi...") & ekspresi Cron
-├── Kartu persetujuan interaktif multi-channel (Desktop Notification & Telegram)
-└── Antarmuka manajemen jadwal rutin di menu Ruang Kerja
-
-Fase 39: Google Workspace Ecosystem Connector
-├── Alur autentikasi aman Google OAuth 2.0 PKCE desktop loopback
-├── Integrasi Google Drive & Docs (pencarian, unduh berkas, ekspor Word/PDF ke Drive)
-├── Sinkronisasi dua arah Google Sheets (baca sel tabel & tambah baris rekap)
-├── Integrasi Google Calendar (baca jadwal agenda & buat jadwal kegiatan baru)
-└── Pembuat draf Gmail & pengiriman email terkontrol dengan gerbang HITL
-
-Fase 40: Hub Media Sosial & Spesialis Komunikasi
-├── Manajemen kredensial multi-platform (LinkedIn API, X API v2, Meta Graph API)
-├── Template agen baru: "Spesialis Komunikasi & Media Sosial"
-├── Kartu Pratinjau Postingan Interaktif di desktop (Live Preview Text, Media & Hashtag)
-├── Aturan Zero Unapproved Post: wajib persetujuan pengguna sebelum publikasi
-└── Pemantauan sebutan (mentions) & rekomendasi draf balasan komentar
-
-Fase 41: AKSA Virtual Office Experience (Visual Agent Canvas)
-├── Denah kantor 2.5D isometrik minimalis (Vector SVG + Canvas + Framer Motion)
-├── Animasi status agen dinamis: Idle (santai/kopi), Bekerja (mengetik/lampu meja),
-│   Rapat Kolaborasi (meja diskusi), dan Butuh Izin (melambaikan tangan)
-├── Sinkronisasi status agen secara real-time melalui WebSocket engine
-├── Kustomisasi tata letak meja kerja dan slide-over inspector agen interaktif
-└── Tombol pengalih tampilan mulus: [ Kantor Virtual ] | [ Diagram Hirarki ] | [ Daftar Tim ]
-
-Fase 42: AKSA Super Power Suite (Voice, Data Doctor, OCR & P2P Mesh)
-├── Voice-to-Action & Ambient Audio Briefing (Whisper & Piper TTS lokal)
-├── Self-Healing Document & Data Doctor (Auto-repair formula Excel rusak)
-├── Smart OCR Scanner (Ekstraksi struk/kwitansi fisik menjadi tabel Excel)
-└── Sinkronisasi P2P Mesh antar-perangkat lokal terenkripsi end-to-end
-
-Fase 43: Usability Testing, Sertifikasi Keamanan & Rilis Publik
-├── Pengujian kelayakan pengguna (Usability Testing) dengan 5 partisipan non-teknis
-├── Peningkatan versi ke v0.1.0 Public Beta dan pengemasan installer multi-OS resmi
-└── Rilis Produksi v1.0.0 Long-Term Support (LTS)
-```
-
----
-
-## Panduan Memulai Cepat (Quickstart)
+## 🚀 Panduan Memulai Cepat (Quickstart)
 
 ### Prasyarat Sistem:
 * **Node.js:** Versi 20.x atau 22.x LTS ([nodejs.org](https://nodejs.org/))
@@ -308,7 +274,7 @@ Fase 43: Usability Testing, Sertifikasi Keamanan & Rilis Publik
 
 ---
 
-### Langkah Instalasi Mandiri:
+### Langkah Instalasi:
 
 ```bash
 # 1. Klon repositori
@@ -351,7 +317,7 @@ npm run dev:tauri
 ```
 
 #### 3. Mode Headless Server / CLI di Linux (Server, VPS, Docker — Tanpa Display/GUI)
-Menjalankan mesin engine AKSA sebagai layanan latar belakang di Linux server tanpa antarmuka grafis. Seluruh tugas dapat dikendalikan dari jarak jauh melalui **Telegram Bot** atau REST/WebSocket API:
+Menjalankan mesin engine AKSA sebagai layanan latar belakang di Linux server tanpa antarmuka grafis. Seluruh tugas dapat dikendalikan dari jarak jauh melalui remote gateway atau REST/WebSocket API:
 ```bash
 cd services/engine
 source .venv/bin/activate
@@ -377,23 +343,23 @@ cd services/engine && pytest
 
 ---
 
-## Dokumentasi Lengkap & Spesifikasi Domain
+## 📚 Dokumentasi Lengkap & Spesifikasi Domain
 
 Seluruh rincian teknis, standar kode, dan arsitektur terdokumentasi rapi di dalam direktori [`docs/`](./docs/):
 
+* [**`ROADMAP.md`**](./ROADMAP.md) — **Master Peta Jalan Pengembangan Lengkap (Fase 1 s/d Fase 45).**
+* [**`docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md`**](./docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md) — **PRD Lengkap:** Virtual Office Canvas, Autonomous Scheduler & Konektor Google/Medsos.
 * [**`AGENTS.md`**](./AGENTS.md) — Pedoman utama arsitektur, konvensi kode (Code in English, UI in Bahasa Indonesia), dan aturan kerja AI.
 * [**`PROGRESS.md`**](./PROGRESS.md) — Pelacak progres pengembangan live, riwayat sesi, dan status tugas terkini.
-* [**`docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md`**](./docs/09-PRD-VIRTUAL-OFFICE-SCHEDULER-CONNECTORS.md) — **PRD Lengkap:** Virtual Office Canvas, Autonomous Scheduler & Konektor Google/Medsos.
 * [**`docs/01-ARCHITECTURE.md`**](./docs/01-ARCHITECTURE.md) — Arsitektur terpadu Tauri v2 (Rust) + Python FastAPI Sidecar.
 * [**`docs/02-MULTI-AGENT-AND-TOKEN-EFFICIENCY.md`**](./docs/02-MULTI-AGENT-AND-TOKEN-EFFICIENCY.md) — Orkestrasi agen bertingkat & optimasi token.
 * [**`docs/03-PC-AUTOMATION-AND-OFFICE-ENGINE.md`**](./docs/03-PC-AUTOMATION-AND-OFFICE-ENGINE.md) — Mesin dokumen Office (Word, Excel, PPT, PDF) & Sandbox.
 * [**`docs/04-RAG-AND-MEMORY-SYSTEM.md`**](./docs/04-RAG-AND-MEMORY-SYSTEM.md) — Mesin pencarian hibrida lokal (LanceDB + SQLite FTS5).
-* [**`docs/05-TELEGRAM-GATEWAY.md`**](./docs/05-TELEGRAM-GATEWAY.md) — Arsitektur pusat kendali jarak jauh melalui bot Telegram.
+* [**`docs/05-TELEGRAM-GATEWAY.md`**](./docs/05-TELEGRAM-GATEWAY.md) — Arsitektur pusat kendali jarak jauh melalui remote gateway.
 * [**`docs/06-UI-UX-DESIGN-SYSTEM.md`**](./docs/06-UI-UX-DESIGN-SYSTEM.md) — Sistem desain Warm Obsidian / Paper Light & glosarium UI Indonesia.
 * [**`docs/07-DATABASE-AND-API-SCHEMA.md`**](./docs/07-DATABASE-AND-API-SCHEMA.md) — Skema database SQLite & kontrak REST/WebSocket API.
-* [**`docs/08-ROADMAP-AND-PHASES.md`**](./docs/08-ROADMAP-AND-PHASES.md) — Rencana peta jalan teknis dari awal hingga rilis v1.0.
-* [**`SECURITY.md`**](./SECURITY.md) — Kebijakan keamanan enterprise, pelaporan kerentanan, dan mitigasi risiko.
-* [**`PRIVACY.md`**](./PRIVACY.md) — Kedaulatan data lokal, klasifikasi data, dan aturan zero-cloud fallback.
+* [**`docs/08-ROADMAP-AND-PHASES.md`**](./docs/08-ROADMAP-AND-PHASES.md) — Peta implementasi rekayasa bertahap.
+* [**`SECURITY.md`**](./SECURITY.md) • [**`PRIVACY.md`**](./PRIVACY.md) • [**`SUPPORT.md`**](./SUPPORT.md)
 
 ---
 
