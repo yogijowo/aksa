@@ -1,7 +1,7 @@
 {
   "name": "aksa-desktop",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.0.2",
   "description": "AKSA — Asisten Kerja Cerdas & Otonom (Desktop UI)",
   "type": "module",
   "scripts": {

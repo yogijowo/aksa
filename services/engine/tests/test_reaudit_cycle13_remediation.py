@@ -473,7 +473,7 @@ def test_s13_p3_rejects_wrong_arch_wrong_format_text_script_empty_tiny_and_symli
 
     # 6. Shell script masquerading as binary > 1MB size
     sh_bin = tmp_path / "fake-linux"
-    sh_bin.write_bytes(b"#!/bin/sh\necho 'AKSA Engine v1.0.0'\n" + (b"# pad\n" * 200_000))
+    sh_bin.write_bytes(b"#!/bin/sh\necho 'AKSA Engine v0.0.2'\n" + (b"# pad\n" * 200_000))
     sh_bin.chmod(0o755)
     assert smoke_test_sidecar(executable_path=sh_bin, require_executable=True, expected_triple="x86_64-unknown-linux-gnu") is False
 
@@ -512,7 +512,7 @@ def test_s13_p3_valid_binary_failing_behavioral_smoke_test_is_rejected(monkeypat
 
     def fail_smoke(cmd, *args, **kwargs):
         if "--version" in cmd:
-            return sp.CompletedProcess(cmd, 0, stdout="AKSA Engine v1.0.0 (API v1)\n", stderr="")
+            return sp.CompletedProcess(cmd, 0, stdout="AKSA Engine v0.0.2 (API v1)\n", stderr="")
         return sp.CompletedProcess(cmd, 1, stdout="", stderr="subsystem initialization crashed")
 
     monkeypatch.setattr(sp, "run", fail_smoke)

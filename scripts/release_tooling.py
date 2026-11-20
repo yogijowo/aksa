@@ -186,14 +186,14 @@ def generate_cyclonedx_sbom(
                     {
                         "type": "application",
                         "name": "aksa-release-tooling",
-                        "version": "1.0.0",
+                        "version": "0.0.2",
                     }
                 ]
             },
             "component": {
                 "type": "application",
                 "name": "aksa",
-                "version": "1.0.0",
+                "version": "0.0.2",
                 "description": "AKSA — Autonomous Hierarchical AI Agent & PC Automation Platform",
             },
         },
@@ -203,7 +203,7 @@ def generate_cyclonedx_sbom(
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(sbom, indent=2), encoding="utf-8")
-        print(f"✅ CycloneDX SBOM written to: {output_path} ({len(all_components)} components)")
+        print(f"[OK] CycloneDX SBOM written to: {output_path} ({len(all_components)} components)")
 
     return sbom
 
@@ -235,7 +235,7 @@ def generate_checksums(
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"✅ Checksums written to: {output_path} ({len(checksums)} files)")
+        print(f"[OK] Checksums written to: {output_path} ({len(checksums)} files)")
 
     return checksums
 
@@ -324,11 +324,11 @@ def smoke_test_sidecar(
                 min_size_bytes=min_sz,
             )
             print(
-                f"✅ Binary format verified: {resolved_exe.name} "
+                f"[OK] Binary format verified: {resolved_exe.name} "
                 f"({bin_info['format']}/{','.join(bin_info['archs'])}, {bin_info['size_bytes']:,} bytes)"
             )
         except Exception as exc:
-            print(f"❌ Native binary validation failed for {resolved_exe}: {exc}")
+            print(f"[ERROR] Native binary validation failed for {resolved_exe}: {exc}")
             return False
         cmd_version = [str(resolved_exe), "--version"]
         cmd_smoke = [str(resolved_exe), "--smoke-test"]
@@ -346,16 +346,16 @@ def smoke_test_sidecar(
     print(f"Running sidecar --version check: {' '.join(cmd_version)}")
     res_v = subprocess.run(cmd_version, cwd=cwd, capture_output=True, text=True, timeout=timeout_v)
     if res_v.returncode != 0 or "AKSA Engine" not in res_v.stdout:
-        print(f"❌ Version check failed: code={res_v.returncode}, stdout={res_v.stdout}, stderr={res_v.stderr}")
+        print(f"[ERROR] Version check failed: code={res_v.returncode}, stdout={res_v.stdout}, stderr={res_v.stderr}")
         return False
-    print(f"✅ Version check passed: {res_v.stdout.strip()}")
+    print(f"[OK] Version check passed: {res_v.stdout.strip()}")
 
     print(f"Running sidecar --smoke-test check: {' '.join(cmd_smoke)}")
     res_s = subprocess.run(cmd_smoke, cwd=cwd, capture_output=True, text=True, timeout=timeout_s)
     if res_s.returncode != 0 or "[SMOKE-TEST]" not in res_s.stdout:
-        print(f"❌ Smoke test failed: code={res_s.returncode}, stdout={res_s.stdout}, stderr={res_s.stderr}")
+        print(f"[ERROR] Smoke test failed: code={res_s.returncode}, stdout={res_s.stdout}, stderr={res_s.stderr}")
         return False
-    print(f"✅ Smoke test passed: {res_s.stdout.strip()}")
+    print(f"[OK] Smoke test passed: {res_s.stdout.strip()}")
     return True
 
 
@@ -404,16 +404,16 @@ def main() -> None:
             for err in errors:
                 print(f"  - {err}")
             sys.exit(1)
-        print("✅ All checksums verified successfully!")
+        print("[OK] All checksums verified successfully!")
     elif args.command == "verify-binary":
         try:
             info = verify_sidecar_binary_format(args.executable, expected_triple=args.triple)
             print(
-                f"✅ Native binary validated: {args.executable} "
+                f"[OK] Native binary validated: {args.executable} "
                 f"({info['triple']}: {info['format']}/{','.join(info['archs'])}, {info['size_bytes']:,} bytes)"
             )
         except Exception as exc:
-            print(f"❌ Native binary validation failed: {exc}", file=sys.stderr)
+            print(f"[ERROR] Native binary validation failed: {exc}", file=sys.stderr)
             sys.exit(1)
     elif args.command == "smoke-test":
         ok = smoke_test_sidecar(
@@ -422,9 +422,9 @@ def main() -> None:
             expected_triple=args.triple,
         )
         if not ok:
-            print("❌ Sidecar smoke test failed!")
+            print("[ERROR] Sidecar smoke test failed!")
             sys.exit(1)
-        print("✅ Sidecar smoke test passed completely!")
+        print("[OK] Sidecar smoke test passed completely!")
 
 
 if __name__ == "__main__":

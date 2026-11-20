@@ -345,7 +345,7 @@ def test_engine_manifest_includes_launch_id_and_strict_mode_0600(tmp_path: Path)
         assert manifest["host"] == "127.0.0.1"
         assert manifest["port"] == marker_port
         assert manifest["pid"] == proc.pid
-        assert manifest["version"] == "1.0.0"
+        assert manifest["version"] == "0.0.2"
         assert manifest["launch_id"] == launch_id
     finally:
         proc.terminate()

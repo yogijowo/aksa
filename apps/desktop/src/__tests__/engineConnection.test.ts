@@ -55,7 +55,7 @@ describe("engineConnection security & identity tests", () => {
           json: async () => ({
             status: "ok",
             engine: "aksa-engine",
-            version: "1.0.0",
+            version: "0.0.2",
             nonce_hmac: expectedHmac,
           }),
         };
@@ -79,7 +79,7 @@ describe("engineConnection security & identity tests", () => {
           json: async () => ({
             status: "ok",
             engine: "aksa-engine",
-            version: "1.0.0",
+            version: "0.0.2",
             nonce_hmac: "tampered_fake_hmac_hex",
           }),
         };

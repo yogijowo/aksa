@@ -99,7 +99,7 @@ def test_sidecar_cli_version_flag() -> None:
         timeout=10,
     )
     assert res.returncode == 0
-    assert "AKSA Engine v1.0.0" in res.stdout
+    assert "AKSA Engine v0.0.2" in res.stdout
 
 
 def test_sidecar_cli_smoke_test_flag() -> None:

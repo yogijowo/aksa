@@ -56,7 +56,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         "host": loopback_host,
         "port": settings.port,
         "pid": os.getpid(),
-        "version": "1.0.0",
+        "version": "0.0.2",
         "launch_id": launch_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -120,7 +120,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="AKSA Core Sidecar Engine",
         description="Local Autonomous Multi-Agent, RAG, Office Automation & Telegram Engine",
-        version="1.0.0",
+        version="0.0.2",
         lifespan=lifespan,
         docs_url="/docs" if settings.dev_mode else None,
         redoc_url=None,
@@ -242,7 +242,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.version:
-        print("AKSA Engine v1.0.0 (API v1)")
+        print("AKSA Engine v0.0.2 (API v1)")
         sys.exit(0)
 
     if args.verifier_worker:

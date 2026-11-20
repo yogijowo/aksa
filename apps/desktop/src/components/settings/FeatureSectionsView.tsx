@@ -1915,7 +1915,7 @@ export const FeatureSectionsView: React.FC = () => {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400">Versi Mesin:</span>
-                  <span className="font-mono text-zinc-200">v{engineHealth.version || "1.0.0"}</span>
+                  <span className="font-mono text-zinc-200">v{engineHealth.version || "0.0.2"}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-400">Tema Aktif:</span>

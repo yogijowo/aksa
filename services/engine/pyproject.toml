@@ -1,6 +1,6 @@
 [project]
 name = "aksa-engine"
-version = "0.1.0"
+version = "0.0.2"
 description = "AKSA — Autonomous Hierarchical AI Agent & PC Automation Sidecar Engine"
 requires-python = ">=3.12"
 dependencies = [

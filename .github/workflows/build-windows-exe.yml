@@ -13,6 +13,9 @@ jobs:
     name: Package Windows .exe Installer
     runs-on: windows-latest
     timeout-minutes: 35
+    env:
+      PYTHONUTF8: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
       - name: Checkout repository

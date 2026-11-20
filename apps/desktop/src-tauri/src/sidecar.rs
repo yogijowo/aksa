@@ -6,7 +6,7 @@ use std::time::Duration;
 use tauri_plugin_shell::process::CommandChild;
 use uuid::Uuid;
 
-pub const EXPECTED_ENGINE_VERSION: &str = "1.0.0";
+pub const EXPECTED_ENGINE_VERSION: &str = "0.0.2";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

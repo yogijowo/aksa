@@ -1,5 +1,7 @@
 @echo off
 setlocal enabledelayedexpansion
+set PYTHONUTF8=1
+set PYTHONIOENCODING=utf-8
 echo ===============================================================
 echo   AKSA - Windows Setup .exe Local Builder
 echo ===============================================================

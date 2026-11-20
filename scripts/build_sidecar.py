@@ -281,7 +281,7 @@ def verify_sidecar_binary(
         if not os.access(target_path, os.X_OK):
             raise PermissionError(f"Binary sidecar tidak memiliki izin eksekusi: {target_path}")
     print(
-        f"✅ Sidecar verified: {target_path} "
+        f"[OK] Sidecar verified: {target_path} "
         f"({info['size_bytes']:,} bytes, {info['format']}/{','.join(info['archs'])}, executable)"
     )
     return target_path
@@ -395,7 +395,7 @@ def build_sidecar(
     spec_dir.mkdir(parents=True, exist_ok=True)
     print("Running PyInstaller build...")
     subprocess.run(cmd, cwd=str(engine_dir), check=True)
-    print(f"✅ Sidecar binary built successfully at: {target_path}")
+    print(f"[OK] Sidecar binary built successfully at: {target_path}")
     if verify:
         verify_sidecar_binary(target_path, expected_triple=triple)
     return target_path

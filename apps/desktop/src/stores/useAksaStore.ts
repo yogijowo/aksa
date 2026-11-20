@@ -291,7 +291,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
   reducedMotion: INITIAL_REDUCED_MOTION,
   engineHealth: {
     online: true,
-    version: "1.0.0",
+    version: "0.0.2",
     ollama_online: false,
     ollama_models: [],
     telegram_connected: false,
