@@ -535,7 +535,7 @@ export const AgentHierarchyView: React.FC = () => {
     selectAgent,
   ]);
 
-  // React Flow Edges — ONLY animated when a task is actively running (Section 3 & 13.A)
+  // React Flow Edges — dashed connector lines with continuous top-down flow motion
   const flowEdges: Edge[] = useMemo(
     () =>
       agents
@@ -548,10 +548,20 @@ export const AgentHierarchyView: React.FC = () => {
             id: `edge_${a.parent_id}_${a.id}`,
             source: a.parent_id as string,
             target: a.id,
-            animated: isDelegationActive && !reducedMotion,
+            type: "smoothstep",
+            animated: !reducedMotion,
             style: isDelegationActive
-              ? { stroke: "#10B981", strokeWidth: 3 }
-              : { stroke: "#D97757", strokeWidth: 2, opacity: 0.75 },
+              ? {
+                  stroke: "#10B981",
+                  strokeWidth: 3,
+                  strokeDasharray: "8 6",
+                }
+              : {
+                  stroke: "#D97757",
+                  strokeWidth: 2.25,
+                  strokeDasharray: "8 6",
+                  opacity: 0.9,
+                },
           };
         }),
     [agents, isExecuting, activeAgentId, reducedMotion]

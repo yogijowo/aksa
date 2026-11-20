@@ -519,14 +519,14 @@ export function computeAutoHierarchyLayout(
     }
   }
 
-  const NODE_WIDTH = 310;
-  const H_GAP = 40;
-  const V_GAP = 220;
-  const CENTER_X = 480;
+  const NODE_WIDTH = 300;
+  const H_GAP = 120;
+  const V_GAP = 330;
+  const CENTER_X = 610;
 
   for (const [tier, ids] of levels.entries()) {
     const totalWidth = ids.length * NODE_WIDTH + Math.max(0, ids.length - 1) * H_GAP;
-    const startX = Math.max(20, Math.round(CENTER_X - totalWidth / 2));
+    const startX = Math.max(40, Math.round(CENTER_X - totalWidth / 2));
     ids.forEach((id, idx) => {
       result[id] = {
         position_x: startX + idx * (NODE_WIDTH + H_GAP),

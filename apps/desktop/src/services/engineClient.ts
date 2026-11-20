@@ -347,6 +347,7 @@ export async function updateWorkspaceRemote(
     allow_write?: boolean;
     allow_execute?: boolean;
     auto_rag_sync?: boolean;
+    granular_permissions?: Record<string, boolean>;
   }
 ): Promise<WorkspaceFolder | null> {
   try {
@@ -555,6 +556,17 @@ export async function deleteRAGDocumentRemote(documentId: string): Promise<boole
     return res.ok;
   } catch {
     return false;
+  }
+}
+
+export async function fetchSystemSettingsRemote(): Promise<Record<string, any> | null> {
+  try {
+    const res = await apiFetch("/api/v1/system/settings");
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.settings ?? null;
+  } catch {
+    return null;
   }
 }
 

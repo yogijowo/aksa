@@ -38,6 +38,7 @@ import { toast } from "sonner";
 import { useAksaStore } from "@/stores/useAksaStore";
 import {
   saveProviderApiKey,
+  saveSystemSettingRemote,
   deleteProviderApiKeyRemote,
   fetchProviderDetails,
   testModelConnectionRemote,
@@ -356,23 +357,26 @@ export const FeatureSectionsView: React.FC = () => {
       return;
     }
     setIsSavingKey(provider);
-    const ok = await saveProviderApiKey(provider, rawDraft);
-    setIsSavingKey(null);
+    let ok = false;
+    try {
+      ok = await saveProviderApiKey(provider, rawDraft);
+    } finally {
+      setIsSavingKey(null);
+    }
 
     if (ok) {
       // Clear draft input immediately so raw token never lingers in component state
       setDraftKeys((prev) => ({ ...prev, [provider]: "" }));
       setShowDraftKey((prev) => ({ ...prev, [provider]: false }));
       setEditingTokenProvider((prev) => ({ ...prev, [provider]: false }));
-      setTestingStatus((prev) => {
-        const next = { ...prev };
-        delete next[provider];
-        return next;
-      });
       await loadProviderStatus();
       setSavedNotice(
-        `Token layanan ${provider.toUpperCase()} berhasil disimpan di brankas keamanan perangkat. Klik "Uji koneksi" untuk memverifikasi.`
+        `Token layanan ${provider.toUpperCase()} berhasil disimpan di brankas keamanan perangkat. Memverifikasi koneksi...`
       );
+      const provMeta = CLOUD_PROVIDERS.find((p) => p.id === provider);
+      if (provMeta) {
+        await handleTestKey(provMeta.id, provMeta.defaultTestModel);
+      }
       setTimeout(() => setSavedNotice(null), 4000);
     } else {
       toast.error(
@@ -407,47 +411,59 @@ export const FeatureSectionsView: React.FC = () => {
       [provider]: { loading: true },
     }));
 
-    // If user typed a new draft token, save it first before testing
-    const draft = draftKeys[provider]?.trim();
-    if (draft && !draft.includes("••••")) {
-      const saved = await saveProviderApiKey(provider, draft);
-      if (saved) {
-        setDraftKeys((prev) => ({ ...prev, [provider]: "" }));
-        setShowDraftKey((prev) => ({ ...prev, [provider]: false }));
-        setEditingTokenProvider((prev) => ({ ...prev, [provider]: false }));
-        await loadProviderStatus();
+    try {
+      // If user typed a new draft token, save it first before testing
+      const draft = draftKeys[provider]?.trim();
+      if (draft && !draft.includes("••••")) {
+        const saved = await saveProviderApiKey(provider, draft);
+        if (saved) {
+          setDraftKeys((prev) => ({ ...prev, [provider]: "" }));
+          setShowDraftKey((prev) => ({ ...prev, [provider]: false }));
+          setEditingTokenProvider((prev) => ({ ...prev, [provider]: false }));
+          await loadProviderStatus();
+        }
       }
-    }
 
-    const res = await testModelConnectionRemote({
-      provider,
-      model_id: defaultModel,
-    });
-    await loadProviderStatus();
+      const res = await testModelConnectionRemote({
+        provider,
+        model_id: defaultModel,
+      });
+      await loadProviderStatus();
 
-    if (res.ok) {
-      setTestingStatus((prev) => ({
-        ...prev,
-        [provider]: {
-          loading: false,
-          ok: true,
-          status: "connected",
-          message: `Terhubung: Koneksi ke ${defaultModel} berhasil diverifikasi.`,
-        },
-      }));
-    } else {
+      if (res.ok) {
+        setTestingStatus((prev) => ({
+          ...prev,
+          [provider]: {
+            loading: false,
+            ok: true,
+            status: "connected",
+            message: `Terhubung: Koneksi ke ${defaultModel} berhasil diverifikasi.`,
+          },
+        }));
+      } else {
+        setTestingStatus((prev) => ({
+          ...prev,
+          [provider]: {
+            loading: false,
+            ok: false,
+            status: res.token_status || "connection_failed",
+            message:
+              res.error ||
+              "Pemeriksaan koneksi gagal. Periksa apakah token API sudah benar dan kuota penyedia aktif.",
+            technicalDetail: `Provider: ${provider} | Model uji: ${defaultModel} | Status: ${
+              res.token_status || "connection_failed"
+            }`,
+          },
+        }));
+      }
+    } catch (err: any) {
       setTestingStatus((prev) => ({
         ...prev,
         [provider]: {
           loading: false,
           ok: false,
-          status: res.token_status || "connection_failed",
-          message:
-            res.error ||
-            "Pemeriksaan koneksi gagal. Periksa apakah token API sudah benar dan kuota penyedia aktif.",
-          technicalDetail: `Provider: ${provider} | Model uji: ${defaultModel} | Status: ${
-            res.token_status || "connection_failed"
-          }`,
+          status: "connection_failed",
+          message: err?.message || "Gagal menguji koneksi ke penyedia model.",
         },
       }));
     }
@@ -553,9 +569,14 @@ export const FeatureSectionsView: React.FC = () => {
 
   const handleAddCustomModel = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!customModelId.trim()) return;
+    const cleaned = customModelId.trim();
+    if (!cleaned) return;
+    void saveSystemSettingRemote(`custom_model_${customProvider}`, {
+      provider: customProvider,
+      model_id: cleaned,
+    });
     setCustomModelSuccess(
-      `Model kustom "${customModelId.trim()}" (${customProvider}) siap dipilih secara manual di halaman Tim AI.`
+      `Model kustom "${cleaned}" (${customProvider}) telah disimpan dan siap dipilih secara manual di halaman Tim AI.`
     );
     setCustomModelId("");
     setTimeout(() => setCustomModelSuccess(null), 4000);

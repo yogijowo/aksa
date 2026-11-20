@@ -116,6 +116,7 @@ class UpdateWorkspaceRequest(BaseModel):
     allow_write: bool | None = None
     allow_execute: bool | None = None
     auto_rag_sync: bool | None = None
+    granular_permissions: dict[str, bool] | None = None
 
 
 class InspectFolderRequest(BaseModel):
@@ -130,6 +131,7 @@ class UpsertWorkspaceRequest(BaseModel):
     allow_execute: bool = False
     auto_rag_sync: bool = True
     owner_id: str | None = None
+    granular_permissions: dict[str, bool] | None = None
 
 
 class CreateSessionRequest(BaseModel):

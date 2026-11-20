@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
+import uuid
 from typing import Any
 
 import aiosqlite
@@ -128,6 +130,44 @@ class UnifiedLLMRouter:
         self.db = db
         self.vault = CredentialVault(vault_dir=self.db.db_path.parent)
         self._connection_test_results: dict[str, dict[str, Any]] = {}
+        self._load_persisted_connection_tests()
+
+    def _load_persisted_connection_tests(self) -> None:
+        """Load persisted provider connection test statuses from SQLite app_settings."""
+        if not self.db.db_path.exists():
+            return
+        try:
+            with sqlite3.connect(self.db.db_path, timeout=5.0) as conn:
+                cur = conn.execute(
+                    "SELECT value_json FROM app_settings WHERE key = 'provider_connection_tests'"
+                )
+                row = cur.fetchone()
+                if row and row[0]:
+                    parsed = json.loads(row[0])
+                    if isinstance(parsed, dict):
+                        self._connection_test_results = parsed
+        except Exception:
+            pass
+
+    def _persist_connection_tests_sync(self) -> None:
+        """Synchronously persist provider connection test outcomes to SQLite app_settings."""
+        if not self.db.db_path.exists():
+            return
+        try:
+            with sqlite3.connect(self.db.db_path, timeout=5.0) as conn:
+                conn.execute(
+                    """
+                    INSERT INTO app_settings (key, value_json, updated_at)
+                    VALUES ('provider_connection_tests', ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                        value_json = excluded.value_json,
+                        updated_at = excluded.updated_at
+                    """,
+                    (json.dumps(self._connection_test_results, ensure_ascii=False), _now_iso()),
+                )
+                conn.commit()
+        except Exception:
+            pass
 
     async def migrate_legacy_plaintext_keys(self) -> int:
         """One-time transactional migration of plaintext API keys from app_settings to OS Credential Vault."""
@@ -206,11 +246,13 @@ class UnifiedLLMRouter:
                 backend=stored["backend"],
             )
             self._connection_test_results.pop(provider, None)
+            self._persist_connection_tests_sync()
         else:
             if existing_ref:
                 self.vault.delete_secret(existing_ref)
             await self.db.delete_credential_metadata(provider)
             self._connection_test_results.pop(provider, None)
+            self._persist_connection_tests_sync()
 
         meta_rows = await self.db.list_credentials_metadata()
         configured_set = {r.get("provider") for r in meta_rows if r.get("provider")}
@@ -222,6 +264,7 @@ class UnifiedLLMRouter:
         if existing_meta and existing_meta.get("credential_ref"):
             self.vault.delete_secret(existing_meta["credential_ref"])
         self._connection_test_results.pop(provider, None)
+        self._persist_connection_tests_sync()
         return await self.db.delete_credential_metadata(provider)
 
     def record_connection_test(
@@ -239,6 +282,7 @@ class UnifiedLLMRouter:
             "model_id": model_id,
         }
         self._connection_test_results[provider.lower().strip()] = entry
+        self._persist_connection_tests_sync()
         return entry
 
     async def discover_local_models(self) -> dict[str, Any]:
@@ -281,8 +325,22 @@ class UnifiedLLMRouter:
     async def list_providers_status(self) -> list[dict[str, Any]]:
         """Return all supported providers with vault reference status and local discovery (no plaintext keys)."""
         await self.migrate_legacy_plaintext_keys()
+        if not self._connection_test_results:
+            self._load_persisted_connection_tests()
         meta_list = await self.db.list_credentials_metadata()
-        meta_by_prov = {m["provider"]: m for m in meta_list}
+        meta_by_prov: dict[str, dict[str, Any]] = {}
+        for m in meta_list:
+            prov_id = m.get("provider")
+            cred_ref = m.get("credential_ref")
+            if not prov_id or not cred_ref:
+                continue
+            # Ensure the secret actually exists in the active vault (cleans orphaned os_keyring refs)
+            if self.vault.retrieve_secret(cred_ref):
+                meta_by_prov[prov_id] = m
+            else:
+                await self.db.delete_credential_metadata(prov_id)
+                self._connection_test_results.pop(prov_id, None)
+                self._persist_connection_tests_sync()
         local_info = await self.discover_local_models()
         results: list[dict[str, Any]] = []
 
@@ -513,9 +571,20 @@ class UnifiedLLMRouter:
         if prov == "gemini" and api_key:
             clean_model = model_id.replace("gemini/", "").replace("google/", "")
             if clean_model in ("gemini-2.5-pro", "gemini-pro"):
-                clean_model = "gemini-flash-latest"
+                clean_model = "gemini-2.5-flash"
 
-            for candidate_model in [clean_model, "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-flash"]:
+            gemini_candidates: list[str] = []
+            for cand in [
+                clean_model,
+                "gemini-2.5-flash",
+                "gemini-2.0-flash",
+                "gemini-flash-latest",
+                "gemini-2.5-flash-lite",
+            ]:
+                if cand and cand not in gemini_candidates:
+                    gemini_candidates.append(cand)
+
+            for candidate_model in gemini_candidates:
                 url = f"https://generativelanguage.googleapis.com/v1beta/models/{candidate_model}:generateContent"
                 headers = {
                     "x-goog-api-key": api_key,
@@ -610,108 +679,136 @@ class UnifiedLLMRouter:
                 "groq": "https://api.groq.com/openai/v1",
                 "openrouter": "https://openrouter.ai/api/v1",
             }
+            fallback_models_by_prov: dict[str, list[str]] = {
+                "openai": ["gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"],
+                "deepseek": ["deepseek-chat", "deepseek-reasoner"],
+                "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
+                "openrouter": ["openrouter/auto"],
+            }
             base = base_urls.get(prov, "https://api.openai.com/v1")
             clean_model = model_id.replace(f"{prov}/", "")
-            req_body: dict[str, Any] = {
-                "model": clean_model,
-                "messages": messages,
-                "temperature": temperature,
-                "max_tokens": max_tokens,
-            }
-            if tools:
-                req_body["tools"] = tools
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(
-                        f"{base}/chat/completions",
-                        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                        json=req_body,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        choice = data.get("choices", [{}])[0]
-                        msg = choice.get("message", {})
-                        content = msg.get("content", "") or ""
-                        tool_calls = msg.get("tool_calls", [])
-                        usage = data.get("usage", {})
-                        return {
-                            "content": content,
-                            "tool_calls": tool_calls,
-                            "input_tokens": usage.get("prompt_tokens", 150),
-                            "output_tokens": usage.get("completion_tokens", 100),
-                            "simulated": False,
-                            "cloud_called": True,
-                            "provider_used": prov,
-                        }
-                    else:
-                        last_http_status = resp.status_code
-            except Exception:
-                pass
+            candidate_models: list[str] = []
+            for cand in [clean_model, *fallback_models_by_prov.get(prov, [])]:
+                if cand and cand not in candidate_models:
+                    candidate_models.append(cand)
+
+            for candidate_model in candidate_models:
+                req_body: dict[str, Any] = {
+                    "model": candidate_model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                }
+                if tools:
+                    req_body["tools"] = tools
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.post(
+                            f"{base}/chat/completions",
+                            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                            json=req_body,
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            choice = data.get("choices", [{}])[0]
+                            msg = choice.get("message", {})
+                            content = msg.get("content", "") or ""
+                            tool_calls = msg.get("tool_calls", [])
+                            usage = data.get("usage", {})
+                            return {
+                                "content": content,
+                                "tool_calls": tool_calls,
+                                "input_tokens": usage.get("prompt_tokens", 150),
+                                "output_tokens": usage.get("completion_tokens", 100),
+                                "simulated": False,
+                                "cloud_called": True,
+                                "provider_used": prov,
+                            }
+                        else:
+                            last_http_status = resp.status_code
+                            if resp.status_code in (401, 403, 429):
+                                break
+                except Exception:
+                    continue
 
         # 2c. Anthropic Claude Native REST API
         if prov == "anthropic" and api_key:
             system_text = "\n".join(str(m.get("content") or "") for m in messages if m.get("role") == "system")
             chat_msgs = [{"role": m.get("role", "user"), "content": str(m.get("content") or "")} for m in messages if m.get("role") != "system"]
-            req_body_anthropic: dict[str, Any] = {
-                "model": model_id.replace("anthropic/", ""),
-                "system": system_text,
-                "messages": chat_msgs,
-                "max_tokens": max_tokens,
-                "temperature": temperature,
-            }
-            if tools:
-                anthropic_tools = []
-                for t in tools:
-                    fn = t.get("function", t)
-                    anthropic_tools.append({
-                        "name": fn["name"],
-                        "description": fn.get("description", ""),
-                        "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
-                    })
-                req_body_anthropic["tools"] = anthropic_tools
-            try:
-                async with httpx.AsyncClient(timeout=30.0) as client:
-                    resp = await client.post(
-                        "https://api.anthropic.com/v1/messages",
-                        headers={
-                            "x-api-key": api_key,
-                            "anthropic-version": "2023-06-01",
-                            "content-type": "application/json",
-                        },
-                        json=req_body_anthropic,
-                    )
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        parts = data.get("content", [])
-                        content_parts = []
-                        tool_calls = []
-                        for p in parts:
-                            if p.get("type") == "text":
-                                content_parts.append(p.get("text", ""))
-                            elif p.get("type") == "tool_use":
-                                tool_calls.append({
-                                    "id": p.get("id", f"call_{uuid.uuid4().hex[:8]}"),
-                                    "type": "function",
-                                    "function": {
-                                        "name": p.get("name"),
-                                        "arguments": json.dumps(p.get("input", {})),
-                                    },
-                                })
-                        content = "".join(content_parts)
-                        usage = data.get("usage", {})
-                        return {
-                            "content": content,
-                            "tool_calls": tool_calls,
-                            "input_tokens": usage.get("input_tokens", 150),
-                            "output_tokens": usage.get("output_tokens", 100),
-                            "simulated": False,
-                            "cloud_called": True,
-                            "provider_used": "anthropic",
-                        }
-                    else:
-                        last_http_status = resp.status_code
-            except Exception:
-                pass
+            clean_anthropic_model = model_id.replace("anthropic/", "")
+            anthropic_candidates: list[str] = []
+            for cand in [
+                clean_anthropic_model,
+                "claude-3-5-sonnet-latest",
+                "claude-3-5-haiku-latest",
+                "claude-3-haiku-20240307",
+            ]:
+                if cand and cand not in anthropic_candidates:
+                    anthropic_candidates.append(cand)
+
+            for candidate_model in anthropic_candidates:
+                req_body_anthropic: dict[str, Any] = {
+                    "model": candidate_model,
+                    "system": system_text,
+                    "messages": chat_msgs,
+                    "max_tokens": max_tokens,
+                    "temperature": temperature,
+                }
+                if tools:
+                    anthropic_tools = []
+                    for t in tools:
+                        fn = t.get("function", t)
+                        anthropic_tools.append({
+                            "name": fn["name"],
+                            "description": fn.get("description", ""),
+                            "input_schema": fn.get("parameters", {"type": "object", "properties": {}}),
+                        })
+                    req_body_anthropic["tools"] = anthropic_tools
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.post(
+                            "https://api.anthropic.com/v1/messages",
+                            headers={
+                                "x-api-key": api_key,
+                                "anthropic-version": "2023-06-01",
+                                "content-type": "application/json",
+                            },
+                            json=req_body_anthropic,
+                        )
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            parts = data.get("content", [])
+                            content_parts = []
+                            tool_calls = []
+                            for p in parts:
+                                if p.get("type") == "text":
+                                    content_parts.append(p.get("text", ""))
+                                elif p.get("type") == "tool_use":
+                                    tool_calls.append({
+                                        "id": p.get("id", f"call_{uuid.uuid4().hex[:8]}"),
+                                        "type": "function",
+                                        "function": {
+                                            "name": p.get("name"),
+                                            "arguments": json.dumps(p.get("input", {})),
+                                        },
+                                    })
+                            content = "".join(content_parts)
+                            usage = data.get("usage", {})
+                            return {
+                                "content": content,
+                                "tool_calls": tool_calls,
+                                "input_tokens": usage.get("input_tokens", 150),
+                                "output_tokens": usage.get("output_tokens", 100),
+                                "simulated": False,
+                                "cloud_called": True,
+                                "provider_used": "anthropic",
+                            }
+                        else:
+                            last_http_status = resp.status_code
+                            if resp.status_code in (401, 403, 429):
+                                break
+                except Exception:
+                    continue
 
         # Fallback when no valid API key or provider call failed
         user_last = next((m.get("content", "") for m in reversed(messages) if m.get("role") == "user"), "")

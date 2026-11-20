@@ -33,8 +33,8 @@ DEFAULT_AGENTS = [
             "rapi, akurat, dan siap digunakan."
         ),
         "tool_categories": ["delegation", "filesystem"],
-        "position_x": 400.0,
-        "position_y": 60.0,
+        "position_x": 460.0,
+        "position_y": 30.0,
     },
     {
         "id": "agt_spesialis_office",
@@ -59,17 +59,17 @@ DEFAULT_AGENTS = [
             "Folder Kerja pengguna."
         ),
         "tool_categories": ["office_excel", "office_word", "office_ppt", "pdf_tools", "filesystem"],
-        "position_x": 80.0,
-        "position_y": 280.0,
+        "position_x": 40.0,
+        "position_y": 360.0,
     },
     {
         "id": "agt_peneliti_rag",
         "team_id": DEFAULT_TEAM_ID,
         "parent_id": "agt_supervisor_utama",
-        "name": "Peneliti Dokumen & Arsip RAG",
+        "name": "Peneliti Dokumen & Arsip",
         "role_title": "Sub-Agen Pencarian & Analisis Dokumen Lokal",
         "description": (
-            "Mencari informasi akurat dari ratusan dokumen di Basis Pengetahuan (RAG) menggunakan "
+            "Mencari informasi akurat dari ratusan dokumen di Pengetahuan AKSA menggunakan "
             "pencarian hibrida (makna + kata kunci) secara hemat token."
         ),
         "avatar_icon": "book-open-check",
@@ -84,8 +84,8 @@ DEFAULT_AGENTS = [
             "yang padat beserta nama file dan halaman sumbernya agar menghemat token bagi Manajer Eksekutif."
         ),
         "tool_categories": ["rag_search", "filesystem", "pdf_tools"],
-        "position_x": 400.0,
-        "position_y": 280.0,
+        "position_x": 460.0,
+        "position_y": 360.0,
     },
     {
         "id": "agt_operator_pc",
@@ -109,24 +109,42 @@ DEFAULT_AGENTS = [
             "ruang terisolasi (uv), serta mengoperasikan antarmuka aplikasi desktop dengan aman di bawah izin pengguna."
         ),
         "tool_categories": ["os_automation", "uv_python", "computer_use", "filesystem"],
-        "position_x": 720.0,
-        "position_y": 280.0,
+        "position_x": 880.0,
+        "position_y": 360.0,
     },
 ]
 
 
 async def seed_default_indonesian_team(db: DatabaseManager) -> None:
-    """Ensure the default Indonesian hierarchical agent team exists on first launch."""
+    """Ensure the default Indonesian hierarchical agent team exists on first launch and upgrade legacy cramped positions."""
     async with aiosqlite.connect(db.db_path) as conn:
         cursor = await conn.execute("SELECT COUNT(*) FROM agent_teams")
         count_row = await cursor.fetchone()
         if count_row and count_row[0] > 0:
+            # Auto-upgrade legacy cramped default canvas coordinates (y=250/280 -> y=360, x=20/80/340/400/660/720 -> 40/460/880)
+            legacy_coords_updates = [
+                ("agt_supervisor_utama", 460.0, 30.0, (340.0, 400.0), (30.0, 60.0)),
+                ("agt_spesialis_office", 40.0, 360.0, (20.0, 80.0), (250.0, 280.0)),
+                ("agt_peneliti_rag", 460.0, 360.0, (340.0, 400.0), (250.0, 280.0)),
+                ("agt_operator_pc", 880.0, 360.0, (660.0, 720.0), (250.0, 280.0)),
+            ]
+            for aid, new_x, new_y, old_xs, old_ys in legacy_coords_updates:
+                await conn.execute(
+                    f"""
+                    UPDATE agents
+                    SET position_x = ?, position_y = ?
+                    WHERE id = ? AND position_x IN ({','.join(str(x) for x in old_xs)})
+                      AND position_y IN ({','.join(str(y) for y in old_ys)})
+                    """,
+                    (new_x, new_y, aid),
+                )
+            await conn.commit()
             return
 
         now = _now_iso()
         await conn.execute(
             """
-            INSERT INTO agent_teams (id, name, description, is_default, created_at, updated_at)
+            INSERT OR IGNORE INTO agent_teams (id, name, description, is_default, created_at, updated_at)
             VALUES (?, ?, ?, 1, ?, ?)
             """,
             (
@@ -141,7 +159,7 @@ async def seed_default_indonesian_team(db: DatabaseManager) -> None:
         for agent in DEFAULT_AGENTS:
             await conn.execute(
                 """
-                INSERT INTO agents (
+                INSERT OR IGNORE INTO agents (
                     id, team_id, parent_id, name, role_title, description,
                     avatar_icon, tier_level, provider, model_id, temperature,
                     max_tokens, system_prompt, tool_categories_json, position_x, position_y, created_at

@@ -386,6 +386,10 @@ class DatabaseManager:
                 await db.execute("ALTER TABLE agents ADD COLUMN model_selection_mode TEXT DEFAULT 'auto'")
             except Exception:
                 pass
+            try:
+                await db.execute("ALTER TABLE workspaces ADD COLUMN granular_permissions_json TEXT")
+            except Exception:
+                pass
 
             now = _now_iso()
             for ver, name in (
@@ -658,6 +662,12 @@ class DatabaseManager:
             item["allow_write"] = bool(item["allow_write"])
             item["allow_execute"] = bool(item["allow_execute"])
             item["auto_rag_sync"] = bool(item["auto_rag_sync"])
+            raw_gran = item.pop("granular_permissions_json", None)
+            if raw_gran:
+                try:
+                    item["granular_permissions"] = json.loads(raw_gran)
+                except Exception:
+                    pass
             if "owner_id" not in item or not item["owner_id"]:
                 item["owner_id"] = get_default_host_principal()
             return item
@@ -676,6 +686,12 @@ class DatabaseManager:
             item["allow_write"] = bool(item["allow_write"])
             item["allow_execute"] = bool(item["allow_execute"])
             item["auto_rag_sync"] = bool(item["auto_rag_sync"])
+            raw_gran = item.pop("granular_permissions_json", None)
+            if raw_gran:
+                try:
+                    item["granular_permissions"] = json.loads(raw_gran)
+                except Exception:
+                    pass
             if "owner_id" not in item or not item["owner_id"]:
                 item["owner_id"] = get_default_host_principal()
             return item
@@ -699,6 +715,12 @@ class DatabaseManager:
                 item["allow_write"] = bool(item["allow_write"])
                 item["allow_execute"] = bool(item["allow_execute"])
                 item["auto_rag_sync"] = bool(item["auto_rag_sync"])
+                raw_gran = item.pop("granular_permissions_json", None)
+                if raw_gran:
+                    try:
+                        item["granular_permissions"] = json.loads(raw_gran)
+                    except Exception:
+                        pass
                 if "owner_id" not in item or not item["owner_id"]:
                     item["owner_id"] = get_default_host_principal()
                 results.append(item)
@@ -710,20 +732,26 @@ class DatabaseManager:
         resolved_path = str(Path(payload["folder_path"]).expanduser().resolve())
         name = payload.get("name") or Path(resolved_path).name or resolved_path
         owner_id = payload.get("owner_id") or get_default_host_principal()
+        gran_json = (
+            json.dumps(payload["granular_permissions"])
+            if isinstance(payload.get("granular_permissions"), dict)
+            else None
+        )
 
         async with aiosqlite.connect(self.db_path) as db:
             db.row_factory = aiosqlite.Row
             await db.execute(
                 """
                 INSERT INTO workspaces (
-                    id, name, folder_path, allow_read, allow_write, allow_execute, auto_rag_sync, owner_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, name, folder_path, allow_read, allow_write, allow_execute, auto_rag_sync, owner_id, granular_permissions_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(folder_path) DO UPDATE SET
                     name = excluded.name,
                     allow_read = excluded.allow_read,
                     allow_write = excluded.allow_write,
                     allow_execute = excluded.allow_execute,
                     auto_rag_sync = excluded.auto_rag_sync,
+                    granular_permissions_json = COALESCE(excluded.granular_permissions_json, workspaces.granular_permissions_json),
                     owner_id = COALESCE(excluded.owner_id, workspaces.owner_id)
                 """,
                 (
@@ -735,20 +763,12 @@ class DatabaseManager:
                     int(payload.get("allow_execute", False)),
                     int(payload.get("auto_rag_sync", True)),
                     owner_id,
+                    gran_json,
                     _now_iso(),
                 ),
             )
             await db.commit()
-            cursor = await db.execute("SELECT * FROM workspaces WHERE folder_path = ?", (resolved_path,))
-            row = await cursor.fetchone()
-            item = _row_to_dict(row)
-            item["allow_read"] = bool(item["allow_read"])
-            item["allow_write"] = bool(item["allow_write"])
-            item["allow_execute"] = bool(item["allow_execute"])
-            item["auto_rag_sync"] = bool(item["auto_rag_sync"])
-            if "owner_id" not in item or not item["owner_id"]:
-                item["owner_id"] = owner_id
-            return item
+            return await self.get_workspace_by_path(resolved_path)  # type: ignore[return-value]
 
     async def update_workspace(self, workspace_id: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         """Update an existing workspace's permissions or name."""
@@ -761,6 +781,9 @@ class DatabaseManager:
             if bfield in updates and updates[bfield] is not None:
                 set_clauses.append(f"{bfield} = ?")
                 values.append(int(bool(updates[bfield])))
+        if "granular_permissions" in updates and isinstance(updates["granular_permissions"], dict):
+            set_clauses.append("granular_permissions_json = ?")
+            values.append(json.dumps(updates["granular_permissions"]))
         if not set_clauses:
             return await self.get_workspace(workspace_id)
         values.append(workspace_id)

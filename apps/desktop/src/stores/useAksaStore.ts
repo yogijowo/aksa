@@ -25,6 +25,7 @@ import {
   fetchEngineHealth,
   fetchHITLApprovals,
   fetchMCPServers,
+  fetchSystemSettingsRemote,
   fetchTokenAnalytics,
   fetchWorkspaces,
   resolveHITLApprovalRemote,
@@ -65,7 +66,7 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       system_prompt:
         "Anda adalah Manajer Eksekutif AKSA yang memimpin tim agen pendukung spesialis. Pahami instruksi pengguna dalam Bahasa Indonesia, bagi tugas secara hemat kuota, dan pastikan hasil akhir rapi.",
       tool_categories: ["delegation", "filesystem"],
-      position_x: 340,
+      position_x: 460,
       position_y: 30,
     },
     {
@@ -86,8 +87,8 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       system_prompt:
         "Anda adalah Spesialis Administrasi & Microsoft Office. Buat file Excel (.xlsx lengkap dengan rumus SUM/VLOOKUP dan format Rupiah), Word (.docx), PowerPoint (.pptx), dan PDF.",
       tool_categories: ["office_excel", "office_word", "office_ppt", "pdf_tools", "filesystem"],
-      position_x: 20,
-      position_y: 250,
+      position_x: 40,
+      position_y: 360,
     },
     {
       id: "agt_peneliti_rag",
@@ -107,8 +108,8 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       system_prompt:
         "Anda adalah Peneliti Dokumen & Arsip lokal. Ekstrak fakta, angka, dan kutipan halaman dari dokumen di Folder Kerja secara ringkas.",
       tool_categories: ["rag_search", "filesystem", "pdf_tools"],
-      position_x: 340,
-      position_y: 250,
+      position_x: 460,
+      position_y: 360,
     },
     {
       id: "agt_operator_pc",
@@ -128,8 +129,8 @@ const INITIAL_INDONESIAN_TEAM: AgentTeam = {
       system_prompt:
         "Anda adalah Operator PC & Automasi Sistem. Jalankan automasi aplikasi desktop, skrip pemrosesan data terisolasi, dan kontrol visual di bawah izin keamanan pengguna.",
       tool_categories: ["os_automation", "uv_python", "computer_use", "filesystem"],
-      position_x: 660,
-      position_y: 250,
+      position_x: 880,
+      position_y: 360,
     },
   ],
 };
@@ -384,7 +385,12 @@ export const useAksaStore = create<AksaState>((set, get) => ({
     void saveSystemSettingRemote("reduced_motion", reduced);
   },
 
-  selectAgent: (agentId) => set({ selectedAgentId: agentId }),
+  selectAgent: (agentId) => {
+    set({ selectedAgentId: agentId });
+    if (agentId) {
+      void saveSystemSettingRemote("selected_agent_id", agentId);
+    }
+  },
 
   setActiveWorkspace: (workspaceId) => {
     if (typeof window !== "undefined") {
@@ -393,6 +399,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       } catch {}
     }
     set({ activeWorkspaceId: workspaceId });
+    void saveSystemSettingRemote("active_workspace_id", workspaceId);
   },
 
   addWorkspaceFolder: async (folderPath, name, permissions) => {
@@ -439,6 +446,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       workspaces: [newWs, ...state.workspaces.filter((w) => w.folder_path !== folderPath)],
       activeWorkspaceId: newWs.id,
     }));
+    void saveSystemSettingRemote("active_workspace_id", newWs.id);
     return newWs;
   },
 
@@ -455,6 +463,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
           localStorage.setItem("aksa_active_workspace_id", nextActiveId);
         } catch {}
       }
+      void saveSystemSettingRemote("active_workspace_id", nextActiveId);
       return {
         workspaces: remaining,
         activeWorkspaceId: nextActiveId,
@@ -466,6 +475,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
     let computedRead = true;
     let computedWrite = true;
     let computedExec = false;
+    let computedGranular: Record<string, boolean> | undefined;
 
     set((state) => ({
       workspaces: state.workspaces.map((ws) => {
@@ -516,6 +526,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
         computedRead = nextRead;
         computedWrite = nextWrite;
         computedExec = nextExec;
+        computedGranular = mergedGranular;
 
         return {
           ...ws,
@@ -532,6 +543,7 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       allow_read: computedRead,
       allow_write: computedWrite,
       allow_execute: computedExec,
+      granular_permissions: computedGranular,
     });
   },
 
@@ -573,8 +585,8 @@ export const useAksaStore = create<AksaState>((set, get) => ({
         "Anda adalah Agen Pendukung di dalam tim AKSA. Kerjakan instruksi secara akurat dan berikan ringkasan hasil yang jelas.",
       // Mandatory security rule: new agents start with basic safe filesystem capability, never inheriting full parent privileges
       tool_categories: customOptions?.tool_categories || ["filesystem"],
-      position_x: Math.max(20, parentAgent.position_x + (offsetIndex - 1) * 320),
-      position_y: parentAgent.position_y + 220,
+      position_x: Math.max(40, parentAgent.position_x + (offsetIndex - 1) * 420),
+      position_y: parentAgent.position_y + 330,
     };
 
     set((state) => ({
@@ -666,6 +678,17 @@ export const useAksaStore = create<AksaState>((set, get) => ({
       position_x: layoutMap[agentId]?.position_x,
       position_y: layoutMap[agentId]?.position_y,
     });
+    for (const agt of activeTeam.agents) {
+      if (agt.id === agentId) continue;
+      const l = layoutMap[agt.id];
+      if (l) {
+        void saveAgentUpdate(agt.id, {
+          tier_level: l.tier_level,
+          position_x: l.position_x,
+          position_y: l.position_y,
+        });
+      }
+    }
     return { ok: true };
   },
 
@@ -857,13 +880,21 @@ export const useAksaStore = create<AksaState>((set, get) => ({
           execution_steps: remoteRes.execution_steps,
           artifacts: taggedArtifacts,
         };
-        set((state) => ({
-          messages: [...state.messages, replyMsg],
-          artifacts: [...taggedArtifacts, ...state.artifacts],
-          totalTokensUsed: state.totalTokensUsed + remoteRes.tokens_used,
-          totalTokensSaved: state.totalTokensSaved + remoteRes.tokens_saved,
-          isArtifactDrawerOpen: taggedArtifacts.length > 0,
-        }));
+        set((state) => {
+          const nextMessages = [...state.messages, replyMsg];
+          const nextArtifacts = [...taggedArtifacts, ...state.artifacts];
+          void saveSystemSettingRemote("workspace_chat_state", {
+            messages: nextMessages.slice(-40),
+            artifacts: nextArtifacts.slice(0, 40),
+          });
+          return {
+            messages: nextMessages,
+            artifacts: nextArtifacts,
+            totalTokensUsed: state.totalTokensUsed + remoteRes.tokens_used,
+            totalTokensSaved: state.totalTokensSaved + remoteRes.tokens_saved,
+            isArtifactDrawerOpen: taggedArtifacts.length > 0,
+          };
+        });
         return;
       }
 
@@ -910,13 +941,21 @@ export const useAksaStore = create<AksaState>((set, get) => ({
         artifacts: wantsDoc ? [newArtifact] : [],
       };
 
-      set((state) => ({
-        messages: [...state.messages, replyMsg],
-        artifacts: wantsDoc ? [newArtifact, ...state.artifacts] : state.artifacts,
-        totalTokensUsed: state.totalTokensUsed + 760,
-        totalTokensSaved: state.totalTokensSaved + 6500,
-        isArtifactDrawerOpen: wantsDoc,
-      }));
+      set((state) => {
+        const nextMessages = [...state.messages, replyMsg];
+        const nextArtifacts = wantsDoc ? [newArtifact, ...state.artifacts] : state.artifacts;
+        void saveSystemSettingRemote("workspace_chat_state", {
+          messages: nextMessages.slice(-40),
+          artifacts: nextArtifacts.slice(0, 40),
+        });
+        return {
+          messages: nextMessages,
+          artifacts: nextArtifacts,
+          totalTokensUsed: state.totalTokensUsed + 760,
+          totalTokensSaved: state.totalTokensSaved + 6500,
+          isArtifactDrawerOpen: wantsDoc,
+        };
+      });
     } finally {
       if (delegationTimer) clearTimeout(delegationTimer);
       set({
@@ -929,19 +968,63 @@ export const useAksaStore = create<AksaState>((set, get) => ({
   },
 
   syncWithBackendEngine: async () => {
-    const [health, remoteTeams, remoteWorkspaces, remoteApprovals, remoteMcp, tokenAnalytics] =
-      await Promise.all([
-        fetchEngineHealth(),
-        fetchAgentTeams(),
-        fetchWorkspaces(),
-        fetchHITLApprovals(),
-        fetchMCPServers(),
-        fetchTokenAnalytics(),
-      ]);
+    const [
+      health,
+      remoteTeams,
+      remoteWorkspaces,
+      remoteApprovals,
+      remoteMcp,
+      tokenAnalytics,
+      remoteSettings,
+    ] = await Promise.all([
+      fetchEngineHealth(),
+      fetchAgentTeams(),
+      fetchWorkspaces(),
+      fetchHITLApprovals(),
+      fetchMCPServers(),
+      fetchTokenAnalytics(),
+      fetchSystemSettingsRemote(),
+    ]);
+
+    // Auto-upgrade legacy cramped node positions if detected in remoteTeams
+    const normalizedTeams =
+      remoteTeams && remoteTeams.length > 0
+        ? remoteTeams.map((team) => {
+            const tier1 = team.agents.filter((a) => a.parent_id !== null);
+            const isLegacyCramped =
+              tier1.length >= 2 &&
+              tier1.every((a) => a.position_y >= 240 && a.position_y <= 285);
+            if (!isLegacyCramped) return team;
+            const layoutMap = computeAutoHierarchyLayout(team.agents);
+            return {
+              ...team,
+              agents: team.agents.map((agt) => {
+                const l = layoutMap[agt.id];
+                if (!l) return agt;
+                void saveAgentUpdate(agt.id, {
+                  position_x: l.position_x,
+                  position_y: l.position_y,
+                  tier_level: l.tier_level,
+                });
+                return {
+                  ...agt,
+                  position_x: l.position_x,
+                  position_y: l.position_y,
+                  tier_level: l.tier_level,
+                };
+              }),
+            };
+          })
+        : null;
+
     set((state) => {
       const mergedWorkspaces =
         remoteWorkspaces && remoteWorkspaces.length > 0 ? remoteWorkspaces : state.workspaces;
-      const savedWsId = getSavedStorage("aksa_active_workspace_id", "");
+      const dbWsId =
+        typeof remoteSettings?.active_workspace_id === "string"
+          ? remoteSettings.active_workspace_id
+          : "";
+      const savedWsId = dbWsId || getSavedStorage("aksa_active_workspace_id", "");
       const resolvedWsId =
         savedWsId && mergedWorkspaces.some((w) => w.id === savedWsId)
           ? savedWsId
@@ -949,11 +1032,55 @@ export const useAksaStore = create<AksaState>((set, get) => ({
           ? state.activeWorkspaceId
           : (mergedWorkspaces[0]?.id ?? state.activeWorkspaceId);
 
+      const nextThemeMode: ThemeMode =
+        remoteSettings?.theme_mode === "light" ||
+        remoteSettings?.theme_mode === "dark" ||
+        remoteSettings?.theme_mode === "system"
+          ? remoteSettings.theme_mode
+          : state.themeMode;
+      const nextResolvedTheme = resolveEffectiveTheme(nextThemeMode, getSystemPrefersDark());
+      const nextUiDensity: UIDensityMode =
+        remoteSettings?.ui_density === "compact" || remoteSettings?.ui_density === "comfortable"
+          ? remoteSettings.ui_density
+          : state.uiDensity;
+      const nextReducedMotion: boolean =
+        typeof remoteSettings?.reduced_motion === "boolean"
+          ? remoteSettings.reduced_motion
+          : state.reducedMotion;
+
+      if (typeof document !== "undefined") {
+        document.documentElement.setAttribute("data-theme", nextResolvedTheme);
+        document.documentElement.setAttribute("data-density", nextUiDensity);
+        document.documentElement.setAttribute("data-reduce-motion", String(nextReducedMotion));
+      }
+
+      const persistedChat = remoteSettings?.workspace_chat_state;
+      const restoredMessages =
+        state.messages.length === 0 &&
+        persistedChat &&
+        Array.isArray(persistedChat.messages) &&
+        persistedChat.messages.length > 0
+          ? (persistedChat.messages as ChatMessage[])
+          : state.messages;
+      const restoredArtifacts =
+        state.artifacts.length === 0 &&
+        persistedChat &&
+        Array.isArray(persistedChat.artifacts) &&
+        persistedChat.artifacts.length > 0
+          ? (persistedChat.artifacts as FileArtifact[])
+          : state.artifacts;
+
       return {
         engineHealth: health,
-        teams: remoteTeams && remoteTeams.length > 0 ? remoteTeams : state.teams,
+        themeMode: nextThemeMode,
+        resolvedTheme: nextResolvedTheme,
+        uiDensity: nextUiDensity,
+        reducedMotion: nextReducedMotion,
+        teams: normalizedTeams ?? state.teams,
         workspaces: mergedWorkspaces,
         activeWorkspaceId: resolvedWsId,
+        messages: restoredMessages,
+        artifacts: restoredArtifacts,
         pendingApprovals: remoteApprovals
           ? remoteApprovals.filter((a) => a.status === "pending")
           : state.pendingApprovals,

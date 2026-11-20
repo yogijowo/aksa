@@ -197,10 +197,16 @@ describe("useAksaStore & Siklus 16 UX/UI state management tests", () => {
     expect(survivingC).toBeDefined();
     expect(survivingC?.parent_id).toBe(root.id);
 
-    // Layout computation positions root at tier 0 and children below
+    // Layout computation positions root at tier 0 and children below with generous spacing
     const layout = computeAutoHierarchyLayout(updatedAgents);
     expect(layout[root.id].tier_level).toBe(0);
-    expect(layout[grandChildC.id].position_y).toBeGreaterThan(layout[root.id].position_y);
+    expect(layout[root.id].position_y).toBe(30);
+    expect(layout[grandChildC.id].position_y).toBeGreaterThanOrEqual(360);
+    const tier1Ids = Object.keys(layout).filter((id) => layout[id].tier_level === 1);
+    if (tier1Ids.length >= 2) {
+      const gap = Math.abs(layout[tier1Ids[1]].position_x - layout[tier1Ids[0]].position_x);
+      expect(gap).toBeGreaterThanOrEqual(420);
+    }
   });
 
   it("supports both automatic and manual model selection with human-friendly model metadata (Siklus 16 Section 4)", async () => {

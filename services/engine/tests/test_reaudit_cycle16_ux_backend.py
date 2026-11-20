@@ -179,6 +179,8 @@ async def test_cycle16_api_token_five_states_and_masked_overwrite_protection() -
         provs_3 = (await client.get("/api/v1/models/providers")).json()["providers"]
         ds_3 = next(p for p in provs_3 if p["id"] == "deepseek")
         assert ds_3["token_status"] == "connected"
+        saved_tests = await db_manager.get_setting("provider_connection_tests", default={})
+        assert saved_tests.get("deepseek", {}).get("ok") is True
 
         # 5. Delete token -> resets to not_connected
         del_res = await client.delete("/api/v1/models/keys/deepseek")
@@ -260,11 +262,24 @@ async def test_cycle16_workspace_folder_inspection_and_rag_index_delete(tmp_path
 
         patch_res = await client.patch(
             f"/api/v1/workspaces/{ws['id']}",
-            json={"allow_write": True},
+            json={
+                "allow_write": True,
+                "granular_permissions": {
+                    "list_files": True,
+                    "read_content": True,
+                    "create_files": True,
+                    "modify_files": True,
+                    "move_files": False,
+                    "delete_files": False,
+                    "execute_programs": False,
+                },
+            },
         )
         assert patch_res.status_code == 200
         assert patch_res.json()["workspace"]["allow_write"] is True
         assert patch_res.json()["workspace"]["allow_execute"] is False
+        assert patch_res.json()["workspace"]["granular_permissions"]["create_files"] is True
+        assert patch_res.json()["workspace"]["granular_permissions"]["move_files"] is False
 
         # 6. Index folder in RAG and then remove document from index while preserving disk file
         idx_res = await client.post(

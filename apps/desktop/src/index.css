@@ -249,6 +249,26 @@ textarea:focus-visible {
   overflow: hidden !important;
 }
 
+/* Dashed Flowing Connector Lines on Hierarchy Canvas */
+@keyframes aksaEdgeFlow {
+  from {
+    stroke-dashoffset: 28;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.react-flow__edge path.react-flow__edge-path {
+  stroke-dasharray: 8 6;
+  stroke-linecap: round;
+}
+
+.react-flow__edge.animated path.react-flow__edge-path {
+  stroke-dasharray: 8 6;
+  animation: aksaEdgeFlow 0.85s linear infinite !important;
+}
+
 /* Compact Density Mode */
 [data-density="compact"] {
   font-size: 13px;
